@@ -1,0 +1,14 @@
+{
+  "_comment": "Payers the clinic bills. 'provider' picks the eligibility connector for each payer: 'default' uses ELIGIBILITY_PROVIDER, or name one from src/providers (mock, http). 'aliases' are other spellings seen in clinic exports.",
+  "payers": [
+    { "code": "DAM", "name": "Daman", "kind": "Insurer", "terms": 45, "provider": "default", "aliases": ["daman", "national health insurance"] },
+    { "code": "NAS", "name": "NAS Administration", "kind": "TPA", "terms": 45, "provider": "default", "aliases": ["nas"] },
+    { "code": "NXT", "name": "Nextcare", "kind": "TPA", "terms": 60, "provider": "default", "aliases": ["next care"] },
+    { "code": "MDN", "name": "MedNet", "kind": "TPA", "terms": 45, "provider": "default", "aliases": ["mednet uae"] },
+    { "code": "NEU", "name": "Neuron", "kind": "TPA", "terms": 60, "provider": "default", "aliases": [] },
+    { "code": "SUK", "name": "Sukoon", "kind": "Insurer", "terms": 45, "provider": "default", "aliases": ["oman insurance"] },
+    { "code": "GIG", "name": "GIG Gulf", "kind": "Insurer", "terms": 60, "provider": "default", "aliases": ["axa"] },
+    { "code": "ALM", "name": "Almadallah", "kind": "TPA", "terms": 45, "provider": "default", "aliases": [] }
+  ],
+  "approvalDepartments": ["Dental", "Dermatology", "Orthopedics", "ENT", "Physiotherapy", "Radiology"]
+}

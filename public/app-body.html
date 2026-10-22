@@ -1,0 +1,1179 @@
+<title>Polyclinic Insurance RCM</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: operations console. Fixed left rail of work areas, main column of summary then detail; rail collapses to a scrolling tab strip on phones. */
+:root{
+  --bg:#F3F6F5; --surface:#FFFFFF; --sunk:#EAF0EE; --ink:#13201E; --muted:#5A6B67; --line:#D8E1DE;
+  --accent:#0D6B61; --accent-ink:#FFFFFF; --accent-soft:#DDEFEA;
+  --ok:#1D7A45; --ok-soft:#DFF2E6; --warn:#9A5B00; --warn-soft:#FBEED6; --bad:#B0281F; --bad-soft:#FBE3E0; --info:#2B5BA6; --info-soft:#E1EAF8;
+  --b1:#8FCDBF; --b2:#E6C267; --b3:#E39549; --b4:#CC5B33; --b5:#8E2620;
+  --display:"Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --body:"Instrument Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --mono:"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --r:8px;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --bg:#0E1413; --surface:#151D1B; --sunk:#111917; --ink:#E3ECE9; --muted:#93A4A0; --line:#27332F;
+  --accent:#4CC2AE; --accent-ink:#04201B; --accent-soft:#143530;
+  --ok:#5ACB89; --ok-soft:#173326; --warn:#E6AA46; --warn-soft:#3A2C12; --bad:#F27D70; --bad-soft:#3E1D1A; --info:#82A8EC; --info-soft:#1A2740;
+  --b1:#5FAE9E; --b2:#D7B154; --b3:#DE8B45; --b4:#D8643F; --b5:#B8433A;
+  color-scheme:dark;
+}}
+:root[data-theme="dark"]{
+  --bg:#0E1413; --surface:#151D1B; --sunk:#111917; --ink:#E3ECE9; --muted:#93A4A0; --line:#27332F;
+  --accent:#4CC2AE; --accent-ink:#04201B; --accent-soft:#143530;
+  --ok:#5ACB89; --ok-soft:#173326; --warn:#E6AA46; --warn-soft:#3A2C12; --bad:#F27D70; --bad-soft:#3E1D1A; --info:#82A8EC; --info-soft:#1A2740;
+  --b1:#5FAE9E; --b2:#D7B154; --b3:#DE8B45; --b4:#D8643F; --b5:#B8433A;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{background:var(--bg);color:var(--ink);font-family:var(--body);font-size:14px;line-height:1.45}
+button,input,select,textarea{font:inherit;color:inherit}
+.mono{font-family:var(--mono);font-size:12.5px}
+.num{font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
+.muted{color:var(--muted)}
+h1,h2,h3{font-family:var(--display);text-wrap:balance;margin:0;letter-spacing:-0.01em}
+h1{font-size:24px} h2{font-size:17px} h3{font-size:15px}
+.eyebrow{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-weight:600}
+
+.app{display:grid;grid-template-columns:232px minmax(0,1fr);min-height:100%;background:linear-gradient(to right, var(--surface) 231px, var(--line) 231px, var(--line) 232px, var(--bg) 232px)}
+.rail{background:var(--surface);border-right:1px solid var(--line);padding:20px 14px;display:flex;flex-direction:column;gap:18px;position:sticky;top:0;height:100vh;overflow:auto}
+.brand{display:flex;gap:10px;align-items:center;padding:0 6px}
+.brand-mark{width:34px;height:34px;border-radius:8px;background:var(--accent);color:var(--accent-ink);display:grid;place-items:center;font-family:var(--display);font-weight:700;font-size:15px;flex:none}
+.brand b{font-family:var(--display);font-size:15px;display:block;line-height:1.15}
+.brand span{font-size:11.5px;color:var(--muted)}
+.nav{display:flex;flex-direction:column;gap:14px}
+.nav-group{display:flex;flex-direction:column;gap:2px}
+.nav-group .eyebrow{padding:0 8px 4px}
+.nav button{display:flex;justify-content:space-between;align-items:center;gap:8px;width:100%;padding:8px 10px;border:0;background:none;border-radius:6px;cursor:pointer;text-align:left;font-weight:500;color:var(--ink)}
+.nav button:hover{background:var(--sunk)}
+.nav button[aria-current="page"]{background:var(--accent-soft);color:var(--accent);font-weight:600}
+.nav .count{font-family:var(--mono);font-size:11px;background:var(--sunk);color:var(--muted);border-radius:10px;padding:1px 7px}
+.nav button[aria-current="page"] .count{background:var(--surface);color:var(--accent)}
+.rail-foot{margin-top:auto;font-size:11.5px;color:var(--muted);padding:0 6px;display:flex;flex-direction:column;gap:8px}
+
+main{min-width:0;padding-block:22px 48px;padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px))}
+.wrap{max-width:1240px;margin:0 auto;display:flex;flex-direction:column;gap:18px}
+.page-head{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap}
+.page-head p{margin:4px 0 0;color:var(--muted);max-width:70ch}
+.sample-note{font-size:12px;background:var(--warn-soft);color:var(--warn);border-radius:6px;padding:6px 10px}
+
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px}
+.kpi{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:12px 14px;display:flex;flex-direction:column;gap:4px}
+.kpi .v{font-family:var(--display);font-size:22px;font-weight:600;font-variant-numeric:tabular-nums}
+.kpi .v small{font-family:var(--body);font-size:12px;color:var(--muted);font-weight:500;margin-left:3px}
+.kpi .s{font-size:12px;color:var(--muted)}
+.kpi.alert .v{color:var(--bad)}
+
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:16px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.panel-head{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+.panel-head p{margin:2px 0 0;color:var(--muted);font-size:12.5px}
+.grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.grid3{display:grid;grid-template-columns:2fr 1fr;gap:14px}
+@media (max-width:980px){.grid2,.grid3{grid-template-columns:minmax(0,1fr)}}
+
+.queues{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}
+.queue{border:1px solid var(--line);border-radius:var(--r);padding:12px;background:var(--surface);cursor:pointer;text-align:left;display:flex;flex-direction:column;gap:2px}
+.queue:hover{border-color:var(--accent)}
+.queue b{font-family:var(--display);font-size:20px;font-variant-numeric:tabular-nums}
+.queue span{font-size:12.5px;color:var(--muted)}
+
+.table-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:var(--r);background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:13px}
+th{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600;text-align:left;background:var(--sunk);position:sticky;top:0}
+th,td{padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:middle;white-space:nowrap}
+td.wrap-cell{white-space:normal;min-width:180px}
+tbody tr:last-child td{border-bottom:0}
+tbody tr.click{cursor:pointer}
+tbody tr.click:hover td{background:var(--sunk)}
+tfoot td{font-weight:600;background:var(--sunk);border-top:1px solid var(--line);border-bottom:0}
+
+.pill{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:600;border-radius:999px;padding:2px 9px;white-space:nowrap}
+.pill::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
+.p-ok{background:var(--ok-soft);color:var(--ok)}
+.p-warn{background:var(--warn-soft);color:var(--warn)}
+.p-bad{background:var(--bad-soft);color:var(--bad)}
+.p-info{background:var(--info-soft);color:var(--info)}
+.p-mute{background:var(--sunk);color:var(--muted)}
+.code{font-family:var(--mono);font-size:11.5px;background:var(--sunk);border-radius:4px;padding:1px 6px}
+
+.btn{border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:7px 12px;cursor:pointer;font-weight:500;white-space:nowrap}
+.btn:hover{border-color:var(--accent);color:var(--accent)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.btn.primary:hover{filter:brightness(1.08);color:var(--accent-ink)}
+.btn.danger{color:var(--bad)}
+.btn.sm{padding:4px 9px;font-size:12.5px}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+.filters{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.field{display:flex;flex-direction:column;gap:4px;min-width:0}
+.field label{font-size:12px;font-weight:600;color:var(--muted)}
+input[type=text],input[type=number],input[type=date],select,textarea{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:7px 9px;min-width:0;max-width:100%}
+textarea{width:100%;font-family:var(--mono);font-size:12px;min-height:150px;resize:vertical}
+.form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px;align-items:end}
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+.chip{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:4px 11px;font-size:12.5px;cursor:pointer}
+.chip[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+
+.result{border-radius:var(--r);border:1px solid var(--line);padding:14px;display:flex;flex-direction:column;gap:10px}
+.result.ok{border-color:var(--ok);background:var(--ok-soft)}
+.result.bad{border-color:var(--bad);background:var(--bad-soft)}
+.result.warn{border-color:var(--warn);background:var(--warn-soft)}
+.kv{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px 16px}
+.kv div{display:flex;flex-direction:column;gap:1px}
+.kv dt{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.kv dd{margin:0;font-weight:500}
+
+.chart svg{display:block;width:100%;height:auto}
+.chart text{fill:var(--muted);font-family:var(--body);font-size:11px}
+.chart .lbl{fill:var(--ink);font-weight:500}
+.chart .grid{stroke:var(--line);stroke-width:1}
+.legend{display:flex;gap:12px;flex-wrap:wrap;font-size:12px;color:var(--muted)}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+.stack{display:flex;height:12px;border-radius:3px;overflow:hidden;background:var(--sunk);min-width:120px}
+.stack span{display:block;height:100%}
+
+dialog{border:1px solid var(--line);border-radius:12px;background:var(--surface);color:var(--ink);padding:0;width:min(880px, calc(100vw - 24px));max-height:calc(100vh - 32px)}
+dialog::backdrop{background:rgba(8,16,14,.45)}
+.dlg-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;padding:16px 18px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--surface);z-index:1}
+.dlg-body{padding:16px 18px;display:flex;flex-direction:column;gap:14px}
+.dlg-x{border:0;background:var(--sunk);border-radius:6px;width:30px;height:30px;cursor:pointer;font-size:18px;line-height:1;flex:none}
+.timeline{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px;border-left:2px solid var(--line);padding-left:14px}
+.timeline li{position:relative;font-size:13px}
+.timeline li::before{content:"";position:absolute;left:-20px;top:5px;width:10px;height:10px;border-radius:50%;background:var(--accent);border:2px solid var(--surface)}
+.actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(18px + env(safe-area-inset-bottom, 0px));background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:8px;font-weight:500;z-index:50;max-width:calc(100vw - 32px)}
+.empty{padding:22px;text-align:center;color:var(--muted)}
+
+@media (max-width:860px){
+  .app{grid-template-columns:minmax(0,1fr);background:var(--bg)}
+  .rail{position:sticky;top:env(safe-area-inset-top, 0px);z-index:20;height:auto;flex-direction:row;align-items:center;padding:10px max(16px, env(safe-area-inset-right, 0px)) 10px max(16px, env(safe-area-inset-left, 0px));border-right:0;border-bottom:1px solid var(--line);overflow-x:auto;gap:12px}
+  body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top, 0px);z-index:10;background:var(--surface)}
+  .brand span,.rail-foot,.nav-group .eyebrow{display:none}
+  .nav{flex-direction:row;gap:2px}
+  .nav-group{flex-direction:row}
+  .nav button{width:auto}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+
+<div class="app">
+  <aside class="rail">
+    <div class="brand">
+      <div class="brand-mark">AW</div>
+      <div><b>Al Waha Polyclinic</b><span>Insurance revenue cycle</span></div>
+    </div>
+    <nav class="nav" id="nav"></nav>
+    <div class="rail-foot">
+      <div>Facility licence <span class="mono">DHA-F-0000000</span> (sample)</div>
+      <div>All figures in AED. Data is sample data stored in this browser.</div>
+      <button class="btn sm" id="resetBtn" type="button">Reset sample data</button>
+    </div>
+  </aside>
+  <main><div class="wrap" id="view"></div></main>
+</div>
+
+<dialog id="dlg"><div id="dlgInner"></div></dialog>
+<div class="toast" id="toast" hidden></div>
+
+<script>
+(function(){
+"use strict";
+/* ---------- helpers ---------- */
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const nf = new Intl.NumberFormat("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+const nf0 = new Intl.NumberFormat("en-US",{maximumFractionDigits:0});
+const aed = n => nf.format(n || 0);
+const aedK = n => { const a = Math.abs(n); if (a >= 1e6) return (n/1e6).toFixed(a >= 1e7 ? 0 : 2).replace(/\.?0+$/,"") + "M"; if (a >= 1000) return (n/1000).toFixed(a >= 1e5 ? 0 : 1).replace(/\.0$/,"") + "k"; return nf0.format(n); };
+const r2 = n => Math.round(n*100)/100;
+const z = n => String(n).padStart(2,"0");
+const toISO = d => d.getFullYear()+"-"+z(d.getMonth()+1)+"-"+z(d.getDate());
+const addDays = (iso,n) => { const d = new Date(iso+"T00:00:00"); d.setDate(d.getDate()+n); return toISO(d); };
+const diff = (a,b) => Math.round((new Date(b+"T00:00:00") - new Date(a+"T00:00:00"))/864e5);
+const TODAY = toISO(new Date());
+const fmtD = iso => iso ? new Date(iso+"T00:00:00").toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"}) : "–";
+const nowTime = () => { const d = new Date(); return z(d.getHours())+":"+z(d.getMinutes()); };
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+
+/* ---------- reference data ---------- */
+const PAYERS = [
+  {id:"DAM",name:"Daman",kind:"Insurer",terms:45,prefix:"DM",w:22},
+  {id:"NAS",name:"NAS Administration",kind:"TPA",terms:45,prefix:"NS",w:18},
+  {id:"NXT",name:"Nextcare",kind:"TPA",terms:60,prefix:"NX",w:15},
+  {id:"MDN",name:"MedNet",kind:"TPA",terms:45,prefix:"MN",w:12},
+  {id:"NEU",name:"Neuron",kind:"TPA",terms:60,prefix:"NR",w:10},
+  {id:"SUK",name:"Sukoon",kind:"Insurer",terms:45,prefix:"SK",w:8},
+  {id:"GIG",name:"GIG Gulf",kind:"Insurer",terms:60,prefix:"GG",w:8},
+  {id:"ALM",name:"Almadallah",kind:"TPA",terms:45,prefix:"AM",w:7}
+];
+const payer = id => PAYERS.find(p => p.id === id) || {name:id,terms:45};
+const PLANS = [
+  {name:"Essential Benefits Plan",copay:20,ded:0,network:"Restricted (RN3)"},
+  {name:"Silver",copay:20,ded:50,network:"General (GN)"},
+  {name:"Gold",copay:10,ded:20,network:"General Plus (GN+)"},
+  {name:"Platinum",copay:0,ded:0,network:"Comprehensive (CN)"}
+];
+const OV = ["99213","Office visit, established patient",250];
+const DEPTS = {
+  "General Practice":{dr:["Dr. Hana Al Marzouqi","Dr. Rahul Menon"],acts:[OV,["99203","Office visit, new patient",300]],extra:[["85025","Complete blood count",80],["83036","HbA1c",120],["80053","Comprehensive metabolic panel",180],["84443","TSH",110]],dx:[["J06.9","Acute upper respiratory infection"],["I10","Essential hypertension"],["E11.9","Type 2 diabetes mellitus"],["K21.9","Gastro-oesophageal reflux disease"]],pa:false},
+  "Pediatrics":{dr:["Dr. Mariam Haddad"],acts:[["99392","Preventive visit, age 1-4",300],OV],extra:[["90707","MMR vaccine",150]],dx:[["Z00.129","Routine child health exam"],["J06.9","Acute upper respiratory infection"],["H66.90","Otitis media"]],pa:false},
+  "Dental":{dr:["Dr. Omar Siddiqui"],acts:[["D0120","Periodic oral evaluation",200]],extra:[["D1110","Prophylaxis, adult",350],["D2391","Resin composite, one surface",450]],dx:[["K02.9","Dental caries"],["K05.10","Chronic gingivitis"]],pa:true},
+  "Dermatology":{dr:["Dr. Elena Petrova"],acts:[OV],extra:[["17110","Destruction of benign lesions",400],["11102","Tangential skin biopsy",600]],dx:[["L70.0","Acne vulgaris"],["B07.9","Viral wart"],["L20.9","Atopic dermatitis"]],pa:true},
+  "Orthopedics":{dr:["Dr. Khalid Al Shamsi"],acts:[OV],extra:[["20610","Injection, major joint",650],["73562","X-ray knee, 3 views",250]],dx:[["M17.11","Primary osteoarthritis, right knee"],["M54.50","Low back pain"]],pa:true},
+  "ENT":{dr:["Dr. Priya Nair"],acts:[OV],extra:[["31231","Diagnostic nasal endoscopy",700],["92567","Tympanometry",180]],dx:[["J30.9","Allergic rhinitis"],["H66.90","Otitis media"],["J32.9","Chronic sinusitis"]],pa:true},
+  "Obstetrics & Gynecology":{dr:["Dr. Layla Mansour"],acts:[OV],extra:[["76805","Obstetric ultrasound",550],["88175","Cervical cytology",200]],dx:[["Z34.90","Supervision of normal pregnancy"],["N92.0","Excessive menstruation"]],pa:false},
+  "Physiotherapy":{dr:["Mr. Joseph Fernandes, PT"],acts:[["97110","Therapeutic exercise, 15 min",220]],extra:[["97140","Manual therapy, 15 min",220],["97014","Electrical stimulation",150]],dx:[["M54.50","Low back pain"],["M75.10","Rotator cuff syndrome"]],pa:true},
+  "Radiology":{dr:["Dr. Samir Aziz"],acts:[["71046","Chest X-ray, 2 views",220],["76700","Ultrasound, complete abdomen",450]],extra:[],dx:[["R10.9","Abdominal pain"],["R05.9","Cough"]],pa:true}
+};
+const DENIALS = {
+  "AUTH-001":"Prior approval is required and was not obtained",
+  "AUTH-003":"Activity not covered by the prior approval",
+  "CLAI-012":"Submission after the contractual time limit",
+  "CODE-010":"Activity and diagnosis codes are inconsistent",
+  "DUPL-002":"Duplicate claim for the same service and date",
+  "ELIG-001":"Patient is not a covered member",
+  "ELIG-005":"Service performed after the last date of coverage",
+  "MNEC-003":"Service not clinically indicated",
+  "MNEC-004":"Not clinically indicated without supporting diagnosis",
+  "NCOV-003":"Service is not covered under the plan",
+  "PRCE-001":"Included in the allowance for another service",
+  "PRCE-002":"Paid at contracted price"
+};
+const BUCKETS = [["0–30",0,30,"--b1"],["31–60",31,60,"--b2"],["61–90",61,90,"--b3"],["91–180",91,180,"--b4"],["180+",181,1e9,"--b5"]];
+
+/* ---------- sample data ---------- */
+function seed(){
+  const rng = mulberry32(971);
+  const pick = a => a[Math.floor(rng()*a.length)];
+  const ri = (a,b) => a + Math.floor(rng()*(b-a+1));
+  const wpick = () => { let t = rng()*100; for (const p of PAYERS){ t -= p.w; if (t <= 0) return p; } return PAYERS[0]; };
+  const FN = ["Ahmed","Fatima","Mohammed","Aisha","Rajesh","Anjali","Maria","John","Sara","Yousef","Noor","Imran","Grace","Hassan","Leila","Arjun","Mei","Omar","Reem","Daniel","Khadija","Vikram","Joy","Tariq","Hiba","Sanjay","Elif","Ravi","Amal","Paolo"];
+  const LN = ["Al Mansoori","Khan","Santos","Pillai","Al Falasi","Rahman","Thomas","Haddad","Sharma","Al Nuaimi","Reyes","Iyer","Abdullah","Fernandes","Chen","Al Suwaidi","Qureshi","Morgan","Nasser","Das"];
+  const patients = [];
+  for (let i=0;i<220;i++){
+    const p = wpick(), plan = pick(PLANS), yr = ri(1958,2022);
+    const validTo = rng() < 0.08 ? addDays(TODAY,-ri(5,90)) : addDays(TODAY,ri(20,330));
+    patients.push({id:"P"+(10500+i),name:pick(FN)+" "+pick(LN),dob:yr+"-"+z(ri(1,12))+"-"+z(ri(1,28)),
+      eid:`784-${yr}-${String(ri(1000000,9999999))}-${ri(0,9)}`,mobile:`05${ri(0,8)} ${ri(100,999)} ${ri(1000,9999)}`,
+      policy:{payer:p.id,plan:plan.name,card:`${p.prefix}-${ri(100000,999999)}-${ri(10,99)}`,validFrom:addDays(validTo,-365),validTo,copay:plan.copay,ded:plan.ded,network:plan.network}});
+  }
+  const claims = [], auths = [];
+  let paSeq = 31000;
+  for (let i=0;i<560;i++){
+    const pt = pick(patients), deptName = pick(Object.keys(DEPTS)), d = DEPTS[deptName];
+    const encAge = Math.floor(Math.pow(rng(),1.25)*230);
+    const enc = addDays(TODAY,-encAge);
+    const acts = [];
+    const main = pick(d.acts); acts.push({code:main[0],desc:main[1],qty:1,price:main[2]});
+    const nx = d.extra.length ? ri(0,2) : 0;
+    const used = new Set([main[0]]);
+    for (let k=0;k<nx;k++){ const e = pick(d.extra); if (used.has(e[0])) continue; used.add(e[0]); acts.push({code:e[0],desc:e[1],qty:deptName==="Physiotherapy"?ri(1,3):1,price:e[2]}); }
+    const plan = PLANS.find(x => x.name === pt.policy.plan);
+    let grossAll = acts.reduce((s,a)=>s+a.price*a.qty,0);
+    let psAll = Math.min(grossAll, plan.ded + grossAll*plan.copay/100);
+    const id = "CLM-"+(246000+i);
+    const c = {id,patient:pt.id,payer:pt.policy.payer,card:pt.policy.card,dept:deptName,doctor:pick(d.dr),enc,
+      dx:[pick(d.dx)],acts:acts.map((a,k)=>{const g=a.price*a.qty; const ps=r2(psAll*g/grossAll); return {aid:id+"-"+(k+1),code:a.code,desc:a.desc,qty:a.qty,gross:g,ps,net:r2(g-ps),paid:0,denial:null};}),
+      status:"Draft",submitted:null,events:[{d:enc,t:"Encounter recorded, "+deptName}],remits:[],resubs:[],writeOff:0,woReason:null,pa:null};
+    if (d.pa && rng() < 0.85){
+      const paid = "PA-"+(paSeq++);
+      const req = r2(c.acts.reduce((s,a)=>s+a.net,0));
+      auths.push({id:paid,patient:pt.id,payer:c.payer,dept:deptName,code:c.acts[c.acts.length-1].code,desc:c.acts[c.acts.length-1].desc,dx:c.dx[0][0],requested:req,approved:req,status:"Approved",reqOn:addDays(enc,-ri(1,4)),respOn:addDays(enc,-ri(0,1)),validTo:addDays(enc,29),claim:id});
+      c.pa = paid;
+    }
+    const remitAge = encAge;
+    if (encAge <= 3 && rng() < 0.85){ claims.push(c); continue; }
+    c.submitted = addDays(enc, Math.min(ri(1,4), encAge));
+    c.status = "Submitted"; c.events.push({d:c.submitted,t:"Submitted to "+payer(c.payer).name+" via eClaimLink"});
+    const sAge = diff(c.submitted,TODAY);
+    if (sAge < 24 || (sAge < 45 && rng() < 0.45) || rng() < 0.07){ claims.push(c); continue; }
+    const rDate = addDays(c.submitted, ri(22, Math.min(sAge, 75)));
+    const r = rng();
+    if (r < 0.75){ c.acts.forEach(a => a.paid = a.net); }
+    else if (r < 0.89){
+      c.acts.forEach(a => a.paid = a.net);
+      const a = c.acts[c.acts.length-1];
+      const code = pick(["MNEC-004","PRCE-002","CODE-010","AUTH-003","PRCE-001","NCOV-003","PRCE-002"]);
+      a.denial = code; a.paid = code === "PRCE-002" ? r2(a.net*0.82) : 0;
+    } else if (r < 0.945){
+      const code = !c.pa && d.pa ? "AUTH-001" : pick(["ELIG-001","CLAI-012","MNEC-003","DUPL-002","ELIG-005"]);
+      c.acts.forEach(a => { a.paid = 0; a.denial = code; });
+    } else { c.acts.forEach(a => a.paid = a.net); }
+    const paidSum = r2(c.acts.reduce((s,a)=>s+a.paid,0)), deniedSum = r2(c.acts.reduce((s,a)=>s+a.net,0) - paidSum);
+    c.status = "Remitted"; c.remitDate = rDate;
+    c.remits.push({ra:null,d:rDate,paid:paidSum,denied:deniedSum});
+    c.events.push({d:rDate,t:`Remittance received: paid AED ${aed(paidSum)}`+(deniedSum>0?`, denied AED ${aed(deniedSum)}`:"")});
+    const rAge = diff(rDate,TODAY);
+    if (deniedSum > 0 && rAge > 25 && rng() < 0.35){
+      const rd = addDays(rDate, ri(5,18));
+      const den = c.acts.filter(a=>a.denial).map(a=>a.denial);
+      const type = rng() < 0.75 ? "correction" : "internal complaint";
+      const note = den.some(k=>k.startsWith("AUTH")) ? "Attached prior approval reference and approval letter"
+        : den.some(k=>k.startsWith("CODE")) ? "Corrected ICD-10 to match activity, attached clinical notes"
+        : den.some(k=>k.startsWith("PRCE")) ? "Disputed price against contracted tariff, attached price list"
+        : den.some(k=>k.startsWith("ELIG")) ? "Attached eligibility confirmation from date of service"
+        : "Attached clinical notes and medical justification";
+      c.status = "Resubmitted"; c.resubs.push({d:rd,type,note,amount:deniedSum,codes:[...new Set(den)],outcome:null});
+      c.events.push({d:rd,t:`Resubmitted (${type}): ${note}`});
+      const resAge = diff(rd,TODAY);
+      if (resAge > 30 && rng() < 0.7){
+        const od = addDays(rd, ri(20, Math.min(resAge, 45)));
+        const o = rng(); let got = 0;
+        c.acts.forEach(a => { if (!a.denial) return; const due = r2(a.net - a.paid);
+          const add = o < 0.55 ? due : o < 0.8 ? r2(due*0.5) : 0;
+          a.paid = r2(a.paid + add); got += add; if (a.paid >= a.net - 0.009) a.denial = null; });
+        got = r2(got);
+        c.resubs[0].outcome = {d:od,paid:got,denied:r2(deniedSum-got)};
+        c.remits.push({ra:null,d:od,paid:got,denied:r2(deniedSum-got)});
+        c.status = "Remitted";
+        c.events.push({d:od,t:`Resubmission outcome: recovered AED ${aed(got)}`+(deniedSum-got>0.009?`, still denied AED ${aed(deniedSum-got)}`:"")});
+      }
+    } else if (deniedSum > 0 && rAge > 70 && rng() < 0.35){
+      c.writeOff = deniedSum; c.woReason = "Contractual / non-recoverable";
+      c.events.push({d:addDays(rDate,30),t:`Balance AED ${aed(deniedSum)} written off`});
+    }
+    claims.push(c);
+  }
+  // remittance advice batches: group by payer + settlement week
+  const ras = {}; let payRef = 880100;
+  claims.forEach(c => c.remits.forEach(rem => {
+    const wk = addDays(rem.d, -((new Date(rem.d+"T00:00:00").getDay()+3)%7)); // snap to Thursday
+    const key = c.payer+wk;
+    if (!ras[key]) ras[key] = {id:`RA-${c.payer}-${wk.replace(/-/g,"")}`,payer:c.payer,date:wk,payRef:"TT"+(payRef++),lines:[],amount:0,bank:null,status:"Unreconciled",recOn:null,source:"eClaimLink download"};
+    const ra = ras[key];
+    rem.ra = ra.id; rem.d = wk; c.remitDate = wk;
+    ra.lines.push({claim:c.id,paid:rem.paid,denied:rem.denied});
+    ra.amount = r2(ra.amount + rem.paid);
+  }));
+  claims.forEach(c => c.resubs.forEach((x,i) => { if (x.outcome){ const rem = c.remits[c.remits.length-1]; x.outcome.d = rem.d; x.outcome.ra = rem.ra; } }));
+  const raList = Object.values(ras).sort((a,b)=>b.date.localeCompare(a.date));
+  raList.forEach((ra,i) => {
+    const age = diff(ra.date,TODAY);
+    if (age > 21){
+      if (rng() < 0.12){ ra.bank = r2(ra.amount - [25,50,ra.amount*0.05][ri(0,2)]); }
+      else { ra.bank = ra.amount; ra.status = "Reconciled"; ra.recOn = addDays(ra.date, ri(3,10)); }
+    } else if (rng() < 0.6){ ra.bank = ra.amount; }
+  });
+  // pending and recent prior approvals for upcoming visits
+  const pend = ["Pending","Pending","Pending","Pending","Pending","Approved","Approved","Partially approved","Rejected","Rejected","Pending","Approved"];
+  pend.forEach((st,i) => {
+    const pt = pick(patients), deptName = pick(["Dental","Physiotherapy","Radiology","Orthopedics","ENT","Dermatology"]), d = DEPTS[deptName];
+    const a = d.extra.length ? pick(d.extra) : pick(d.acts);
+    const req = r2(a[2]*(deptName==="Physiotherapy"?6:1)*(1-pt.policy.copay/100));
+    const reqOn = addDays(TODAY,-ri(0,6));
+    const x = {id:"PA-"+(paSeq++),patient:pt.id,payer:pt.policy.payer,dept:deptName,code:a[0],desc:a[1]+(deptName==="Physiotherapy"?" × 6 sessions":""),dx:pick(d.dx)[0],requested:req,approved:0,status:st,reqOn,respOn:null,validTo:null,claim:null,note:""};
+    if (st !== "Pending"){ x.respOn = addDays(reqOn,ri(0,2)); if (x.respOn > TODAY) x.respOn = TODAY; x.validTo = addDays(x.respOn,30); }
+    if (st === "Approved") x.approved = req;
+    if (st === "Partially approved"){ x.approved = r2(req*0.5); x.note = "Approved 3 of 6 sessions"; }
+    if (st === "Rejected"){ x.note = pick(["MNEC-004: insufficient clinical justification","NCOV-003: not covered under plan"]); }
+    auths.push(x);
+  });
+  // today's appointments
+  const appts = [];
+  const used = new Set();
+  const slots = ["08:30","09:00","09:20","10:00","10:40","11:15","12:00","13:30","15:00","16:10","17:00","18:20","19:00","20:15"];
+  slots.forEach((t,i) => {
+    let pt; do { pt = pick(patients); } while (used.has(pt.id)); used.add(pt.id);
+    const dept = pick(Object.keys(DEPTS));
+    appts.push({id:"AP"+(i+1),time:t,patient:pt.id,dept,doctor:pick(DEPTS[dept].dr),status:"Not verified",checked:null});
+  });
+  const log = [];
+  for (let i=0;i<3;i++){ const ap = appts[i]; const res = verify(ap.patient, null, null, ap.dept, patients); ap.status = res.status; ap.checked = slots[i]; log.unshift({t:TODAY+" "+addMinutes(slots[i],-25),pt:ap.patient,payer:res.payer,card:res.card,status:res.status,src:"Appointment"}); }
+  return {v:4,seededOn:TODAY,patients,claims,ras:raList,auths:auths.sort((a,b)=>b.reqOn.localeCompare(a.reqOn)),appts,log,raSeq:1};
+}
+function addMinutes(t,m){ let [h,mi] = t.split(":").map(Number); let x = h*60+mi+m; return z(Math.floor(x/60))+":"+z(x%60); }
+
+/* ---------- state ---------- */
+const KEY = "aw-rcm-v4";
+let S;
+try { S = JSON.parse(localStorage.getItem(KEY)); } catch(e) { S = null; }
+if (!S || S.v !== 4) S = seed();
+function save(){ try { localStorage.setItem(KEY, JSON.stringify(S)); } catch(e) {} }
+const patient = id => S.patients.find(p => p.id === id) || {name:"Unknown",policy:{}};
+const claimById = id => S.claims.find(c => c.id === id);
+
+function totals(c){
+  let gross=0,ps=0,net=0,paid=0;
+  c.acts.forEach(a => { gross+=a.gross; ps+=a.ps; net+=a.net; paid+=a.paid||0; });
+  const remitted = c.status === "Remitted" || c.status === "Resubmitted" || c.remits.length > 0;
+  const denied = remitted ? Math.max(0, net - paid) : 0;
+  const outstanding = Math.max(0, r2(net - paid - (c.writeOff||0)));
+  return {gross:r2(gross),ps:r2(ps),net:r2(net),paid:r2(paid),denied:r2(denied),wo:c.writeOff||0,outstanding};
+}
+function status(c){
+  if (c.status !== "Remitted") return c.status;
+  const t = totals(c);
+  if (t.outstanding < 0.01) return t.wo > 0 ? "Closed" : "Paid";
+  return t.paid === 0 ? "Rejected" : "Partially paid";
+}
+const STATUS_PILL = {"Draft":"p-mute","Submitted":"p-info","Resubmitted":"p-info","Paid":"p-ok","Closed":"p-mute","Partially paid":"p-warn","Rejected":"p-bad",
+  "Eligible":"p-ok","Not eligible":"p-bad","Inactive":"p-bad","Not found":"p-bad","Not verified":"p-mute","Check failed":"p-bad","Approval needed":"p-warn",
+  "Pending":"p-info","Awaiting payer":"p-info","Recovered":"p-ok","Partially recovered":"p-warn","Denied again":"p-bad","Approved":"p-ok","Partially approved":"p-warn","Reconciled":"p-ok","Unreconciled":"p-warn","Variance":"p-bad","Awaiting deposit":"p-info"};
+const pill = s => `<span class="pill ${STATUS_PILL[s]||"p-mute"}">${esc(s)}</span>`;
+const ageBasis = c => c.status === "Resubmitted" && c.resubs.length ? c.resubs[c.resubs.length-1].d : c.submitted;
+const ageOf = (c, basis) => diff(basis === "enc" ? c.enc : (c.submitted || c.enc), TODAY);
+const bucketOf = age => BUCKETS.findIndex(b => age >= b[1] && age <= b[2]);
+function raState(ra){
+  if (ra.status === "Reconciled") return "Reconciled";
+  if (ra.bank == null) return "Awaiting deposit";
+  return Math.abs(ra.bank - ra.amount) > 0.009 ? "Variance" : "Unreconciled";
+}
+function openDenials(){ return S.claims.filter(c => ["Rejected","Partially paid"].includes(status(c))); }
+
+/* ---------- eligibility ---------- */
+const norm = s => String(s || "").replace(/[^0-9a-z]/gi, "").toLowerCase();
+function verify(ptId, payerId, card, dept, pts){
+  const list = pts || S.patients;
+  let p = ptId ? list.find(x => x.id === ptId) : null;
+  if (!p && card){ const k = norm(card); p = list.find(x => norm(x.policy.card) === k || norm(x.eid) === k); }
+  const base = {payer:payerId || (p && p.policy.payer), card:card || (p && p.policy.card), dept};
+  if (!p) return {...base,status:"Not found",input:card,msg:"This card number or Emirates ID is not in the clinic's member list. The site does not connect to payer systems yet, so a real member is found only after you register their policy here once."};
+  const pol = p.policy;
+  const res = {...base,payer:pol.payer,card:pol.card,patient:p.id,name:p.name,eid:p.eid,dob:p.dob,plan:pol.plan,network:pol.network,validFrom:pol.validFrom,validTo:pol.validTo,copay:pol.copay,ded:pol.ded};
+  if (payerId && payerId !== pol.payer) return {...res,payer:payerId,status:"Not eligible",msg:`Member is covered by ${payer(pol.payer).name}, not ${payer(payerId).name}. Re-run the check with the correct payer.`};
+  if (pol.validTo < TODAY) return {...res,status:"Inactive",msg:`Policy expired on ${fmtD(pol.validTo)}. Ask the patient for a renewed card or collect as self-pay.`};
+  if (dept && DEPTS[dept] && DEPTS[dept].pa) return {...res,status:"Approval needed",msg:`Coverage is active. ${dept} services on this plan need prior approval before treatment.`};
+  return {...res,status:"Eligible",msg:"Coverage is active for outpatient consultation at this facility's network tier."};
+}
+
+/* ---------- charts ---------- */
+function vbars(items, opts={}){
+  const W=opts.w||520,H=opts.h||210,pl=44,pr=8,pt=12,pb=36, iw=W-pl-pr, ih=H-pt-pb;
+  const max = Math.max(1,...items.map(i=>i.series ? Math.max(...i.series.map(s=>s.v)) : i.v));
+  const nice = niceMax(max), ticks=4;
+  let g = "";
+  for (let t=0;t<=ticks;t++){ const y = pt+ih - ih*t/ticks; g += `<line class="grid" x1="${pl}" x2="${W-pr}" y1="${y}" y2="${y}"/><text x="${pl-6}" y="${y+4}" text-anchor="end">${aedK(nice*t/ticks)}</text>`; }
+  const bw = iw/items.length;
+  items.forEach((it,i) => {
+    const x0 = pl + bw*i;
+    const ser = it.series || [{v:it.v,color:it.color}];
+    const inner = Math.min(46, bw*0.7), sw = inner/ser.length;
+    ser.forEach((s,k) => { const h = ih*s.v/nice; g += `<rect x="${x0+(bw-inner)/2+sw*k}" y="${pt+ih-h}" width="${Math.max(1,sw-2)}" height="${h}" rx="2" fill="var(${s.color})"><title>${esc(it.label)}: AED ${aed(s.v)}</title></rect>`; });
+    if (!it.series) g += `<text class="lbl" x="${x0+bw/2}" y="${pt+ih-ih*it.v/nice-5}" text-anchor="middle">${aedK(it.v)}</text>`;
+    g += `<text x="${x0+bw/2}" y="${H-14}" text-anchor="middle">${esc(it.label)}</text>`;
+  });
+  return `<div class="chart"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(opts.label||"chart")}">${g}</svg></div>`;
+}
+function hbars(items, opts={}){
+  const W=520,rowH=26,pl=opts.pl||130,pr=70,H=items.length*rowH+8;
+  const max = Math.max(1,...items.map(i=>i.v));
+  let g = "";
+  items.forEach((it,i) => { const y = 4+i*rowH, w = (W-pl-pr)*it.v/max;
+    g += `<text class="lbl" x="${pl-8}" y="${y+16}" text-anchor="end">${esc(it.label)}</text><rect x="${pl}" y="${y+5}" width="${Math.max(1,w)}" height="15" rx="2" fill="var(${it.color||"--accent"})"><title>${esc(it.label)}: AED ${aed(it.v)}</title></rect><text x="${pl+w+6}" y="${y+16}">${opts.fmt?opts.fmt(it.v):aedK(it.v)}</text>`; });
+  return `<div class="chart"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(opts.label||"chart")}">${g}</svg></div>`;
+}
+function niceMax(v){ const p = Math.pow(10,Math.floor(Math.log10(v))); for (const m of [1,1.5,2,2.5,3,4,5,6,8,10]) if (m*p >= v) return m*p; return 10*p; }
+const stackBar = (vals,total) => `<div class="stack" title="${BUCKETS.map((b,i)=>b[0]+" days: AED "+aed(vals[i])).join("\n")}">${vals.map((v,i)=>v>0?`<span style="width:${(100*v/total).toFixed(2)}%;background:var(${BUCKETS[i][3]})"></span>`:"").join("")}</div>`;
+const legendBuckets = () => `<div class="legend">${BUCKETS.map(b=>`<span><i style="background:var(${b[3]})"></i>${b[0]} days</span>`).join("")}</div>`;
+
+/* ---------- navigation ---------- */
+const VIEWS = [
+  ["", [["overview","Overview"]]],
+  ["Front office", [["eligibility","Eligibility & access"],["approvals","Prior approvals"]]],
+  ["Billing", [["claims","Claims"],["remittance","Remittance & reconciliation"],["denials","Denials"],["resubmissions","Resubmissions"]]],
+  ["Finance", [["receivables","Insurance receivables"]]]
+];
+let current = (location.hash||"").slice(1);
+if (!VIEWS.some(g => g[1].some(v => v[0] === current))) current = "overview";
+let UI = {claimQ:"",claimPayer:"",claimStatus:"",claimDept:"",paFilter:"All",arBasis:"sub",arPayer:"",verifyResult:null};
+try { const u = JSON.parse(localStorage.getItem(KEY+"-ui")); if (u) UI.arBasis = u.arBasis || "sub"; } catch(e) {}
+
+function counts(){
+  return {eligibility:S.appts.filter(a=>a.status==="Not verified").length, approvals:S.auths.filter(a=>a.status==="Pending").length,
+    claims:S.claims.filter(c=>c.status==="Draft").length, remittance:S.ras.filter(r=>r.status!=="Reconciled").length, denials:openDenials().length, resubmissions:S.claims.filter(c=>c.status==="Resubmitted").length};
+}
+function renderNav(){
+  const n = counts();
+  $("#nav").innerHTML = VIEWS.map(([g,items]) => `<div class="nav-group">${g?`<div class="eyebrow">${g}</div>`:""}${items.map(([id,label]) =>
+    `<button type="button" data-go="${id}" ${id===current?'aria-current="page"':""}><span>${label}</span>${n[id]?`<span class="count">${n[id]}</span>`:""}</button>`).join("")}</div>`).join("");
+}
+function go(v){ current = v; try { history.replaceState(null,"","#"+v); } catch(e) {} render(); window.scrollTo(0,0); }
+function render(){ renderNav(); $("#view").innerHTML = R[current](); bindView(); }
+function toast(msg){ const t = $("#toast"); t.textContent = msg; t.hidden = false; clearTimeout(toast.h); toast.h = setTimeout(()=>t.hidden=true, 2600); }
+function head(title, sub, right=""){ return `<div class="page-head"><div><h1>${title}</h1><p>${sub}</p></div><div class="actions">${right}</div></div>`; }
+
+/* ---------- views ---------- */
+const R = {};
+R.overview = () => {
+  const live = S.claims.filter(c => c.status !== "Draft");
+  const ar = live.reduce((s,c)=>s+totals(c).outstanding,0);
+  const unbilled = S.claims.filter(c=>c.status==="Draft").reduce((s,c)=>s+totals(c).net,0);
+  const col30 = S.ras.filter(r=>diff(r.date,TODAY)<=30).reduce((s,r)=>s+r.amount,0);
+  const rem90 = S.claims.filter(c=>c.remits.length && diff(c.remits[0].d,TODAY)<=90);
+  const remNet = rem90.reduce((s,c)=>s+totals(c).net,0), remDen = rem90.reduce((s,c)=>s+c.remits[0].denied,0);
+  const clean = rem90.length ? rem90.filter(c=>c.remits[0].denied===0).length/rem90.length : 0;
+  const dtp = rem90.length ? rem90.reduce((s,c)=>s+diff(c.submitted,c.remits[0].d),0)/rem90.length : 0;
+  const ab = agingBy(null,"sub");
+  const over90 = ab.tot[3]+ab.tot[4];
+  const unrec = S.ras.filter(r=>r.status!=="Reconciled");
+  const n = counts();
+  // monthly billed vs collected
+  const months = []; const d0 = new Date(TODAY+"T00:00:00");
+  for (let i=5;i>=0;i--){ const d = new Date(d0.getFullYear(), d0.getMonth()-i, 1); months.push({key:d.getFullYear()+"-"+z(d.getMonth()+1),label:d.toLocaleDateString("en-GB",{month:"short"})}); }
+  months.forEach(m => { m.billed = S.claims.filter(c=>c.submitted && c.submitted.startsWith(m.key)).reduce((s,c)=>s+totals(c).net,0); m.col = S.ras.filter(r=>r.date.startsWith(m.key)).reduce((s,r)=>s+r.amount,0); });
+  const byPayer = PAYERS.map(p=>({label:p.name,v:ab.rows[p.id]?ab.rows[p.id].total:0})).filter(x=>x.v>0).sort((a,b)=>b.v-a.v);
+  return head("Revenue cycle overview",`Insurance position as of ${fmtD(TODAY)}. Outstanding balances are net of patient share and age from claim submission.`, `<span class="sample-note">Sample data</span>`) +
+  `<div class="kpis">
+    <div class="kpi"><span class="eyebrow">Outstanding insurance AR</span><span class="v">${aed(ar)}<small>AED</small></span><span class="s">${live.filter(c=>totals(c).outstanding>0).length} open claims</span></div>
+    <div class="kpi"><span class="eyebrow">Collected, last 30 days</span><span class="v">${aed(col30)}<small>AED</small></span><span class="s">from ${S.ras.filter(r=>diff(r.date,TODAY)<=30).length} remittances</span></div>
+    <div class="kpi ${over90/ar>0.25?"alert":""}"><span class="eyebrow">AR over 90 days</span><span class="v">${ar?Math.round(100*over90/ar):0}<small>%</small></span><span class="s">AED ${aed(over90)}</span></div>
+    <div class="kpi"><span class="eyebrow">Denial rate, 90 days</span><span class="v">${remNet?(100*remDen/remNet).toFixed(1):"0.0"}<small>% of value</small></span><span class="s">AED ${aed(remDen)} denied</span></div>
+    <div class="kpi"><span class="eyebrow">Clean claim rate</span><span class="v">${Math.round(clean*100)}<small>%</small></span><span class="s">paid in full first time</span></div>
+    <div class="kpi"><span class="eyebrow">Avg days to payment</span><span class="v">${Math.round(dtp)}<small>days</small></span><span class="s">submission to remittance</span></div>
+  </div>
+  <div class="queues">
+    <button class="queue" data-go="eligibility" type="button"><b>${n.eligibility}</b><span>Today's patients not yet verified</span></button>
+    <button class="queue" data-go="approvals" type="button"><b>${n.approvals}</b><span>Prior approvals awaiting payer</span></button>
+    <button class="queue" data-go="claims" data-status="Draft" type="button"><b>${n.claims}</b><span>Claims ready to submit (AED ${aed(unbilled)})</span></button>
+    <button class="queue" data-go="remittance" type="button"><b>${unrec.length}</b><span>Remittances to reconcile (AED ${aed(unrec.reduce((s,r)=>s+r.amount,0))})</span></button>
+    <button class="queue" data-go="denials" type="button"><b>${n.denials}</b><span>Open denials to work</span></button>
+  </div>
+  <div class="grid2">
+    <section class="panel"><div class="panel-head"><div><h2>Receivables aging</h2><p>Outstanding AED by days since submission</p></div><button class="btn sm" data-go="receivables" type="button">By payer</button></div>
+      ${vbars(BUCKETS.map((b,i)=>({label:b[0]+" d",v:ab.tot[i],color:b[3]})),{label:"Receivables aging"})}</section>
+    <section class="panel"><div class="panel-head"><div><h2>Outstanding by payer</h2><p>Insurers and TPAs, AED</p></div></div>
+      ${hbars(byPayer,{label:"Outstanding by payer"})}</section>
+  </div>
+  <section class="panel"><div class="panel-head"><div><h2>Billed vs collected</h2><p>Net claim value submitted and remittance amounts received per month, AED</p></div>
+    <div class="legend"><span><i style="background:var(--b1)"></i>Billed (net)</span><span><i style="background:var(--accent)"></i>Collected</span></div></div>
+    ${vbars(months.map(m=>({label:m.label,series:[{v:m.billed,color:"--b1"},{v:m.col,color:"--accent"}]})),{label:"Billed versus collected by month",w:1100,h:240})}</section>`;
+};
+
+R.eligibility = () => {
+  if (LIVE.on) return liveEligibility();
+  const v = UI.verifyResult;
+  const samples = [S.patients[0],S.patients[5],S.patients.find(p=>p.policy.validTo<TODAY)].filter(Boolean);
+  return head("Eligibility & access","Verify insurance cover before the patient sees the doctor. Each check records plan, network, co-pay and whether the service needs prior approval.") +
+  `<section class="panel"><div class="panel-head"><div><h2>Today's appointments</h2><p>${fmtD(TODAY)} · ${S.appts.filter(a=>a.status!=="Not verified").length} of ${S.appts.length} verified</p></div>
+    <div class="actions"><button class="btn" id="importAppts" type="button">Import appointment list</button><button class="btn primary" id="verifyAll" type="button">Verify all remaining</button></div></div>
+    <div class="table-wrap"><table><thead><tr><th>Time</th><th>Patient</th><th>Department</th><th>Payer</th><th>Card no.</th><th>Plan</th><th>Status</th><th>Checked</th><th></th></tr></thead><tbody>
+    ${S.appts.map(a=>{const p=patient(a.patient);return `<tr><td class="mono">${a.time}</td><td>${esc(p.name)}<div class="muted mono">${esc(p.eid)}</div></td><td>${esc(a.dept)}<div class="muted">${esc(a.doctor)}</div></td><td>${esc(payer(p.policy.payer).name)}</td><td class="mono">${esc(p.policy.card)}</td><td>${esc(p.policy.plan)}</td><td>${pill(a.status)}</td><td class="mono muted">${a.checked||"–"}</td><td><button class="btn sm" data-verify="${a.id}" type="button">${a.status==="Not verified"?"Verify":"Re-check"}</button></td></tr>`}).join("")}
+    </tbody></table></div></section>
+  <div class="grid2">
+    <section class="panel"><div class="panel-head"><div><h2>Walk-in member check</h2><p>Enter the insurance card number or Emirates ID</p></div></div>
+      <form id="verifyForm" class="form-grid">
+        <div class="field"><label for="vPayer">Payer</label><select id="vPayer">${PAYERS.map(p=>`<option value="${p.id}">${esc(p.name)} (${p.kind})</option>`).join("")}</select></div>
+        <div class="field"><label for="vCard">Card no. or Emirates ID</label><input id="vCard" type="text" placeholder="784-1990-1234567-1 or card no." required></div>
+        <div class="field"><label for="vDept">Service</label><select id="vDept">${Object.keys(DEPTS).map(d=>`<option>${esc(d)}</option>`).join("")}</select></div>
+        <div class="field"><button class="btn primary" type="submit">Check eligibility</button></div>
+      </form>
+      <div class="chips"><span class="muted" style="font-size:12px;align-self:center">Try a sample member:</span>${samples.map(p=>`<button type="button" class="chip" data-sample="${p.id}">${esc(p.name)} · ${esc(payer(p.policy.payer).name)}${p.policy.validTo<TODAY?" (expired)":""}</button>`).join("")}<button type="button" class="chip" data-sampleeid="${S.patients.find(p=>p.policy.payer==="DAM"&&p.policy.validTo>=TODAY).id}">Daman member by Emirates ID</button></div>
+      ${v ? resultCard(v) : `<div class="empty">Results of a walk-in check appear here.</div>`}
+    </section>
+    <section class="panel"><div class="panel-head"><div><h2>Verification log</h2><p>Most recent first</p></div></div>
+      <div class="table-wrap"><table><thead><tr><th>Time</th><th>Patient</th><th>Payer</th><th>Result</th><th>Source</th></tr></thead><tbody>
+      ${S.log.slice(0,14).map(l=>`<tr><td class="mono muted">${esc(l.t.slice(11)||l.t)}</td><td>${esc(l.pt?patient(l.pt).name:l.card)}</td><td>${esc(payer(l.payer).name||"")}</td><td>${pill(l.status)}</td><td class="muted">${esc(l.src)}</td></tr>`).join("") || `<tr><td colspan="5" class="empty">No checks yet today.</td></tr>`}
+      </tbody></table></div></section>
+  </div>`;
+};
+function resultCard(v){
+  const cls = v.status==="Eligible"?"ok":v.status==="Approval needed"?"warn":"bad";
+  return `<div class="result ${cls}"><div class="panel-head"><h3>${esc(v.name||"Member not found")}</h3>${pill(v.status)}</div><div>${esc(v.msg)}</div>
+  ${v.plan?`<dl class="kv"><div><dt>Payer</dt><dd>${esc(payer(v.payer).name)}</dd></div><div><dt>Card no.</dt><dd class="mono">${esc(v.card)}</dd></div><div><dt>Emirates ID</dt><dd class="mono">${esc(v.eid)}</dd></div><div><dt>Plan</dt><dd>${esc(v.plan)}</dd></div><div><dt>Network</dt><dd>${esc(v.network)}</dd></div><div><dt>Valid</dt><dd>${fmtD(v.validFrom)} – ${fmtD(v.validTo)}</dd></div><div><dt>Co-pay</dt><dd>${v.copay==null?"–":v.copay+"%"}</dd></div><div><dt>Deductible / visit</dt><dd>${v.ded==null?"–":"AED "+aed(v.ded)}</dd></div>${v.ref?`<div><dt>Reference</dt><dd class="mono">${esc(v.ref)}</dd></div>`:""}</dl>`:""}
+  ${v.status==="Not found"?`<div class="actions"><button class="btn sm primary" data-regmember="${esc(v.input||"")}" data-payer="${esc(v.payer||"")}" type="button">Register this member</button></div>`:""}
+  ${v.status==="Approval needed"?`<div class="actions"><button class="btn sm primary" data-newpa="${esc(v.patient)}" data-dept="${esc(v.dept)}" type="button">Request prior approval</button></div>`:""}</div>`;
+}
+
+R.approvals = () => {
+  const f = UI.paFilter;
+  const list = S.auths.filter(a => f==="All" || a.status===f);
+  const sts = ["All","Pending","Approved","Partially approved","Rejected"];
+  const pend = S.auths.filter(a=>a.status==="Pending");
+  return head("Prior approvals","Requests sent to payers for services that need approval before treatment, with the payer's decision and validity window.",`<button class="btn primary" id="newPaBtn" type="button">New request</button>`) +
+  `<div class="kpis">
+    <div class="kpi"><span class="eyebrow">Awaiting payer</span><span class="v">${pend.length}</span><span class="s">AED ${aed(pend.reduce((s,a)=>s+a.requested,0))} requested</span></div>
+    <div class="kpi"><span class="eyebrow">Approved, last 30 days</span><span class="v">${S.auths.filter(a=>a.status.includes("pproved")&&a.respOn&&diff(a.respOn,TODAY)<=30).length}</span><span class="s">including partial approvals</span></div>
+    <div class="kpi"><span class="eyebrow">Rejected, last 30 days</span><span class="v">${S.auths.filter(a=>a.status==="Rejected"&&diff(a.respOn,TODAY)<=30).length}</span><span class="s">review before treating</span></div>
+  </div>
+  <div class="chips">${sts.map(s=>`<button type="button" class="chip" data-pafilter="${s}" aria-pressed="${s===f}">${s}</button>`).join("")}</div>
+  <div class="table-wrap"><table><thead><tr><th>Request</th><th>Patient</th><th>Payer</th><th>Service</th><th>Dx</th><th class="num">Requested</th><th class="num">Approved</th><th>Status</th><th>Requested</th><th>Valid until</th><th></th></tr></thead><tbody>
+  ${list.map(a=>`<tr><td class="mono">${a.id}</td><td>${esc(patient(a.patient).name)}</td><td>${esc(payer(a.payer).name)}</td><td class="wrap-cell"><span class="code">${esc(a.code)}</span> ${esc(a.desc)}<div class="muted">${esc(a.dept)}${a.note?" · "+esc(a.note):""}</div></td><td><span class="code">${esc(a.dx)}</span></td><td class="num">${aed(a.requested)}</td><td class="num">${a.status==="Pending"?"–":aed(a.approved)}</td><td>${pill(a.status)}</td><td class="muted">${fmtD(a.reqOn)}</td><td class="muted">${a.validTo?fmtD(a.validTo):"–"}</td><td>${a.status==="Pending"?`<button class="btn sm" data-paresp="${a.id}" type="button">Record response</button>`:a.claim?`<button class="btn sm" data-claim="${a.claim}" type="button">Claim</button>`:""}</td></tr>`).join("") || `<tr><td colspan="11" class="empty">No requests with this status.</td></tr>`}
+  </tbody></table></div>`;
+};
+
+R.claims = () => {
+  const q = UI.claimQ.toLowerCase();
+  const list = S.claims.filter(c => {
+    const p = patient(c.patient);
+    if (q && !(c.id.toLowerCase().includes(q) || p.name.toLowerCase().includes(q) || c.card.toLowerCase().includes(q))) return false;
+    if (UI.claimPayer && c.payer !== UI.claimPayer) return false;
+    if (UI.claimStatus && status(c) !== UI.claimStatus) return false;
+    if (UI.claimDept && c.dept !== UI.claimDept) return false;
+    return true;
+  }).sort((a,b)=>b.enc.localeCompare(a.enc));
+  const sum = list.reduce((s,c)=>{const t=totals(c);s.net+=t.net;s.paid+=t.paid;s.out+=t.outstanding;return s;},{net:0,paid:0,out:0});
+  const drafts = S.claims.filter(c=>c.status==="Draft");
+  const STS = ["Draft","Submitted","Resubmitted","Paid","Partially paid","Rejected","Closed"];
+  return head("Claims","Every insurance claim from encounter to settlement. Open a claim to see activities, payer decisions and history.",
+    `<button class="btn primary" id="submitDrafts" type="button" ${drafts.length?"":"disabled"}>Submit ${drafts.length} draft claim${drafts.length===1?"":"s"}</button>`) +
+  `<div class="filters">
+    <input type="text" id="fq" placeholder="Search claim, patient or card" value="${esc(UI.claimQ)}" style="flex:1 1 220px">
+    <select id="fpayer"><option value="">All payers</option>${PAYERS.map(p=>`<option value="${p.id}" ${UI.claimPayer===p.id?"selected":""}>${esc(p.name)}</option>`).join("")}</select>
+    <select id="fstatus"><option value="">All statuses</option>${STS.map(s=>`<option ${UI.claimStatus===s?"selected":""}>${s}</option>`).join("")}</select>
+    <select id="fdept"><option value="">All departments</option>${Object.keys(DEPTS).map(d=>`<option ${UI.claimDept===d?"selected":""}>${esc(d)}</option>`).join("")}</select>
+  </div>
+  <div class="table-wrap"><table><thead><tr><th>Claim</th><th>Patient</th><th>Payer</th><th>Department</th><th>Encounter</th><th>Submitted</th><th class="num">Net AED</th><th class="num">Paid</th><th class="num">Outstanding</th><th>Status</th></tr></thead><tbody>
+  ${list.map(c=>{const t=totals(c);return `<tr class="click" data-claim="${c.id}" tabindex="0"><td class="mono">${c.id}</td><td>${esc(patient(c.patient).name)}</td><td>${esc(payer(c.payer).name)}</td><td>${esc(c.dept)}</td><td class="muted">${fmtD(c.enc)}</td><td class="muted">${fmtD(c.submitted)}</td><td class="num">${aed(t.net)}</td><td class="num">${aed(t.paid)}</td><td class="num">${t.outstanding?aed(t.outstanding):"–"}</td><td>${pill(status(c))}</td></tr>`}).join("") || `<tr><td colspan="10" class="empty">No claims match these filters.</td></tr>`}
+  </tbody><tfoot><tr><td colspan="6">${list.length} claims</td><td class="num">${aed(sum.net)}</td><td class="num">${aed(sum.paid)}</td><td class="num">${aed(sum.out)}</td><td></td></tr></tfoot></table></div>`;
+};
+
+R.remittance = () => {
+  const unrec = S.ras.filter(r=>r.status!=="Reconciled");
+  const variance = S.ras.filter(r=>raState(r)==="Variance").reduce((s,r)=>s+(r.bank-r.amount),0);
+  return head("Remittance & reconciliation","Match each payer remittance advice to the claims it settles and to the bank deposit. Import a remittance file to post payments and denials to claims.") +
+  `<div class="kpis">
+    <div class="kpi"><span class="eyebrow">Unreconciled remittances</span><span class="v">${unrec.length}</span><span class="s">AED ${aed(unrec.reduce((s,r)=>s+r.amount,0))}</span></div>
+    <div class="kpi"><span class="eyebrow">Awaiting bank deposit</span><span class="v">${S.ras.filter(r=>r.bank==null).length}</span><span class="s">AED ${aed(S.ras.filter(r=>r.bank==null).reduce((s,r)=>s+r.amount,0))}</span></div>
+    <div class="kpi ${variance<0?"alert":""}"><span class="eyebrow">Bank vs remittance variance</span><span class="v">${aed(variance)}<small>AED</small></span><span class="s">${S.ras.filter(r=>raState(r)==="Variance").length} remittances differ</span></div>
+  </div>
+  <section class="panel"><div class="panel-head"><div><h2>Import remittance advice</h2><p>Paste a <span class="code">Remittance.Advice</span> XML file as downloaded from the payer or DHA eClaimLink. Payments and denial codes post to matching claim activities.</p></div>
+    <div class="actions"><button class="btn" id="sampleRa" type="button">Load a sample file</button><label class="btn" for="raFile">Choose file</label><input type="file" id="raFile" accept=".xml,text/xml" hidden></div></div>
+    <textarea id="raXml" spellcheck="false" placeholder="&lt;Remittance.Advice&gt; … &lt;/Remittance.Advice&gt;"></textarea>
+    <div class="actions"><button class="btn primary" id="importRa" type="button">Import and post payments</button><span class="muted" id="raMsg"></span></div>
+  </section>
+  <div class="table-wrap"><table><thead><tr><th>Remittance</th><th>Payer</th><th>Settlement</th><th>Payment ref.</th><th class="num">Claims</th><th class="num">Remitted AED</th><th class="num">Denied AED</th><th class="num">Bank received</th><th class="num">Variance</th><th>Status</th></tr></thead><tbody>
+  ${S.ras.map(r=>{const den=r.lines.reduce((s,l)=>s+l.denied,0);const v=r.bank==null?null:r2(r.bank-r.amount);return `<tr class="click" data-ra="${r.id}" tabindex="0"><td class="mono">${r.id}</td><td>${esc(payer(r.payer).name)}</td><td class="muted">${fmtD(r.date)}</td><td class="mono">${esc(r.payRef)}</td><td class="num">${r.lines.length}</td><td class="num">${aed(r.amount)}</td><td class="num">${den?aed(den):"–"}</td><td class="num">${r.bank==null?"–":aed(r.bank)}</td><td class="num" style="${v?"color:var(--bad)":""}">${v==null?"–":v?aed(v):"0.00"}</td><td>${pill(raState(r))}</td></tr>`}).join("")}
+  </tbody></table></div>`;
+};
+
+R.denials = () => {
+  const open = openDenials();
+  const resub = S.claims.filter(c=>c.status==="Resubmitted");
+  const byCode = {};
+  open.forEach(c => c.acts.forEach(a => { if (a.denial){ const amt = Math.max(0,a.net-a.paid); byCode[a.denial] = (byCode[a.denial]||0) + amt; } }));
+  const codeItems = Object.entries(byCode).filter(e=>e[1]>0).sort((a,b)=>b[1]-a[1]).map(([k,v])=>({label:k,v,color:k.startsWith("AUTH")||k.startsWith("ELIG")?"--b4":k.startsWith("PRCE")?"--b2":"--b3"}));
+  const wo90 = S.claims.filter(c=>c.writeOff>0).reduce((s,c)=>s+c.writeOff,0);
+  return head("Denials","Claims the payer rejected in full or in part. Resubmit with a correction, or write off the balance with a reason.") +
+  `<div class="kpis">
+    <div class="kpi alert"><span class="eyebrow">Open denials</span><span class="v">${aed(open.reduce((s,c)=>s+totals(c).outstanding,0))}<small>AED</small></span><span class="s">${open.length} claims</span></div>
+    <div class="kpi"><span class="eyebrow">Resubmitted, awaiting payer</span><span class="v">${aed(resub.reduce((s,c)=>s+totals(c).outstanding,0))}<small>AED</small></span><span class="s">${resub.length} claims</span></div>
+    <div class="kpi"><span class="eyebrow">Written off to date</span><span class="v">${aed(wo90)}<small>AED</small></span><span class="s">${S.claims.filter(c=>c.writeOff>0).length} claims</span></div>
+  </div>
+  <div class="grid3">
+    <section class="panel"><div class="panel-head"><div><h2>Denial worklist</h2><p>Oldest first, so time-limited resubmissions are worked before they lapse</p></div></div>
+      <div class="table-wrap"><table><thead><tr><th>Claim</th><th>Patient</th><th>Payer</th><th>Denial</th><th class="num">Denied AED</th><th class="num">Days</th><th></th></tr></thead><tbody>
+      ${open.sort((a,b)=>a.remitDate.localeCompare(b.remitDate)).map(c=>{const codes=[...new Set(c.acts.filter(a=>a.denial&&a.net>a.paid).map(a=>a.denial))];const d=diff(c.remitDate,TODAY);return `<tr><td class="mono">${c.id}</td><td>${esc(patient(c.patient).name)}</td><td>${esc(payer(c.payer).name)}</td><td class="wrap-cell">${codes.map(k=>`<span class="code">${k}</span> ${esc(DENIALS[k]||"")}`).join("<br>")}${c.resubs.length?`<div class="muted" style="font-size:12px">Resubmitted ${c.resubs.length}× before, denied again</div>`:""}</td><td class="num">${aed(totals(c).outstanding)}</td><td class="num" style="${d>60?"color:var(--bad);font-weight:600":""}">${d}</td><td><button class="btn sm" data-claim="${c.id}" type="button">Work</button></td></tr>`}).join("") || `<tr><td colspan="7" class="empty">No open denials.</td></tr>`}
+      </tbody></table></div></section>
+    <section class="panel"><div class="panel-head"><div><h2>Denied value by code</h2><p>Open denials, AED</p></div></div>
+      ${codeItems.length?hbars(codeItems,{pl:76,label:"Denied value by code"}):`<div class="empty">Nothing denied.</div>`}
+      <div class="legend"><span><i style="background:var(--b4)"></i>Authorisation / eligibility</span><span><i style="background:var(--b3)"></i>Clinical / coding</span><span><i style="background:var(--b2)"></i>Pricing</span></div>
+    </section>
+  </div>`;
+};
+
+function resubState(x){
+  if (!x.outcome) return "Awaiting payer";
+  if (x.outcome.paid <= 0.009) return "Denied again";
+  return x.outcome.denied > 0.009 ? "Partially recovered" : "Recovered";
+}
+function resubXml(c){
+  const p = patient(c.patient), t = totals(c), x = c.resubs[c.resubs.length-1] || {type:"correction",note:""};
+  const dt = iso => iso.split("-").reverse().join("/");
+  return `<?xml version="1.0" encoding="utf-8"?>
+<Claim.Submission>
+  <Header>
+    <SenderID>DHA-F-0000000</SenderID>
+    <ReceiverID>${c.payer}</ReceiverID>
+    <TransactionDate>${dt(TODAY)} ${nowTime()}</TransactionDate>
+    <RecordCount>1</RecordCount>
+    <DispositionFlag>PRODUCTION</DispositionFlag>
+  </Header>
+  <Claim>
+    <ID>${c.id}</ID>
+    <MemberID>${esc(c.card)}</MemberID>
+    <PayerID>${c.payer}</PayerID>
+    <ProviderID>DHA-F-0000000</ProviderID>
+    <EmiratesIDNumber>${esc(p.eid)}</EmiratesIDNumber>
+    <Gross>${t.gross.toFixed(2)}</Gross>
+    <PatientShare>${t.ps.toFixed(2)}</PatientShare>
+    <Net>${t.net.toFixed(2)}</Net>
+    <Encounter>
+      <FacilityID>DHA-F-0000000</FacilityID>
+      <Type>1</Type>
+      <PatientID>${p.id}</PatientID>
+      <Start>${dt(c.enc)} 09:00</Start>
+    </Encounter>
+${c.dx.map((d,i)=>`    <Diagnosis>
+      <Type>${i?"Secondary":"Principal"}</Type>
+      <Code>${d[0]}</Code>
+    </Diagnosis>`).join("\n")}
+${c.acts.map(a=>`    <Activity>
+      <ID>${a.aid}</ID>
+      <Start>${dt(c.enc)} 09:00</Start>
+      <Type>${/^D\d/.test(a.code)?6:3}</Type>
+      <Code>${a.code}</Code>
+      <Quantity>${a.qty}</Quantity>
+      <Net>${a.net.toFixed(2)}</Net>
+      <Clinician>${esc(c.doctor)}</Clinician>${c.pa?`
+      <PriorAuthorizationID>${c.pa}</PriorAuthorizationID>`:""}
+    </Activity>`).join("\n")}
+    <Resubmission>
+      <Type>${esc(x.type)}</Type>
+      <Comment>${esc(x.note)}</Comment>
+    </Resubmission>
+  </Claim>
+</Claim.Submission>`;
+}
+R.resubmissions = () => {
+  const rows = [];
+  S.claims.forEach(c => c.resubs.forEach((x,i) => rows.push({c,x,i,st:resubState(x)})));
+  const f = UI.rsFilter || "All";
+  const list = rows.filter(r => f==="All" || r.st===f).sort((a,b)=> (a.st==="Awaiting payer"?0:1)-(b.st==="Awaiting payer"?0:1) || a.x.d.localeCompare(b.x.d));
+  const waiting = rows.filter(r=>!r.x.outcome), done = rows.filter(r=>r.x.outcome);
+  const sent = done.reduce((s,r)=>s+r.x.amount,0), got = done.reduce((s,r)=>s+r.x.outcome.paid,0);
+  const d90 = done.filter(r=>diff(r.x.outcome.d,TODAY)<=90);
+  const avgDays = done.length ? done.reduce((s,r)=>s+diff(r.x.d,r.x.outcome.d),0)/done.length : 0;
+  const ready = openDenials();
+  const byPayer = PAYERS.map(p => { const rs = rows.filter(r=>r.c.payer===p.id); const dn = rs.filter(r=>r.x.outcome);
+    return {p, n:rs.length, amt:rs.reduce((s,r)=>s+r.x.amount,0), wait:rs.filter(r=>!r.x.outcome).reduce((s,r)=>s+r.x.amount,0), sent:dn.reduce((s,r)=>s+r.x.amount,0), got:dn.reduce((s,r)=>s+r.x.outcome.paid,0)}; }).filter(r=>r.n);
+  const sts = ["All","Awaiting payer","Recovered","Partially recovered","Denied again"];
+  return head("Resubmissions","Denied claims sent back to the payer with a correction or an internal complaint, and what each one recovered.",
+    `<button class="btn" data-go="denials" type="button">${ready.length} denials ready to resubmit</button>`) +
+  `<div class="kpis">
+    <div class="kpi"><span class="eyebrow">Awaiting payer</span><span class="v">${aed(waiting.reduce((s,r)=>s+r.x.amount,0))}<small>AED</small></span><span class="s">${waiting.length} resubmissions</span></div>
+    <div class="kpi"><span class="eyebrow">Recovered, last 90 days</span><span class="v">${aed(d90.reduce((s,r)=>s+r.x.outcome.paid,0))}<small>AED</small></span><span class="s">${d90.filter(r=>r.x.outcome.paid>0).length} claims paid on resubmission</span></div>
+    <div class="kpi"><span class="eyebrow">Recovery rate</span><span class="v">${sent?Math.round(100*got/sent):0}<small>% of value</small></span><span class="s">AED ${aed(got)} of ${aed(sent)} decided</span></div>
+    <div class="kpi"><span class="eyebrow">Avg days to outcome</span><span class="v">${Math.round(avgDays)}<small>days</small></span><span class="s">resubmission to payer decision</span></div>
+  </div>
+  <div class="chips">${sts.map(s=>`<button type="button" class="chip" data-rsfilter="${s}" aria-pressed="${s===f}">${s} · ${s==="All"?rows.length:rows.filter(r=>r.st===s).length}</button>`).join("")}</div>
+  <div class="table-wrap"><table><thead><tr><th>Claim</th><th>Patient</th><th>Payer</th><th>#</th><th>Type</th><th>Original denial</th><th>Correction</th><th>Resubmitted</th><th class="num">Days</th><th class="num">Amount</th><th class="num">Recovered</th><th>Outcome</th></tr></thead><tbody>
+  ${list.map(({c,x,i,st})=>{ const codes=x.codes||[...new Set(c.acts.map(a=>a.denial).filter(Boolean))]; const orig = codes.length?codes:["–"]; const days = diff(x.d, x.outcome?x.outcome.d:TODAY);
+    return `<tr class="click" data-claim="${c.id}" tabindex="0"><td class="mono">${c.id}</td><td>${esc(patient(c.patient).name)}</td><td>${esc(payer(c.payer).name)}</td><td class="num">${i+1}</td><td>${esc(x.type)}</td><td>${orig.map(k=>k==="–"?"–":`<span class="code" title="${esc(DENIALS[k]||"")}">${k}</span>`).join(" ")}</td><td class="wrap-cell">${esc(x.note)}</td><td class="muted">${fmtD(x.d)}</td><td class="num" style="${!x.outcome&&days>45?"color:var(--bad);font-weight:600":""}">${days}</td><td class="num">${aed(x.amount)}</td><td class="num">${x.outcome?aed(x.outcome.paid):"–"}</td><td>${pill(st)}</td></tr>`; }).join("") || `<tr><td colspan="12" class="empty">No resubmissions with this outcome.</td></tr>`}
+  </tbody></table></div>
+  <section class="panel"><div class="panel-head"><div><h2>Recovery by payer</h2><p>Value resubmitted and recovered once the payer decided, AED</p></div></div>
+  <div class="table-wrap"><table><thead><tr><th>Payer</th><th class="num">Resubmissions</th><th class="num">Resubmitted</th><th class="num">Awaiting</th><th class="num">Decided</th><th class="num">Recovered</th><th class="num">Recovery rate</th></tr></thead><tbody>
+  ${byPayer.sort((a,b)=>b.amt-a.amt).map(r=>`<tr><td><b>${esc(r.p.name)}</b></td><td class="num">${r.n}</td><td class="num">${aed(r.amt)}</td><td class="num">${r.wait?aed(r.wait):"–"}</td><td class="num">${r.sent?aed(r.sent):"–"}</td><td class="num">${r.got?aed(r.got):"–"}</td><td class="num">${r.sent?Math.round(100*r.got/r.sent)+"%":"–"}</td></tr>`).join("")}
+  </tbody></table></div></section>`;
+};
+
+function agingBy(payerId, basis){
+  const rows = {}, tot = [0,0,0,0,0];
+  S.claims.forEach(c => {
+    if (c.status === "Draft") return;
+    if (payerId && c.payer !== payerId) return;
+    const t = totals(c); if (t.outstanding <= 0) return;
+    const b = bucketOf(ageOf(c,basis));
+    const r = rows[c.payer] || (rows[c.payer] = {v:[0,0,0,0,0],total:0,n:0,overdue:0});
+    r.v[b] += t.outstanding; r.total += t.outstanding; r.n++; tot[b] += t.outstanding;
+    if (ageOf(c,"sub") > payer(c.payer).terms) r.overdue += t.outstanding;
+  });
+  return {rows,tot};
+}
+R.receivables = () => {
+  const {rows,tot} = agingBy(null, UI.arBasis);
+  const total = tot.reduce((a,b)=>a+b,0);
+  const order = PAYERS.filter(p=>rows[p.id]).sort((a,b)=>rows[b.id].total-rows[a.id].total);
+  const sel = UI.arPayer;
+  const detail = sel ? S.claims.filter(c=>c.payer===sel && c.status!=="Draft" && totals(c).outstanding>0).sort((a,b)=>ageOf(b,UI.arBasis)-ageOf(a,UI.arBasis)) : [];
+  const overdue = order.reduce((s,p)=>s+rows[p.id].overdue,0);
+  return head("Insurance receivables","Money owed by insurers and TPAs, net of patient share, aged into standard buckets. Select a payer to see the claims behind the balance.",
+    `<div class="chips"><button type="button" class="chip" data-basis="sub" aria-pressed="${UI.arBasis==="sub"}">Age from submission</button><button type="button" class="chip" data-basis="enc" aria-pressed="${UI.arBasis==="enc"}">Age from service date</button></div><button class="btn" id="copyCsv" type="button">Copy as CSV</button>`) +
+  `<div class="kpis">
+    <div class="kpi"><span class="eyebrow">Total insurance AR</span><span class="v">${aed(total)}<small>AED</small></span><span class="s">${order.length} payers</span></div>
+    <div class="kpi alert"><span class="eyebrow">Past payer terms</span><span class="v">${aed(overdue)}<small>AED</small></span><span class="s">older than contract payment days</span></div>
+    <div class="kpi"><span class="eyebrow">Over 180 days</span><span class="v">${aed(tot[4])}<small>AED</small></span><span class="s">candidates for escalation or write-off</span></div>
+  </div>
+  <section class="panel"><div class="panel-head"><div><h2>Aging by payer</h2><p>AED outstanding per bucket, days since ${UI.arBasis==="sub"?"submission":"date of service"}</p></div>${legendBuckets()}</div>
+  <div class="table-wrap"><table><thead><tr><th>Payer</th><th>Type</th><th class="num">Terms</th>${BUCKETS.map(b=>`<th class="num">${b[0]}</th>`).join("")}<th class="num">Total</th><th class="num">Past terms</th><th>Mix</th></tr></thead><tbody>
+  ${order.map(p=>{const r=rows[p.id];return `<tr class="click" data-arpayer="${p.id}" tabindex="0" ${sel===p.id?'style="outline:2px solid var(--accent);outline-offset:-2px"':""}><td><b>${esc(p.name)}</b></td><td class="muted">${p.kind}</td><td class="num">${p.terms} d</td>${r.v.map(v=>`<td class="num">${v?aed(v):"–"}</td>`).join("")}<td class="num"><b>${aed(r.total)}</b></td><td class="num" style="color:var(--bad)">${r.overdue?aed(r.overdue):"–"}</td><td>${stackBar(r.v,r.total)}</td></tr>`}).join("")}
+  </tbody><tfoot><tr><td colspan="3">All payers</td>${tot.map(v=>`<td class="num">${aed(v)}</td>`).join("")}<td class="num">${aed(total)}</td><td class="num">${aed(overdue)}</td><td>${stackBar(tot,total)}</td></tr><tr><td colspan="3" class="muted">Share of total</td>${tot.map(v=>`<td class="num muted">${total?(100*v/total).toFixed(1):0}%</td>`).join("")}<td colspan="3"></td></tr></tfoot></table></div></section>
+  ${sel?`<section class="panel"><div class="panel-head"><div><h2>${esc(payer(sel).name)}: open claims</h2><p>${detail.length} claims, oldest first</p></div><button class="btn sm" data-arpayer="" type="button">Close</button></div>
+  <div class="table-wrap"><table><thead><tr><th>Claim</th><th>Patient</th><th>Service date</th><th>Submitted</th><th class="num">Age</th><th class="num">Net AED</th><th class="num">Paid</th><th class="num">Outstanding</th><th>Status</th></tr></thead><tbody>
+  ${detail.map(c=>{const t=totals(c),a=ageOf(c,UI.arBasis);return `<tr class="click" data-claim="${c.id}" tabindex="0"><td class="mono">${c.id}</td><td>${esc(patient(c.patient).name)}</td><td class="muted">${fmtD(c.enc)}</td><td class="muted">${fmtD(c.submitted)}</td><td class="num"><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:var(${BUCKETS[bucketOf(a)][3]});margin-right:6px"></span>${a}</td><td class="num">${aed(t.net)}</td><td class="num">${aed(t.paid)}</td><td class="num"><b>${aed(t.outstanding)}</b></td><td>${pill(status(c))}</td></tr>`}).join("")}
+  </tbody></table></div></section>`:`<div class="muted" style="font-size:12.5px">Select a payer row to list its open claims.</div>`}`;
+};
+
+/* ---------- dialogs ---------- */
+const dlg = $("#dlg");
+function openDlg(html){ $("#dlgInner").innerHTML = html; if (!dlg.open) dlg.showModal(); bindDlg(); }
+function closeDlg(){ dlg.close(); }
+dlg.addEventListener("click", e => { if (e.target === dlg) closeDlg(); });
+const dlgHead = (title, sub, right="") => `<div class="dlg-head"><div><h2>${title}</h2><div class="muted" style="font-size:12.5px;margin-top:2px">${sub}</div></div><div class="actions">${right}<button class="dlg-x" data-close aria-label="Close" type="button">×</button></div></div>`;
+
+function claimDlg(id){
+  const c = claimById(id); if (!c) return;
+  const p = patient(c.patient), t = totals(c), st = status(c);
+  let act = "";
+  if (c.status === "Draft") act = `<button class="btn primary" data-act="submit" type="button">Submit to payer</button>`;
+  if (st === "Rejected" || st === "Partially paid") act = `
+    <div class="form-grid" style="width:100%">
+      <div class="field"><label for="rsType">Resubmission type</label><select id="rsType"><option value="correction">Correction</option><option value="internal complaint">Internal complaint (appeal)</option></select></div>
+      <div class="field" style="grid-column:span 2"><label for="rsNote">What was corrected</label><input type="text" id="rsNote" value="Attached clinical notes and corrected diagnosis coding"></div>
+      <div class="field"><button class="btn primary" data-act="resubmit" type="button">Resubmit claim</button></div>
+    </div>
+    <div class="form-grid" style="width:100%">
+      <div class="field" style="grid-column:span 2"><label for="woReason">Write-off reason</label><select id="woReason"><option>Contractual / non-recoverable</option><option>Resubmission time limit passed</option><option>Transfer to patient responsibility</option><option>Small balance</option></select></div>
+      <div class="field"><button class="btn danger" data-act="writeoff" type="button">Write off AED ${aed(t.outstanding)}</button></div>
+    </div>`;
+  if (c.status === "Submitted" || c.status === "Resubmitted") act = `<span class="muted">Awaiting remittance from ${esc(payer(c.payer).name)}. Payments post when the remittance file is imported.</span>`;
+  if (c.status === "Resubmitted") act += ` <button class="btn sm" data-act="resubXml" type="button">View resubmission file</button>`;
+  const resubHist = c.resubs.length ? `<div><span class="eyebrow">Resubmissions</span><div class="table-wrap" style="margin-top:6px"><table><thead><tr><th>#</th><th>Date</th><th>Type</th><th>Correction</th><th class="num">Amount</th><th>Outcome</th><th class="num">Recovered</th></tr></thead><tbody>
+    ${c.resubs.map((x,i)=>`<tr><td>${i+1}</td><td class="muted">${fmtD(x.d)}</td><td>${esc(x.type)}</td><td class="wrap-cell">${esc(x.note)}</td><td class="num">${aed(x.amount)}</td><td>${pill(resubState(x))}</td><td class="num">${x.outcome?aed(x.outcome.paid):"–"}</td></tr>`).join("")}</tbody></table></div></div>` : "";
+  openDlg(dlgHead(`<span class="mono" style="font-size:15px">${c.id}</span> ${pill(st)}`, `${esc(p.name)} · ${esc(payer(c.payer).name)} · ${esc(c.dept)}`) +
+  `<div class="dlg-body">
+    <dl class="kv"><div><dt>Encounter</dt><dd>${fmtD(c.enc)}</dd></div><div><dt>Clinician</dt><dd>${esc(c.doctor)}</dd></div><div><dt>Member card</dt><dd class="mono">${esc(c.card)}</dd></div><div><dt>Emirates ID</dt><dd class="mono">${esc(p.eid)}</dd></div><div><dt>Plan</dt><dd>${esc(p.policy.plan)}</dd></div><div><dt>Prior approval</dt><dd class="mono">${c.pa||"–"}</dd></div></dl>
+    <div><span class="eyebrow">Diagnosis</span><div>${c.dx.map(d=>`<span class="code">${esc(d[0])}</span> ${esc(d[1])}`).join("<br>")}</div></div>
+    <div class="table-wrap"><table><thead><tr><th>Activity</th><th>Code</th><th>Description</th><th class="num">Qty</th><th class="num">Gross</th><th class="num">Patient share</th><th class="num">Net</th><th class="num">Paid</th><th>Denial</th></tr></thead><tbody>
+    ${c.acts.map(a=>`<tr><td class="mono muted">${a.aid}</td><td><span class="code">${esc(a.code)}</span></td><td>${esc(a.desc)}</td><td class="num">${a.qty}</td><td class="num">${aed(a.gross)}</td><td class="num">${aed(a.ps)}</td><td class="num">${aed(a.net)}</td><td class="num">${c.status==="Draft"||c.status==="Submitted"&&!c.remits.length?"–":aed(a.paid)}</td><td>${a.denial?`<span class="code" title="${esc(DENIALS[a.denial]||"")}">${a.denial}</span>`:""}</td></tr>`).join("")}
+    </tbody><tfoot><tr><td colspan="4">Totals</td><td class="num">${aed(t.gross)}</td><td class="num">${aed(t.ps)}</td><td class="num">${aed(t.net)}</td><td class="num">${aed(t.paid)}</td><td>${t.outstanding?`Due ${aed(t.outstanding)}`:""}</td></tr></tfoot></table></div>
+    ${c.acts.some(a=>a.denial)?`<div class="result bad">${[...new Set(c.acts.filter(a=>a.denial).map(a=>a.denial))].map(k=>`<div><span class="code">${k}</span> ${esc(DENIALS[k]||"")}</div>`).join("")}</div>`:""}
+    ${resubHist}
+    <div class="actions">${act}</div>
+    <div><span class="eyebrow">History</span><ul class="timeline" style="margin-top:8px">${c.events.slice().sort((a,b)=>a.d.localeCompare(b.d)).map(e=>`<li><span class="muted">${fmtD(e.d)}</span> · ${esc(e.t)}</li>`).join("")}</ul></div>
+  </div>`);
+  dlg.dataset.claim = id;
+}
+function raDlg(id){
+  const r = S.ras.find(x=>x.id===id); if (!r) return;
+  const st = raState(r);
+  openDlg(dlgHead(`<span class="mono" style="font-size:15px">${r.id}</span> ${pill(st)}`, `${esc(payer(r.payer).name)} · settled ${fmtD(r.date)} · payment ref. ${esc(r.payRef)} · ${esc(r.source)}`) +
+  `<div class="dlg-body">
+    <dl class="kv"><div><dt>Remitted</dt><dd>AED ${aed(r.amount)}</dd></div><div><dt>Denied in file</dt><dd>AED ${aed(r.lines.reduce((s,l)=>s+l.denied,0))}</dd></div><div><dt>Bank received</dt><dd>${r.bank==null?"Not yet":"AED "+aed(r.bank)}</dd></div><div><dt>Variance</dt><dd>${r.bank==null?"–":"AED "+aed(r.bank-r.amount)}</dd></div>${r.recOn?`<div><dt>Reconciled on</dt><dd>${fmtD(r.recOn)}</dd></div>`:""}</dl>
+    <div class="table-wrap"><table><thead><tr><th>Claim</th><th>Patient</th><th class="num">Claim net</th><th class="num">Paid</th><th class="num">Denied</th><th>Claim status</th></tr></thead><tbody>
+    ${r.lines.map(l=>{const c=claimById(l.claim);return `<tr class="click" data-claim="${l.claim}"><td class="mono">${l.claim}</td><td>${c?esc(patient(c.patient).name):"–"}</td><td class="num">${c?aed(totals(c).net):"–"}</td><td class="num">${aed(l.paid)}</td><td class="num">${l.denied?aed(l.denied):"–"}</td><td>${c?pill(status(c)):""}</td></tr>`}).join("")}
+    </tbody></table></div>
+    ${r.status==="Reconciled"?`<div class="muted">This remittance is matched to its claims and to the bank deposit.</div>`:`
+    <div class="form-grid"><div class="field"><label for="bankAmt">Amount on bank statement (AED)</label><input type="number" step="0.01" id="bankAmt" value="${r.bank==null?r.amount:r.bank}"></div>
+    <div class="field"><label for="bankNote">Variance reason, if any</label><select id="bankNote"><option>No variance</option><option>Bank charges</option><option>Payer offset against prior overpayment</option><option>Short payment, raise with payer</option></select></div>
+    <div class="field"><button class="btn primary" data-act="reconcile" type="button">Mark reconciled</button></div></div>`}
+  </div>`);
+  dlg.dataset.ra = id;
+}
+function paRespDlg(id){
+  const a = S.auths.find(x=>x.id===id);
+  openDlg(dlgHead(`Payer response · <span class="mono">${a.id}</span>`, `${esc(patient(a.patient).name)} · ${esc(payer(a.payer).name)} · ${esc(a.code)} ${esc(a.desc)}`) +
+  `<div class="dlg-body"><div class="form-grid">
+    <div class="field"><label for="paDec">Decision</label><select id="paDec"><option>Approved</option><option>Partially approved</option><option>Rejected</option></select></div>
+    <div class="field"><label for="paAmt">Approved amount (AED)</label><input type="number" step="0.01" id="paAmt" value="${a.requested}"></div>
+    <div class="field" style="grid-column:1/-1"><label for="paNote">Payer comment / denial code</label><input type="text" id="paNote" placeholder="e.g. MNEC-004"></div>
+  </div><div class="actions"><button class="btn primary" data-act="paSave" type="button">Save response</button></div></div>`);
+  dlg.dataset.pa = id;
+}
+function newPaDlg(ptId, dept){
+  const d0 = dept && DEPTS[dept] ? dept : "Physiotherapy";
+  const opts = dd => [...DEPTS[dd].acts,...DEPTS[dd].extra].map(a=>`<option value="${a[0]}">${a[0]} · ${esc(a[1])} (AED ${a[2]})</option>`).join("");
+  openDlg(dlgHead("New prior approval request","Sent to the patient's payer. Record the decision when it arrives.") +
+  `<div class="dlg-body"><div class="form-grid">
+    <div class="field"><label for="npPt">Patient</label><select id="npPt">${S.patients.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(p=>`<option value="${p.id}" ${p.id===ptId?"selected":""}>${esc(p.name)} · ${esc(payer(p.policy.payer).name)}</option>`).join("")}</select></div>
+    <div class="field"><label for="npDept">Department</label><select id="npDept">${Object.keys(DEPTS).map(d=>`<option ${d===d0?"selected":""}>${esc(d)}</option>`).join("")}</select></div>
+    <div class="field"><label for="npAct">Service</label><select id="npAct">${opts(d0)}</select></div>
+    <div class="field"><label for="npDx">Diagnosis</label><select id="npDx">${DEPTS[d0].dx.map(x=>`<option value="${x[0]}">${x[0]} · ${esc(x[1])}</option>`).join("")}</select></div>
+    <div class="field"><label for="npQty">Quantity / sessions</label><input type="number" id="npQty" value="1" min="1"></div>
+  </div><div class="actions"><button class="btn primary" data-act="paCreate" type="button">Send request</button></div></div>`);
+  $("#npDept").addEventListener("change", e => { const dd = e.target.value; $("#npAct").innerHTML = opts(dd); $("#npDx").innerHTML = DEPTS[dd].dx.map(x=>`<option value="${x[0]}">${x[0]} · ${esc(x[1])}</option>`).join(""); });
+}
+
+function memberDlg(input, payerId){
+  const digits = norm(input);
+  const isEid = /^784\d{12}$/.test(digits);
+  const eid = isEid ? `${digits.slice(0,3)}-${digits.slice(3,7)}-${digits.slice(7,14)}-${digits.slice(14)}` : "";
+  openDlg(dlgHead("Register member","Enter the policy details from the insurance card or the payer portal. Later checks by card number or Emirates ID will find this member.") +
+  `<div class="dlg-body"><div class="form-grid">
+    <div class="field"><label for="mName">Patient name</label><input type="text" id="mName" required></div>
+    <div class="field"><label for="mEid">Emirates ID</label><input type="text" id="mEid" value="${esc(eid)}" placeholder="784-YYYY-NNNNNNN-N"></div>
+    <div class="field"><label for="mPayer">Payer</label><select id="mPayer">${PAYERS.map(p=>`<option value="${p.id}" ${p.id===payerId?"selected":""}>${esc(p.name)}</option>`).join("")}</select></div>
+    <div class="field"><label for="mCard">Insurance card no.</label><input type="text" id="mCard" value="${isEid?"":esc(input)}"></div>
+    <div class="field"><label for="mPlan">Plan</label><select id="mPlan">${PLANS.map(p=>`<option>${esc(p.name)}</option>`).join("")}</select></div>
+    <div class="field"><label for="mValid">Policy valid until</label><input type="date" id="mValid" value="${addDays(TODAY,180)}"></div>
+  </div><div class="muted" style="font-size:12.5px">Details are saved only in this browser.</div>
+  <div class="actions"><button class="btn primary" data-act="memberSave" type="button">Save and check eligibility</button></div></div>`);
+}
+
+const APPT_COLS = "time,patient_name,emirates_id,payer,card_no,plan,valid_until,department,doctor";
+function apptSampleCsv(){
+  const rows = [APPT_COLS];
+  const ex = S.patients.slice(0,3);
+  ex.forEach((p,i) => rows.push([["08:30","09:15","10:00"][i],`"${p.name}"`,p.eid,payer(p.policy.payer).name,p.policy.card,p.policy.plan,p.policy.validTo,"General Practice",""].join(",")));
+  rows.push(`11:30,"Example New Patient",784-1988-1234567-1,Daman,DM-555123-01,Gold,${addDays(TODAY,200)},Dermatology,`);
+  return rows.join("\n");
+}
+function parseCsv(txt){
+  const out = []; let row = [], cur = "", q = false;
+  for (let i=0;i<txt.length;i++){ const ch = txt[i];
+    if (q){ if (ch === '"'){ if (txt[i+1] === '"'){ cur += '"'; i++; } else q = false; } else cur += ch; }
+    else if (ch === '"') q = true; else if (ch === ","){ row.push(cur); cur = ""; }
+    else if (ch === "\n" || ch === "\r"){ if (ch === "\r" && txt[i+1] === "\n") i++; row.push(cur); out.push(row); row = []; cur = ""; }
+    else cur += ch; }
+  if (cur || row.length){ row.push(cur); out.push(row); }
+  return out.filter(r => r.some(c => c.trim()));
+}
+function apptImportDlg(){
+  openDlg(dlgHead("Import appointment list","Paste or choose the day's appointment export from your clinic system. Each patient is matched or added, then checked.") +
+  `<div class="dlg-body">
+    <div class="muted" style="font-size:12.5px">Columns: <span class="code">${APPT_COLS}</span>. Payer can be a name (Daman) or code (DAM). Plan and valid-until come from the insurance details captured at registration.</div>
+    <div class="actions"><button class="btn sm" id="apSample" type="button">Load example</button><label class="btn sm" for="apFile">Choose CSV file</label><input type="file" id="apFile" accept=".csv,text/csv" hidden>
+      <label style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" id="apReplace" checked> Replace today's list</label></div>
+    <textarea id="apCsv" spellcheck="false" placeholder="${APPT_COLS}"></textarea>
+    <div class="actions"><button class="btn primary" data-act="apImport" type="button">Import and verify all</button><span class="muted" id="apMsg"></span></div>
+  </div>`);
+  $("#apSample").onclick = () => { $("#apCsv").value = apptSampleCsv(); };
+  $("#apFile").onchange = e => { const f = e.target.files[0]; if (!f) return; const rd = new FileReader(); rd.onload = () => { $("#apCsv").value = rd.result; }; rd.readAsText(f); };
+}
+function importAppts(txt, replace){
+  const rows = parseCsv(txt); if (!rows.length) return "The list is empty.";
+  let hdr = rows[0].map(h => h.trim().toLowerCase().replace(/[^a-z]+/g,"_"));
+  const want = APPT_COLS.split(",");
+  if (!hdr.includes("emirates_id") && !hdr.includes("card_no")) hdr = want; else rows.shift();
+  const col = (r,k) => { const i = hdr.indexOf(k); return i < 0 ? "" : (r[i]||"").trim(); };
+  const findPayer = v => { const k = norm(v); return PAYERS.find(p => norm(p.id) === k || norm(p.name) === k || norm(p.name).startsWith(k) || k.startsWith(norm(p.name))); };
+  const appts = replace ? [] : S.appts.slice(); let added = 0, skipped = 0;
+  rows.forEach((r,i) => {
+    const eid = col(r,"emirates_id"), card = col(r,"card_no"), name = col(r,"patient_name");
+    if (!eid && !card){ skipped++; return; }
+    const k1 = norm(eid), k2 = norm(card);
+    let p = S.patients.find(x => (k1 && norm(x.eid) === k1) || (k2 && norm(x.policy.card) === k2));
+    const py = findPayer(col(r,"payer")), plan = PLANS.find(x => norm(x.name) === norm(col(r,"plan"))) || PLANS[1], vt = col(r,"valid_until");
+    if (!p && py){
+      p = {id:"P"+(20000+S.patients.length),name:name||"Unnamed patient",dob:"",eid,mobile:"",policy:{payer:py.id,plan:plan.name,card:card||"–",validFrom:addDays(vt||TODAY,-365),validTo:/^\d{4}-\d{2}-\d{2}$/.test(vt)?vt:addDays(TODAY,180),copay:plan.copay,ded:plan.ded,network:plan.network}};
+      S.patients.push(p); added++;
+    } else if (p && py && vt && /^\d{4}-\d{2}-\d{2}$/.test(vt)){ p.policy.payer = py.id; p.policy.validTo = vt; if (card) p.policy.card = card; }
+    if (!p){ skipped++; return; }
+    const dept = DEPTS[col(r,"department")] ? col(r,"department") : "General Practice";
+    appts.push({id:"AP"+Date.now().toString(36)+i,time:col(r,"time")||"–",patient:p.id,dept,doctor:col(r,"doctor")||DEPTS[dept].dr[0],status:"Not verified",checked:null});
+  });
+  appts.sort((a,b)=>a.time.localeCompare(b.time));
+  S.appts = appts;
+  const n = appts.filter(a=>a.status==="Not verified"); n.forEach(doVerify);
+  closeDlg(); current = "eligibility";
+  done(`Imported ${rows.length - skipped} appointments and checked ${n.length}` + (added?`, ${added} new members added`:"") + (skipped?`. ${skipped} rows skipped (no ID or unknown payer)`:""));
+  return null;
+}
+
+/* ---------- actions ---------- */
+function submitClaim(c){ c.status="Submitted"; c.submitted=TODAY; c.events.push({d:TODAY,t:"Submitted to "+payer(c.payer).name+" via eClaimLink"}); }
+function doVerify(ap){
+  const res = verify(ap.patient,null,null,ap.dept);
+  ap.status = res.status; ap.checked = nowTime();
+  S.log.unshift({t:TODAY+" "+ap.checked,pt:ap.patient,payer:res.payer,card:res.card,status:res.status,src:"Appointment"});
+  return res;
+}
+function bindDlg(){
+  $("#dlgInner").querySelectorAll("[data-close]").forEach(b=>b.onclick=closeDlg);
+  $("#dlgInner").querySelectorAll("[data-claim]").forEach(el=>el.onclick=()=>claimDlg(el.dataset.claim));
+  $("#dlgInner").querySelectorAll("[data-newpa]").forEach(b=>b.onclick=()=>newPaDlg(b.dataset.newpa,b.dataset.dept));
+  $("#dlgInner").querySelectorAll("[data-act]").forEach(b=>b.onclick=()=>{
+    const a = b.dataset.act;
+    if (a==="submit"){ submitClaim(claimById(dlg.dataset.claim)); done("Claim submitted"); claimDlg(dlg.dataset.claim); }
+    if (a==="resubXml"){ const c=claimById(dlg.dataset.claim); const x=resubXml(c);
+      openDlg(dlgHead(`Resubmission file · <span class="mono">${c.id}</span>`,"eClaimLink-style Claim.Submission with a Resubmission block. Copy it into your submission tool.",`<button class="btn sm" data-act="copyXml" type="button">Copy</button>`)+`<div class="dlg-body"><textarea id="xmlOut" readonly style="min-height:360px">${esc(x)}</textarea><div class="actions"><button class="btn sm" data-claim="${c.id}" type="button">Back to claim</button></div></div>`); return; }
+    if (a==="copyXml"){ const t=$("#xmlOut"); try { navigator.clipboard.writeText(t.value).then(()=>toast("Copied"),()=>{t.select();}); } catch(e){ t.select(); } return; }
+    if (a==="resubmit"){ const c=claimById(dlg.dataset.claim); const type=$("#rsType").value, note=$("#rsNote").value.trim(); if (!note) return toast("Describe what was corrected before resubmitting"); c.status="Resubmitted"; c.resubs.push({d:TODAY,type,note,amount:totals(c).outstanding,codes:[...new Set(c.acts.filter(a=>a.denial&&a.net>a.paid).map(a=>a.denial))],outcome:null}); c.events.push({d:TODAY,t:`Resubmitted (${type})${note?": "+note:""}`}); done("Claim resubmitted"); claimDlg(c.id); }
+    if (a==="writeoff"){ const c=claimById(dlg.dataset.claim); const t=totals(c); c.writeOff=r2((c.writeOff||0)+t.outstanding); c.woReason=$("#woReason").value; c.events.push({d:TODAY,t:`Balance AED ${aed(t.outstanding)} written off: ${c.woReason}`}); done("Balance written off"); claimDlg(c.id); }
+    if (a==="reconcile"){ const r=S.ras.find(x=>x.id===dlg.dataset.ra); const amt=parseFloat($("#bankAmt").value); if (isNaN(amt)) return toast("Enter the bank amount first"); const note=$("#bankNote").value; if (Math.abs(amt-r.amount)>0.009 && note==="No variance") return toast("Bank amount differs from the remittance. Pick a variance reason."); r.bank=r2(amt); r.status="Reconciled"; r.recOn=TODAY; r.note=note; done("Remittance reconciled"); raDlg(r.id); }
+    if (a==="apImport" && LIVE.on){ const t=$("#apCsv").value.trim(); if(!t){ $("#apMsg").textContent="Paste or choose a CSV first."; return; } b.disabled=true; $("#apMsg").textContent="Importing and checking with the payer…";
+      api("/appointments/import",{csv:t,replace:$("#apReplace").checked}).then(r=>{ LIVE.appts=r.appointments; closeDlg(); refreshLog(); toast(`Imported ${r.imported}, checked ${r.checked}`+(r.skipped.length?`. Skipped ${r.skipped.length}: `+r.skipped.slice(0,3).map(x=>"line "+x.line+" "+x.reason).join("; "):"")); render(); })
+        .catch(e=>{ b.disabled=false; $("#apMsg").textContent=e.message; }); return; }
+    if (a==="apImport"){ const t=$("#apCsv").value.trim(); if(!t){ $("#apMsg").textContent="Paste or choose a CSV first."; return; } const err=importAppts(t,$("#apReplace").checked); if(err) $("#apMsg").textContent=err; return; }
+    if (a==="memberSave" && LIVE.on){ const body={name:$("#mName").value.trim(),emiratesId:$("#mEid").value.trim(),cardNo:$("#mCard").value.trim(),payer:$("#mPayer").value,plan:$("#mPlan").value,validTo:$("#mValid").value};
+      const pl=PLANS.find(x=>x.name===body.plan); Object.assign(body,{copayPct:pl.copay,deductible:pl.ded,network:pl.network});
+      api("/members",body).then(()=>api("/eligibility",{emiratesId:body.emiratesId,cardNo:body.cardNo,payer:body.payer})).then(r=>{ UI.verifyResult=fromApi(r); closeDlg(); refreshLog(); render(); toast("Member saved"); }).catch(e=>toast(e.message)); return; }
+    if (a==="memberSave"){ const name=$("#mName").value.trim(), eidIn=$("#mEid").value.trim(), card=$("#mCard").value.trim(), pid=$("#mPayer").value, plan=PLANS.find(x=>x.name===$("#mPlan").value), vt=$("#mValid").value;
+      if (!name || (!eidIn && !card)) return toast("Enter the name and an Emirates ID or card number");
+      if (eidIn && !/^784\d{12}$/.test(norm(eidIn))) return toast("Emirates ID should be 15 digits starting with 784");
+      const pt={id:"P"+(10500+S.patients.length+Math.floor(Math.random()*1000)),name,dob:"",eid:eidIn,mobile:"",policy:{payer:pid,plan:plan.name,card:card||"–",validFrom:addDays(vt||TODAY,-365),validTo:vt||addDays(TODAY,180),copay:plan.copay,ded:plan.ded,network:plan.network}};
+      S.patients.push(pt);
+      const res=verify(null,pid,eidIn||card,$("#vDept")?$("#vDept").value:null); UI.verifyResult=res;
+      S.log.unshift({t:TODAY+" "+nowTime(),pt:res.patient||null,payer:res.payer,card:res.card,status:res.status,src:"Walk-in"});
+      closeDlg(); done(`${name} registered with ${payer(pid).name}`); }
+    if (a==="paSave"){ const x=S.auths.find(y=>y.id===dlg.dataset.pa); x.status=$("#paDec").value; x.approved=x.status==="Rejected"?0:r2(parseFloat($("#paAmt").value)||0); x.note=$("#paNote").value.trim(); x.respOn=TODAY; x.validTo=x.status==="Rejected"?null:addDays(TODAY,30); done("Response saved"); closeDlg(); }
+    if (a==="paCreate"){ const pt=patient($("#npPt").value), dd=$("#npDept").value, code=$("#npAct").value, all=[...DEPTS[dd].acts,...DEPTS[dd].extra], act=all.find(x=>x[0]===code), qty=Math.max(1,parseInt($("#npQty").value)||1);
+      const id = "PA-"+(Math.max(...S.auths.map(x=>parseInt(x.id.slice(3))))+1);
+      S.auths.unshift({id,patient:pt.id,payer:pt.policy.payer,dept:dd,code,desc:act[1]+(qty>1?` × ${qty}`:""),dx:$("#npDx").value,requested:r2(act[2]*qty*(1-pt.policy.copay/100)),approved:0,status:"Pending",reqOn:TODAY,respOn:null,validTo:null,claim:null,note:""});
+      UI.paFilter="All"; closeDlg(); current="approvals"; done("Request "+id+" sent to "+payer(pt.policy.payer).name); }
+  });
+}
+function done(msg){ save(); render(); toast(msg); }
+
+/* ---------- remittance import ---------- */
+function sampleRaXml(){
+  const cand = S.claims.filter(c=>c.status==="Submitted"||c.status==="Resubmitted").sort((a,b)=>a.submitted.localeCompare(b.submitted));
+  if (!cand.length) return null;
+  const pid = cand[0].payer;
+  const pick = cand.filter(c=>c.payer===pid).slice(0,6);
+  const ref = "TT"+(990000+S.raSeq);
+  const lines = pick.map((c,i) => {
+    const resub = c.status === "Resubmitted";
+    return `  <Claim>
+    <ID>${c.id}</ID>
+    <IDPayer>${pid}${String(700000+i)}</IDPayer>
+    <ProviderID>DHA-F-0000000</ProviderID>
+    <PaymentReference>${ref}</PaymentReference>
+    <DateSettlement>${TODAY.split("-").reverse().join("/")}</DateSettlement>
+${c.acts.map((a,k)=>{ const due = resub ? r2(a.net-a.paid) : a.net; if (resub && due<=0) return ""; const deny = !resub && i===1 && k===c.acts.length-1;
+  return `    <Activity>
+      <ID>${a.aid}</ID>
+      <Code>${a.code}</Code>
+      <Quantity>${a.qty}</Quantity>
+      <Net>${resub?due:a.net}</Net>
+      <PaymentAmount>${deny?0:due}</PaymentAmount>${deny?`
+      <DenialCode>MNEC-004</DenialCode>`:""}
+    </Activity>`; }).filter(Boolean).join("\n")}
+  </Claim>`; }).join("\n");
+  return `<?xml version="1.0" encoding="utf-8"?>
+<Remittance.Advice>
+  <Header>
+    <SenderID>${pid}</SenderID>
+    <ReceiverID>DHA-F-0000000</ReceiverID>
+    <TransactionDate>${TODAY.split("-").reverse().join("/")} 10:15</TransactionDate>
+    <RecordCount>${pick.length}</RecordCount>
+    <DispositionFlag>PRODUCTION</DispositionFlag>
+  </Header>
+${lines}
+</Remittance.Advice>`;
+}
+function importRa(xml){
+  let doc;
+  try { doc = new DOMParser().parseFromString(xml,"application/xml"); } catch(e) { return "Could not read the file."; }
+  if (doc.querySelector("parsererror") || !doc.querySelector("Remittance\\.Advice, Claim")) return "This does not look like a Remittance.Advice XML file.";
+  const txt = (el,tag) => { const x = el.getElementsByTagName(tag)[0]; return x ? x.textContent.trim() : ""; };
+  const header = doc.getElementsByTagName("Header")[0];
+  const sender = header ? txt(header,"SenderID") : "";
+  const claimsEl = [...doc.getElementsByTagName("Claim")];
+  if (!claimsEl.length) return "The file has no Claim records.";
+  const lines = [], unknown = []; let total = 0, ref = "", pid = PAYERS.some(p=>p.id===sender) ? sender : null;
+  claimsEl.forEach(ce => {
+    const id = txt(ce,"ID"); const c = claimById(id);
+    ref = ref || txt(ce,"PaymentReference");
+    if (!c){ unknown.push(id); return; }
+    pid = pid || c.payer;
+    let paid = 0, denied = 0;
+    [...ce.getElementsByTagName("Activity")].forEach(ae => {
+      const aid = txt(ae,"ID"), code = txt(ae,"Code");
+      const a = c.acts.find(x=>x.aid===aid) || c.acts.find(x=>x.code===code);
+      if (!a) return;
+      const pay = parseFloat(txt(ae,"PaymentAmount"))||0, net = parseFloat(txt(ae,"Net"))||a.net, den = txt(ae,"DenialCode");
+      a.paid = r2(Math.min(a.net, (c.status==="Resubmitted" ? a.paid : 0) + pay));
+      a.denial = a.paid >= a.net - 0.009 ? null : (den || a.denial || "PRCE-002");
+      paid += pay; denied += Math.max(0, net - pay);
+    });
+    paid = r2(paid); denied = r2(denied); total += paid;
+    const raId = `RA-${c.payer}-${TODAY.replace(/-/g,"")}-${S.raSeq}`;
+    c.remits.push({ra:raId,d:TODAY,paid,denied}); c.remitDate = TODAY;
+    if (c.status === "Resubmitted" && c.resubs.length){ const last = c.resubs[c.resubs.length-1]; if (!last.outcome) last.outcome = {d:TODAY,paid,denied,ra:raId}; }
+    c.events.push({d:TODAY,t:`Remittance ${ref} imported: paid AED ${aed(paid)}`+(denied?`, denied AED ${aed(denied)}`:"")});
+    c.status = "Remitted";
+    lines.push({claim:c.id,paid,denied});
+  });
+  if (!lines.length) return `None of the ${claimsEl.length} claims in the file match claims in this system.`;
+  const ra = {id:`RA-${pid}-${TODAY.replace(/-/g,"")}-${S.raSeq}`,payer:pid,date:TODAY,payRef:ref||"—",lines,amount:r2(total),bank:null,status:"Unreconciled",recOn:null,source:"Imported file"};
+  S.ras.unshift(ra); S.raSeq++;
+  save(); render(); raDlg(ra.id);
+  toast(`Posted AED ${aed(total)} to ${lines.length} claims`+(unknown.length?`. ${unknown.length} unmatched: ${unknown.join(", ")}`:""));
+  return null;
+}
+
+/* ---------- view bindings ---------- */
+function bindView(){
+  const v = $("#view");
+  v.querySelectorAll("[data-go]").forEach(b=>b.onclick=()=>{ if (b.dataset.status){ UI.claimStatus=b.dataset.status; UI.claimPayer=""; UI.claimQ=""; UI.claimDept=""; } go(b.dataset.go); });
+  v.querySelectorAll("[data-claim]").forEach(el=>{ el.onclick=()=>claimDlg(el.dataset.claim); el.onkeydown=e=>{ if(e.key==="Enter") claimDlg(el.dataset.claim); }; });
+  v.querySelectorAll("[data-ra]").forEach(el=>{ el.onclick=()=>raDlg(el.dataset.ra); el.onkeydown=e=>{ if(e.key==="Enter") raDlg(el.dataset.ra); }; });
+  v.querySelectorAll("[data-newpa]").forEach(b=>b.onclick=()=>newPaDlg(b.dataset.newpa,b.dataset.dept));
+  v.querySelectorAll("[data-regmember]").forEach(b=>b.onclick=()=>memberDlg(b.dataset.regmember,b.dataset.payer));
+  if (current==="eligibility" && LIVE.on){ bindLive(v); }
+  else if (current==="eligibility"){
+    v.querySelectorAll("[data-verify]").forEach(b=>b.onclick=()=>{ const ap=S.appts.find(a=>a.id===b.dataset.verify); const res=doVerify(ap); save(); render(); openDlg(dlgHead("Eligibility result",`${ap.time} · ${esc(ap.dept)} · ${esc(ap.doctor)}`)+`<div class="dlg-body">${resultCard(res)}</div>`); });
+    $("#importAppts").onclick=apptImportDlg;
+    $("#verifyAll").onclick=()=>{ const left=S.appts.filter(a=>a.status==="Not verified"); left.forEach(doVerify); done(left.length?`Verified ${left.length} appointments`:"All appointments are already verified"); };
+    v.querySelectorAll("[data-sample]").forEach(b=>b.onclick=()=>{ const p=patient(b.dataset.sample); $("#vPayer").value=p.policy.payer; $("#vCard").value=p.policy.card; });
+    v.querySelectorAll("[data-sampleeid]").forEach(b=>b.onclick=()=>{ const p=patient(b.dataset.sampleeid); $("#vPayer").value=p.policy.payer; $("#vCard").value=p.eid; });
+    $("#verifyForm").onsubmit=e=>{ e.preventDefault(); const res=verify(null,$("#vPayer").value,$("#vCard").value,$("#vDept").value); UI.verifyResult=res; S.log.unshift({t:TODAY+" "+nowTime(),pt:res.patient||null,payer:res.payer,card:res.card,status:res.status,src:"Walk-in"}); save(); render(); };
+  }
+  if (current==="approvals"){
+    v.querySelectorAll("[data-pafilter]").forEach(b=>b.onclick=()=>{ UI.paFilter=b.dataset.pafilter; render(); });
+    v.querySelectorAll("[data-paresp]").forEach(b=>b.onclick=()=>paRespDlg(b.dataset.paresp));
+    $("#newPaBtn").onclick=()=>newPaDlg();
+  }
+  if (current==="claims"){
+    const q=$("#fq"); q.oninput=()=>{ UI.claimQ=q.value; const pos=q.selectionStart; render(); const n=$("#fq"); n.focus(); n.setSelectionRange(pos,pos); };
+    $("#fpayer").onchange=e=>{UI.claimPayer=e.target.value;render();};
+    $("#fstatus").onchange=e=>{UI.claimStatus=e.target.value;render();};
+    $("#fdept").onchange=e=>{UI.claimDept=e.target.value;render();};
+    $("#submitDrafts").onclick=()=>{ const d=S.claims.filter(c=>c.status==="Draft"); d.forEach(submitClaim); done(`Submitted ${d.length} claims to payers`); };
+  }
+  if (current==="remittance"){
+    $("#sampleRa").onclick=()=>{ const x=sampleRaXml(); if(!x) return toast("No submitted claims are waiting for payment"); $("#raXml").value=x; $("#raMsg").textContent="Sample file loaded. Review it, then import."; };
+    $("#raFile").onchange=e=>{ const f=e.target.files[0]; if(!f) return; const rd=new FileReader(); rd.onload=()=>{ $("#raXml").value=rd.result; $("#raMsg").textContent=f.name+" loaded."; }; rd.readAsText(f); };
+    $("#importRa").onclick=()=>{ const x=$("#raXml").value.trim(); if(!x){ $("#raMsg").textContent="Paste or load a remittance file first."; return; } const err=importRa(x); if(err) $("#raMsg").textContent=err; };
+  }
+  if (current==="resubmissions"){ v.querySelectorAll("[data-rsfilter]").forEach(b=>b.onclick=()=>{ UI.rsFilter=b.dataset.rsfilter; render(); }); }
+  if (current==="receivables"){
+    v.querySelectorAll("[data-basis]").forEach(b=>b.onclick=()=>{ UI.arBasis=b.dataset.basis; try{localStorage.setItem(KEY+"-ui",JSON.stringify({arBasis:UI.arBasis}));}catch(e){} render(); });
+    v.querySelectorAll("[data-arpayer]").forEach(el=>{ const f=()=>{ UI.arPayer=UI.arPayer===el.dataset.arpayer?"":el.dataset.arpayer; render(); }; el.onclick=f; el.onkeydown=e=>{ if(e.key==="Enter") f(); }; });
+    $("#copyCsv").onclick=()=>{ const {rows,tot}=agingBy(null,UI.arBasis); const lines=[["Payer","Type",...BUCKETS.map(b=>b[0]+" days"),"Total","Past terms"].join(",")];
+      PAYERS.filter(p=>rows[p.id]).forEach(p=>lines.push([`"${p.name}"`,p.kind,...rows[p.id].v.map(x=>x.toFixed(2)),rows[p.id].total.toFixed(2),rows[p.id].overdue.toFixed(2)].join(",")));
+      lines.push(["Total","",...tot.map(x=>x.toFixed(2)),tot.reduce((a,b)=>a+b,0).toFixed(2),""].join(","));
+      const csv=lines.join("\n");
+      const fallback=()=>{ openDlg(dlgHead("Aging report CSV","Select all and copy")+`<div class="dlg-body"><textarea id="csvOut" readonly>${esc(csv)}</textarea></div>`); $("#csvOut").select(); };
+      try { navigator.clipboard.writeText(csv).then(()=>toast("Aging report copied as CSV"),fallback); } catch(e){ fallback(); } };
+  }
+}
+
+/* ---------- live backend (active only when served by the clinic server) ---------- */
+const API_BASE = (document.querySelector('meta[name="rcm-api"]') || {}).content || null;
+const LIVE = {on:false, provider:null, appts:[], log:[]};
+async function api(path, body){
+  const r = await fetch(API_BASE + path, body === undefined ? {credentials:"same-origin"} : {method:"POST",credentials:"same-origin",headers:{"content-type":"application/json"},body:JSON.stringify(body)});
+  const j = await r.json().catch(()=>({}));
+  if (!r.ok) throw new Error(j.error || `Server returned ${r.status}`);
+  return j;
+}
+const fromApi = r => ({status:r.status,msg:r.message,name:r.name,payer:r.payer,card:r.cardNo,eid:r.emiratesId,plan:r.plan,network:r.network,validFrom:r.validFrom,validTo:r.validTo,copay:r.copayPct,ded:r.deductible,dept:r.department,patient:null,input:r.emiratesId||r.cardNo,ref:r.reference});
+const refreshLog = () => api("/checks?limit=30").then(l=>{ LIVE.log=l; if (current==="eligibility") render(); }).catch(()=>{});
+function liveEligibility(){
+  const v = UI.verifyResult, A = LIVE.appts;
+  const timeOf = iso => iso ? new Date(iso).toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"}) : "–";
+  return head("Eligibility & access",`Live checks through the clinic server. Eligibility source: <b>${esc(LIVE.provider==="http"?"payer / integration API":"clinic member records (test mode)")}</b>.`,
+    `<button class="btn" id="importAppts" type="button">Import appointment list</button><button class="btn primary" id="lVerifyAll" type="button">Verify all remaining</button>`) +
+  `<section class="panel"><div class="panel-head"><div><h2>Today's appointments</h2><p>${fmtD(TODAY)} · ${A.filter(a=>a.status!=="Not verified").length} of ${A.length} checked</p></div></div>
+    <div class="table-wrap"><table><thead><tr><th>Time</th><th>Patient</th><th>Department</th><th>Payer</th><th>Card no.</th><th>Plan</th><th>Status</th><th>Checked</th><th></th></tr></thead><tbody>
+    ${A.map(a=>`<tr><td class="mono">${esc(a.time||"–")}</td><td>${esc(a.patientName||(a.result&&a.result.name)||"–")}<div class="muted mono">${esc(a.emiratesId||"")}</div></td><td>${esc(a.department||"–")}<div class="muted">${esc(a.doctor||"")}</div></td><td>${esc(a.payer?payer(a.payer).name:"Any")}</td><td class="mono">${esc(a.cardNo||"–")}</td><td>${esc(a.result&&a.result.plan||"–")}</td><td>${pill(a.status)}</td><td class="mono muted">${timeOf(a.checkedAt)}</td><td><button class="btn sm" data-lverify="${a.id}" type="button">${a.status==="Not verified"?"Verify":"Re-check"}</button></td></tr>`).join("") || `<tr><td colspan="9" class="empty">No appointments for today yet. Import the day's list from your clinic system.</td></tr>`}
+    </tbody></table></div></section>
+  <div class="grid2">
+    <section class="panel"><div class="panel-head"><div><h2>Walk-in member check</h2><p>Emirates ID or insurance card number. Leave the payer on "Any" to search every payer the source covers.</p></div></div>
+      <form id="lVerifyForm" class="form-grid">
+        <div class="field"><label for="vPayer">Payer</label><select id="vPayer"><option value="">Any payer</option>${PAYERS.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join("")}</select></div>
+        <div class="field"><label for="vCard">Emirates ID or card no.</label><input id="vCard" type="text" placeholder="784-1990-1234567-1" required></div>
+        <div class="field"><label for="vDept">Service</label><select id="vDept">${Object.keys(DEPTS).map(d=>`<option>${esc(d)}</option>`).join("")}</select></div>
+        <div class="field"><button class="btn primary" type="submit">Check eligibility</button></div>
+      </form>
+      ${v ? resultCard(v).replace(/data-regmember=/, LIVE.provider==="mock"?"data-regmember=":"hidden data-regmember=").replace(/<button class="btn sm primary" data-newpa[^>]*>[^<]*<\/button>/,"") : `<div class="empty">Results of a walk-in check appear here.</div>`}
+    </section>
+    <section class="panel"><div class="panel-head"><div><h2>Verification log</h2><p>Stored on the clinic server</p></div></div>
+      <div class="table-wrap"><table><thead><tr><th>Time</th><th>Patient / ID</th><th>Payer</th><th>Result</th><th>Source</th></tr></thead><tbody>
+      ${LIVE.log.map(l=>`<tr><td class="mono muted">${esc((l.created_at||"").slice(5,16))}</td><td>${esc(l.result&&l.result.name||l.emirates_id||l.card_no||"–")}</td><td>${esc(l.payer?payer(l.payer).name:"–")}</td><td>${pill(l.status)}</td><td class="muted">${esc(l.source)}</td></tr>`).join("") || `<tr><td colspan="5" class="empty">No checks yet.</td></tr>`}
+      </tbody></table></div></section>
+  </div>`;
+}
+function bindLive(v){
+  $("#importAppts").onclick = apptImportDlg;
+  $("#lVerifyAll").onclick = e => { e.target.disabled = true; e.target.textContent = "Checking…"; api("/appointments/verify-all",{}).then(r=>{ LIVE.appts=r.appointments; refreshLog(); render(); toast(`Checked ${r.checked} appointments`); }).catch(err=>{ toast(err.message); render(); }); };
+  v.querySelectorAll("[data-lverify]").forEach(b=>b.onclick=()=>{ b.disabled=true; b.textContent="Checking…";
+    api(`/appointments/${b.dataset.lverify}/verify`,{}).then(r=>Promise.all([r, api("/appointments")])).then(([r,list])=>{ LIVE.appts=list; refreshLog(); render(); openDlg(dlgHead("Eligibility result",esc(r.department||""))+`<div class="dlg-body">${resultCard(fromApi(r)).replace(/<div class="actions">[\s\S]*?<\/div>/g,"")}</div>`); }).catch(err=>{ toast(err.message); render(); }); });
+  $("#lVerifyForm").onsubmit = e => { e.preventDefault(); const q=$("#vCard").value.trim(); const isEid=/^784\d{12}$/.test(norm(q));
+    api("/eligibility",{emiratesId:isEid?q:null,cardNo:isEid?null:q,payer:$("#vPayer").value||null,department:$("#vDept").value}).then(r=>{ UI.verifyResult=fromApi(r); refreshLog(); render(); }).catch(err=>toast(err.message)); };
+}
+async function bootLive(){
+  try {
+    const [h, appts, log] = await Promise.all([api("/health"), api("/appointments"), api("/checks?limit=30")]);
+    Object.assign(LIVE, {on:true, provider:h.provider, appts, log});
+    UI.verifyResult = null; render();
+  } catch(e) { toast("Clinic server not reachable: " + e.message); }
+}
+
+/* ---------- boot ---------- */
+$("#nav").addEventListener("click", e => { const b = e.target.closest("[data-go]"); if (b) go(b.dataset.go); });
+let resetArm = 0;
+$("#resetBtn").onclick = () => { const b = $("#resetBtn"); if (Date.now()-resetArm < 4000){ S = seed(); UI.verifyResult=null; save(); render(); b.textContent="Reset sample data"; toast("Sample data restored"); resetArm=0; } else { resetArm = Date.now(); b.textContent = "Click again to confirm"; setTimeout(()=>{ b.textContent="Reset sample data"; }, 4000); } };
+window.addEventListener("hashchange", () => { const h = location.hash.slice(1); if (h && h!==current && R[h]) { current = h; render(); } });
+save(); render();
+if (API_BASE) bootLive();
+})();
+</script>

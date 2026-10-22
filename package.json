@@ -1,0 +1,13 @@
+{
+  "name": "clinic-rcm-insurance",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Insurance revenue cycle console for a Dubai polyclinic, with a backend for live eligibility checks.",
+  "type": "module",
+  "engines": { "node": ">=22.5" },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning server.js",
+    "dev": "node --disable-warning=ExperimentalWarning --watch server.js",
+    "test": "node --disable-warning=ExperimentalWarning --test test/*.test.js"
+  }
+}
