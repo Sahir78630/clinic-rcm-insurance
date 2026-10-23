@@ -56,6 +56,12 @@ h1{font-size:24px} h2{font-size:17px} h3{font-size:15px}
 .nav button[aria-current="page"] .count{background:var(--surface);color:var(--accent)}
 .rail-foot{margin-top:auto;font-size:11.5px;color:var(--muted);padding:0 6px;display:flex;flex-direction:column;gap:8px}
 
+@media print{
+  .rail,.toast,button,.btn,form,.filters{display:none !important}
+  body{background:#fff}
+  body[data-print="report"] #view > *:not(#eclReport){display:none !important}
+  .app{display:block !important}
+}
 main{min-width:0;padding-block:22px 48px;padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px))}
 .wrap{max-width:1240px;margin:0 auto;display:flex;flex-direction:column;gap:18px}
 .page-head{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap}
@@ -882,12 +888,13 @@ function checkAllDlg(){
   const errs = rows.filter(x => x.r.some(y => y.level === "error")).length, labs = rows.filter(x => x.r.some(y => y.lab)).length, dxs = rows.filter(x => x.r.some(y => y.dx)).length;
   const csv = ["claim_id,patient,payer,status,level,code,problem", ...rows.flatMap(({c,r}) => r.map(x => [c.id, patient(c.patient).name, payer(c.payer).name, status(c), x.level, x.code, x.msg].map(v => `"${String(v).replace(/"/g,'""')}"`).join(",")))].join("\n");
   openDlg(dlgHead("Claim check", `${S.claims.length} claims checked · ${S.claims.length - rows.length} clean · ${errs} with errors · ${rows.length - errs} with warnings only · <span style="color:var(--dx);font-weight:600">${dxs} with diagnosis–CPT mismatch</span> · <span style="color:var(--info);font-weight:600">${labs} with lab reports missing</span>`,
-    rows.length ? `<button class="btn sm" data-act="copyXml" type="button">Copy as CSV</button>` : "") +
+    rows.length ? `<button class="btn sm primary" id="ckDl" type="button">Download Excel (CSV)</button><button class="btn sm" data-act="copyXml" type="button">Copy</button>` : "") +
   `<div class="dlg-body">${rows.length ? `<div class="table-wrap"><table><thead><tr><th>Claim</th><th>Patient</th><th>Payer</th><th>Status</th><th>Problems</th></tr></thead><tbody>
     ${rows.map(({c,r}) => `<tr class="click" data-claim="${c.id}"><td class="mono">${c.id}</td><td>${esc(patient(c.patient).name)}</td><td>${esc(payer(c.payer).name)}</td><td>${pill(status(c))}</td><td class="wrap-cell">${r.map(issueHtml).join("")}</td></tr>`).join("")}
     </tbody></table></div>` : `<div class="result ok">Every claim passed the check.</div>`}
     <textarea id="xmlOut" readonly hidden>${esc(csv)}</textarea>
     <p class="muted" style="font-size:12.5px">Click a claim to open it. Fix the data in your clinic system and import the claims again, or correct and resubmit rejected claims.</p></div>`);
+  const dl = $("#ckDl"); if (dl) dl.onclick = () => downloadFile(`claim_check_${TODAY}.csv`, csv);
 }
 
 function claimDlg(id){
@@ -1542,7 +1549,7 @@ R.eclaimlink = () => {
     <div class="field"><button class="btn primary" type="submit" ${u.busy?"disabled":""}>${u.busy==="search"?"Searching…":"Search eClaimLink"}</button></div>
   </form></section>
   ${res ? `<section class="panel"><div class="panel-head"><div><h2>${res.length} file${res.length===1?"":"s"}</h2><p>${inRecords} already in your records${u.notes.length?" · "+esc(u.notes.join("; ")):""}${res.length>=500?" · eClaimLink returns at most 500 per search, narrow the dates":""}</p></div>
-    <div class="actions"><button class="btn" id="eReport" type="button" ${!res.length||u.busy?"disabled":""}>${u.busy==="report"?"Building report…":"Build report"}</button><button class="btn primary" id="eLoadAll" type="button" ${!res.length||u.busy||inRecords===res.length?"disabled":""}>${u.busy==="load"?"Loading…":"Add all to my records"}</button></div></div>
+    <div class="actions"><button class="btn" id="eListDl" type="button" ${!res.length?"disabled":""}>Download list</button><button class="btn" id="eReport" type="button" ${!res.length||u.busy?"disabled":""}>${u.busy==="report"?"Building report…":"Build report"}</button><button class="btn primary" id="eLoadAll" type="button" ${!res.length||u.busy||inRecords===res.length?"disabled":""}>${u.busy==="load"?"Loading…":"Add all to my records"}</button></div></div>
     <div class="table-wrap"><table><thead><tr><th>Date</th><th>File</th><th>Type</th><th>${u.direction==="sent"?"To":"From"}</th><th class="num">Records</th><th>eClaimLink</th><th>My records</th></tr></thead><tbody>
     ${res.map((f,i)=>`<tr class="click" data-eview="${i}" tabindex="0"><td class="mono muted">${esc(f.transactionDate||"")}</td><td class="mono">${esc(f.fileName||f.fileId)}</td><td><span class="code">${esc(f.type)}</span></td><td>${esc(payerLabel(u.direction==="sent"?f.receiver:f.sender))}</td><td class="num">${f.recordCount??"–"}</td><td>${pill(f.isDownloaded?"Downloaded":"New")}</td><td>${S.posted[fileKey(f)]?pill("Posted"):"–"}</td></tr>`).join("") || `<tr><td colspan="7" class="empty">No files match this search.</td></tr>`}
     </tbody></table></div></section>` : `<div class="muted" style="font-size:12.5px">Choose what to look for and search. Opening a file here does not mark it as downloaded, so the Download from eClaimLink button still collects it.</div>`}
@@ -1553,7 +1560,8 @@ function reportHtml(r){
   const sub = Object.entries(r.submissionsByPayer).sort((a,b)=>b[1].net-a[1].net);
   const codes = Object.entries(r.denialCodes).sort((a,b)=>b[1].amount-a[1].amount);
   const tot = pay.reduce((s,[,v])=>({net:s.net+v.net,paid:s.paid+v.paid,denied:s.denied+v.denied,claims:s.claims+v.claims}),{net:0,paid:0,denied:0,claims:0});
-  return `<section class="panel"><div class="panel-head"><div><h2>Report</h2><p>${r.files} files opened${r.errors.length?` · ${r.errors.length} could not be opened`:""}${r.truncated?" · first 200 files only":""}</p></div><button class="btn sm" id="eReportCsv" type="button">Copy as CSV</button></div>
+  return `<section class="panel" id="eclReport"><div class="panel-head"><div><h2>Report</h2><p>${r.files} files opened${r.errors.length?` · ${r.errors.length} could not be opened`:""}${r.truncated?" · first 200 files only":""} · ${esc(UI.ecl.direction==="sent"?"sent":"received")} ${fmtD(UI.ecl.from)} – ${fmtD(UI.ecl.to)}</p></div>
+    <div class="actions"><button class="btn sm primary" id="eReportDl" type="button">Download Excel (CSV)</button><button class="btn sm" id="eReportPrint" type="button">Print / save as PDF</button><button class="btn sm" id="eReportCsv" type="button">Copy</button></div></div>
   <div class="kpis">${Object.entries(r.byType).map(([t,v])=>`<div class="kpi"><span class="eyebrow">${esc(t)}</span><span class="v">${v.files}<small>files</small></span><span class="s">${v.records} records</span></div>`).join("")}
     ${pay.length?`<div class="kpi"><span class="eyebrow">Denied in remittances</span><span class="v">${tot.net?(100*tot.denied/tot.net).toFixed(1):"0.0"}<small>%</small></span><span class="s">AED ${aed(tot.denied)} of ${aed(tot.net)}</span></div>`:""}
     ${r.priorAuthorizations.approved+r.priorAuthorizations.rejected?`<div class="kpi"><span class="eyebrow">Prior authorizations</span><span class="v">${r.priorAuthorizations.approved}<small>approved</small></span><span class="s">${r.priorAuthorizations.rejected} rejected · AED ${aed(r.priorAuthorizations.approvedAmount)}</span></div>`:""}</div>
@@ -1565,6 +1573,18 @@ function reportHtml(r){
   ${sub.length?`<h3>Claims submitted by payer</h3><div class="table-wrap"><table><thead><tr><th>Payer</th><th class="num">Files</th><th class="num">Claims</th><th class="num">Resubmissions</th><th class="num">Net AED</th></tr></thead><tbody>
     ${sub.map(([k,v])=>`<tr><td><b>${esc(payerLabel(k))}</b> <span class="muted mono">${esc(k)}</span></td><td class="num">${v.files}</td><td class="num">${v.claims}</td><td class="num">${v.resubmissions}</td><td class="num">${aed(v.net)}</td></tr>`).join("")}</tbody></table></div>`:""}
   </section>`;
+}
+// Saves text as a file. CSV gets a byte-order mark so Excel reads Arabic names and AED amounts correctly.
+function downloadFile(name, text, type = "text/csv"){
+  const blob = new Blob([type === "text/csv" ? "\uFEFF" + text : text], {type: type + ";charset=utf-8"});
+  const a = Object.assign(document.createElement("a"), {href: URL.createObjectURL(blob), download: name});
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  toast("Downloaded " + name);
+}
+const csvRow = vals => vals.map(v => `"${String(v ?? "").replace(/"/g,'""')}"`).join(",");
+function filesCsv(list, direction){
+  return [csvRow(["Date","File","Type",direction==="sent"?"To":"From","Records","eClaimLink status","In my records"]),
+    ...list.map(f => csvRow([f.transactionDate, f.fileName||f.fileId, f.type, payerLabel(direction==="sent"?f.receiver:f.sender), f.recordCount??"", f.isDownloaded?"Downloaded":"New", S.posted[fileKey(f)]?"Posted":""]))].join("\n");
 }
 function reportCsv(r){
   const L = [["Section","Payer / code","Files","Claims","Claimed or net AED","Paid AED","Denied AED"].join(",")];
@@ -1621,6 +1641,10 @@ function bindEcl(v){
     u.busy = ""; render(); };
   const csv = $("#eReportCsv");
   if (csv) csv.onclick = () => { const t = reportCsv(u.report); try { navigator.clipboard.writeText(t).then(()=>toast("Report copied as CSV"),()=>{}); } catch(e){} };
+  const stamp = () => `${u.direction}_${u.from}_to_${u.to}`;
+  const rdl = $("#eReportDl"); if (rdl) rdl.onclick = () => downloadFile(`eclaimlink_report_${stamp()}.csv`, reportCsv(u.report));
+  const rpr = $("#eReportPrint"); if (rpr) rpr.onclick = () => { document.body.dataset.print = "report"; window.print(); delete document.body.dataset.print; };
+  const ldl = $("#eListDl"); if (ldl) ldl.onclick = () => downloadFile(`eclaimlink_files_${stamp()}.csv`, filesCsv(u.results, u.direction));
   const all = $("#eLoadAll");
   if (all) all.onclick = async () => {
     const order = {"Claim.Submission":0,"Prior.Request":1,"Remittance.Advice":2,"Prior.Authorization":3};
