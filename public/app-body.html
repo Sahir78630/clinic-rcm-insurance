@@ -783,6 +783,9 @@ function checkClaim(c){
     if (a.ps > a.gross) err("",`${tag}: patient share is more than the gross amount.`);
     if (/^D\d{4}$/i.test(a.code || "") && dx.length && !dx.some(d => DENTAL_DX.test(d))) warn("CODE-010",`${tag} is a dental code but no dental diagnosis (K00–K14) is on the claim.`);
   });
+  // Lab tests (CPT 80000–89999) are expected to carry their result as an <Observation> in the claim file
+  c.acts.filter(a => Array.isArray(a.obs) && /^8\d{4}$/.test(a.code || "") && !a.obs.some(o => o.value))
+    .forEach(a => warn("",`Lab test ${a.code}: no result entered (no Observation value in the claim file).`));
   const codes = new Set(c.acts.map(a => a.code).filter(Boolean));
   if (c.acts.length !== codes.size) warn("DUPL-002","The same activity code appears more than once. Use quantity instead if it is the same service.");
   const dup = S.claims.find(o => o.id !== c.id && o.patient === c.patient && o.enc === c.enc && o.acts.some(a => codes.has(a.code)));
@@ -847,7 +850,7 @@ function claimDlg(id){
     <dl class="kv"><div><dt>Encounter</dt><dd>${fmtD(c.enc)}</dd></div><div><dt>Clinician</dt><dd>${esc(c.doctor)}</dd></div><div><dt>Member card</dt><dd class="mono">${esc(c.card)}</dd></div><div><dt>Emirates ID</dt><dd class="mono">${esc(p.eid)}</dd></div><div><dt>Plan</dt><dd>${esc(p.policy.plan)}</dd></div><div><dt>Prior approval</dt><dd class="mono">${c.pa||"–"}</dd></div></dl>
     <div><span class="eyebrow">Diagnosis</span><div>${c.dx.map(d=>`<span class="code">${esc(d[0])}</span> ${esc(d[1])}`).join("<br>")}</div></div>
     <div class="table-wrap"><table><thead><tr><th>Activity</th><th>Code</th><th>Description</th><th class="num">Qty</th><th class="num">Gross</th><th class="num">Patient share</th><th class="num">Net</th><th class="num">Paid</th><th>Denial</th></tr></thead><tbody>
-    ${c.acts.map(a=>`<tr><td class="mono muted">${a.aid}</td><td><span class="code">${esc(a.code)}</span></td><td>${esc(a.desc)}</td><td class="num">${a.qty}</td><td class="num">${aed(a.gross)}</td><td class="num">${aed(a.ps)}</td><td class="num">${aed(a.net)}</td><td class="num">${c.status==="Draft"||c.status==="Submitted"&&!c.remits.length?"–":aed(a.paid)}</td><td>${a.denial?`<span class="code" title="${esc(DENIALS[a.denial]||"")}">${a.denial}</span>`:""}</td></tr>`).join("")}
+    ${c.acts.map(a=>`<tr><td class="mono muted">${a.aid}</td><td><span class="code">${esc(a.code)}</span></td><td>${esc(a.desc)}${(a.obs||[]).filter(o=>o.value).map(o=>`<div class="muted" style="font-size:12px">${esc(o.type||"Result")}${o.code?" "+esc(o.code):""}: ${esc(o.value.length>80?o.value.slice(0,80)+"…":o.value)}${o.unit?" "+esc(o.unit):""}</div>`).join("")}</td><td class="num">${a.qty}</td><td class="num">${aed(a.gross)}</td><td class="num">${aed(a.ps)}</td><td class="num">${aed(a.net)}</td><td class="num">${c.status==="Draft"||c.status==="Submitted"&&!c.remits.length?"–":aed(a.paid)}</td><td>${a.denial?`<span class="code" title="${esc(DENIALS[a.denial]||"")}">${a.denial}</span>`:""}</td></tr>`).join("")}
     </tbody><tfoot><tr><td colspan="4">Totals</td><td class="num">${aed(t.gross)}</td><td class="num">${aed(t.ps)}</td><td class="num">${aed(t.net)}</td><td class="num">${aed(t.paid)}</td><td>${t.outstanding?`Due ${aed(t.outstanding)}`:""}</td></tr></tfoot></table></div>
     ${c.status==="Draft"||c.status==="Rejected"||status(c)==="Rejected"||status(c)==="Partially paid"?checkHtml(c):""}
     ${c.acts.some(a=>a.denial)?`<div class="result bad">${[...new Set(c.acts.filter(a=>a.denial).map(a=>a.denial))].map(k=>`<div><span class="code">${k}</span> ${esc(DENIALS[k]||"")}</div>`).join("")}</div>`:""}
@@ -1406,7 +1409,8 @@ function addClaimsFromXml(xml, {draft = false} = {}){
     const claimNet = num(own(ce,"Net")), claimPs = num(own(ce,"PatientShare"));
     const actEls = [...ce.getElementsByTagName("Activity")];
     const acts = actEls.map((a,k) => { const net = num(own(a,"Net")), ps = claimNet ? r2(claimPs*net/claimNet) : 0;
-      return {aid:own(a,"ID")||`${id}-${k+1}`, code:own(a,"Code"), type:own(a,"Type"), desc:"", qty:num(own(a,"Quantity"))||1, gross:r2(net+ps), ps, net:r2(net), paid:0, denial:null}; });
+      const obs = [...a.getElementsByTagName("Observation")].map(o => ({type:own(o,"Type"), code:own(o,"Code"), value:own(o,"Value"), unit:own(o,"ValueType")}));
+      return {aid:own(a,"ID")||`${id}-${k+1}`, code:own(a,"Code"), type:own(a,"Type"), obs, desc:"", qty:num(own(a,"Quantity"))||1, gross:r2(net+ps), ps, net:r2(net), paid:0, denial:null}; });
     const dx = [...ce.getElementsByTagName("Diagnosis")].map(d => [own(d,"Code"), ""]);
     const c = {id, patient:pt.id, payer:pid, card:own(ce,"MemberID"), dept:"–", doctor:actEls[0]?own(actEls[0],"Clinician"):"", enc:encDate,
       dx:dx.length?dx:[["",""]], acts, status:draft?"Draft":resub?"Resubmitted":"Submitted", submitted:draft?null:sent,
