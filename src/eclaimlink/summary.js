@@ -17,7 +17,8 @@ export function summarize(xml) {
       const resub = tag(c, "Resubmission"), acts = tags(c, "Activity");
       const own = c.replace(/<Activity\b[\s\S]*?<\/Activity>/g, ""); // claim-level fields only, not each activity's
       const actNet = r2(acts.reduce((s, a) => s + num(txt(a, "Net")), 0));
-      return { id: txt(own, "ID"), payer: txt(own, "PayerID"), member: txt(own, "MemberID"), gross: num(txt(own, "Gross")) || actNet,
+      const enc = tag(own, "Encounter") || "";
+      return { id: txt(own, "ID"), payer: txt(own, "PayerID"), member: txt(own, "MemberID"), visit: txt(enc, "Start") || txt(acts[0] || "", "Start"), gross: num(txt(own, "Gross")) || actNet,
         patientShare: num(txt(own, "PatientShare")), net: tag(own, "Net") !== null ? num(txt(own, "Net")) : actNet,
         activities: acts.length, resubmission: resub === null ? null : txt(resub, "Type") || "yes" };
     });
@@ -27,7 +28,9 @@ export function summarize(xml) {
     rows = tags(xml, "Claim").map(c => {
       const acts = tags(c, "Activity"), own = c.replace(/<Activity\b[\s\S]*?<\/Activity>/g, "");
       const net = acts.reduce((s, a) => s + num(txt(a, "Net")), 0), paid = acts.reduce((s, a) => s + num(txt(a, "PaymentAmount")), 0);
+      // Visit date: the encounter start if the payer sent it, otherwise the first activity's start
       return { id: txt(own, "ID"), payerRef: txt(own, "IDPayer"), paymentRef: txt(own, "PaymentReference"), settlement: txt(own, "DateSettlement"),
+        visit: txt(tag(own, "Encounter") || "", "Start") || txt(acts[0] || "", "Start"),
         net: r2(net), paid: r2(paid), denied: r2(Math.max(0, net - paid)), denialCodes: [...new Set(acts.map(a => txt(a, "DenialCode")).filter(Boolean))] };
     });
     const codes = {};

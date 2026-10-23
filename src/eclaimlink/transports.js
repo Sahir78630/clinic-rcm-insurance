@@ -112,6 +112,7 @@ ${acts.map((a, i) => {
     const net = Number(tag(a, "Net")) || 0, deny = !resub && denies(id) && i === acts.length - 1;
     return `    <Activity>
       <ID>${tag(a, "ID")}</ID>
+      <Start>${tag(a, "Start") || tag(tag(c, "Encounter") || "", "Start") || dt(new Date())}</Start>
       <Code>${tag(a, "Code")}</Code>
       <Quantity>${tag(a, "Quantity") || 1}</Quantity>
       <Net>${net.toFixed(2)}</Net>

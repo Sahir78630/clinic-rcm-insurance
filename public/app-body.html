@@ -348,7 +348,7 @@ const VIEWS = [
   ["Front office", [["eligibility","Eligibility & access"],["approvals","Prior approvals"]]],
   ["Billing", [["claims","Claims"],["remittance","Remittance & reconciliation"],["denials","Denials"],["resubmissions","Resubmissions"],["eclaimlink","eClaimLink files"]]],
   ["Finance", [["receivables","Insurance receivables"]]],
-  ["Reports", [["rep-remit","Remittance summary"],["rep-rejections","Rejections"],["rep-reasons","Rejection reasons"],["rep-submissions","Submissions"]]]
+  ["Reports", [["rep-remit","Remittance summary"],["rep-rejections","Rejections"],["rep-reasons","Rejection reasons"],["rep-submissions","Submissions"],["rep-recon","Reconciliation"],["rep-unprocessed","Unprocessed claims"]]]
 ];
 let current = (location.hash||"").slice(1);
 if (!VIEWS.some(g => g[1].some(v => v[0] === current))) current = "overview";
@@ -1610,60 +1610,79 @@ function applyEclFile(key, type, xml, name){
 /* ---------- reports ---------- */
 // Remittance, rejection and submission reports. With the clinic server they read the eClaimLink files themselves
 // (remittance advice received, claim submissions sent); without it they use the records in this browser.
-UI.rep = {from:addDays(TODAY,-30), to:TODAY, payer:"", q:"", busy:"", progress:"", ra:null, sub:null, raKey:"", subKey:"", errors:[]};
-const REP_PAGES = {"rep-remit":["ra","Remittance summary"],"rep-rejections":["ra","Rejections"],"rep-reasons":["ra","Rejection reasons"],"rep-submissions":["sub","Submission report"]};
-const repKey = () => `${UI.rep.from}|${UI.rep.to}`;
-// Local records: remittances posted to claims, and claims submitted, in the date range
+UI.rep = {from:addDays(TODAY,-30), to:TODAY, basis:"tx", payer:"", q:"", status:"", busy:"", progress:"", ra:null, sub:null, raWin:null, subWin:null, raFiles:0, subFiles:0, errors:[]};
+const REP_PAGES = {"rep-remit":["ra","Remittance summary"],"rep-rejections":["ra","Rejections"],"rep-reasons":["ra","Rejection reasons"],"rep-submissions":["sub","Submission report"],
+  "rep-recon":["both","Reconciliation"],"rep-unprocessed":["both","Unprocessed claims"]};
+const repKinds = () => REP_PAGES[current][0] === "both" ? ["sub","ra"] : [REP_PAGES[current][0]];
+// The eClaimLink files each report needs. A visit is always before its claim file, so a visit-date report also
+// searches files sent up to 120 days (claims) or received up to 180 days (remittances) after the end date.
+// Reconciliation looks 180 days past the end date for resubmissions and payments.
+function repWin(kind){
+  const u = UI.rep, ext = REP_PAGES[current][0] === "both" ? 180 : u.basis === "visit" ? (kind === "ra" ? 180 : 120) : 0;
+  const b = addDays(u.to, ext);
+  return {a:u.from, b:b < TODAY ? b : TODAY};
+}
+const repLoaded = kind => { const w = UI.rep[kind+"Win"], n = repWin(kind); return Boolean(UI.rep[kind] && w && w.a <= n.a && w.b >= n.b); };
+// Local records: claims and their resubmissions as sent, and remittances posted to claims
 function localRows(kind){
-  const u = UI.rep, inRange = d => d && d >= u.from && d <= u.to, out = [];
+  const out = [];
   for (const c of S.claims){
-    if (kind === "sub"){ if (inRange(c.submitted)) { const t = totals(c); out.push({claim:c.id, payer:c.payer, member:c.card, file:"", date:c.submitted, gross:t.gross, net:t.net, activities:c.acts.length, resub:c.resubs.length ? c.resubs[c.resubs.length-1].type : ""}); } continue; }
-    for (const r of c.remits){ const ra = S.ras.find(x => x.id === r.ra) || {}; const d = ra.date || r.d; if (!inRange(d)) continue;
-      out.push({claim:c.id, payer:c.payer, file:ra.source||"", date:d, settlement:d, paymentRef:ra.payRef||"", net:r2(r.paid+r.denied), paid:r.paid, denied:r.denied, codes:[...new Set(c.acts.map(a=>a.denial).filter(Boolean))]}); }
+    if (kind === "sub"){ if (!c.submitted) continue; const t = totals(c);
+      out.push({claim:c.id, payer:c.payer, member:c.card, file:"", date:c.submitted, visit:c.enc, gross:t.gross, net:t.net, activities:c.acts.length, resub:""});
+      for (const x of c.resubs) out.push({claim:c.id, payer:c.payer, member:c.card, file:"", date:x.d, visit:c.enc, gross:t.gross, net:r2(x.amount||0), activities:c.acts.length, resub:x.type||"yes"});
+      continue; }
+    for (const r of c.remits){ const ra = S.ras.find(x => x.id === r.ra) || {}; const d = ra.date || r.d;
+      out.push({claim:c.id, payer:c.payer, file:ra.source||"", date:d, visit:c.enc, settlement:d, paymentRef:ra.payRef||"", net:r2(r.paid+r.denied), paid:r.paid, denied:r.denied, codes:[...new Set(c.acts.map(a=>a.denial).filter(Boolean))]}); }
   }
   return out;
 }
 // eClaimLink: search in windows of up to 90 days, then open the files 200 at a time
-async function loadRepRows(kind){
-  const u = UI.rep, type = kind === "ra" ? "Remittance.Advice" : "Claim.Submission", direction = kind === "ra" ? "received" : "sent";
+async function loadRepRows(kind, w){
+  const u = UI.rep, type = kind === "ra" ? "Remittance.Advice" : "Claim.Submission", direction = kind === "ra" ? "received" : "sent", what = kind === "ra" ? "remittances" : "claim submissions";
   const found = [];
-  for (let a = u.from; a <= u.to; a = addDays(a, 91)){
-    const b = addDays(a, 90) < u.to ? addDays(a, 90) : u.to;
-    u.progress = `Searching eClaimLink ${fmtD(a)} – ${fmtD(b)}…`; render();
+  for (let a = w.a; a <= w.b; a = addDays(a, 91)){
+    const b = addDays(a, 90) < w.b ? addDays(a, 90) : w.b;
+    u.progress = `Searching eClaimLink ${what} ${fmtD(a)} – ${fmtD(b)}…`; render();
     const r = await api("/eclaimlink/search?" + new URLSearchParams({direction, type, status:"all", from:a, to:b}));
     found.push(...r.files);
   }
   const rows = [], errors = [];
   for (let i = 0; i < found.length; i += 200){
-    u.progress = `Opening files ${i+1}–${Math.min(found.length, i+200)} of ${found.length}…`; render();
+    u.progress = `Opening ${what} files ${i+1}–${Math.min(found.length, i+200)} of ${found.length}…`; render();
     const r = await api("/eclaimlink/rows", {files: found.slice(i, i+200).map(f => ({fileId:f.fileId, fileName:f.fileName, transactionDate:f.transactionDate}))});
     errors.push(...r.errors);
     for (const f of r.files){
-      const date = dhpoToIso(f.transactionDate) || "";
+      const date = dhpoToIso(f.transactionDate) || "", at = date + String(f.transactionDate||"").slice(10);
       for (const x of f.rows){
-        if (kind === "ra") rows.push({claim:x.id, payer:payerFrom(f.header.sender) || f.header.sender, file:f.fileName||f.fileId, date, settlement:dhpoToIso(x.settlement)||date, paymentRef:x.paymentRef, net:x.net, paid:x.paid, denied:x.denied, codes:x.denialCodes});
-        else rows.push({claim:x.id, payer:payerFrom(x.payer) || x.payer || payerFrom(f.header.receiver) || f.header.receiver, member:x.member, file:f.fileName||f.fileId, date, gross:x.gross, net:x.net, activities:x.activities, resub:x.resubmission||""});
+        if (kind === "ra") rows.push({claim:x.id, payer:payerFrom(f.header.sender) || f.header.sender, file:f.fileName||f.fileId, date, at, visit:dhpoToIso(x.visit)||"", settlement:dhpoToIso(x.settlement)||date, paymentRef:x.paymentRef, net:x.net, paid:x.paid, denied:x.denied, codes:x.denialCodes});
+        else rows.push({claim:x.id, payer:payerFrom(x.payer) || x.payer || payerFrom(f.header.receiver) || f.header.receiver, member:x.member, file:f.fileName||f.fileId, date, at, visit:dhpoToIso(x.visit)||"", gross:x.gross, net:x.net, activities:x.activities, resub:x.resubmission||""});
       }
     }
   }
   return {rows, errors, files:found.length};
 }
-const repRows = kind => { const u = UI.rep; const all = ECL() ? u[kind] : localRows(kind); return all ? all.filter(r => !u.payer || r.payer === u.payer) : null; };
+const repAll = kind => ECL() ? UI.rep[kind] : localRows(kind);
+const repDate = r => UI.rep.basis === "visit" ? (r.visit || (claimById(r.claim)||{}).enc || "") : r.date;
+const repRows = kind => { const u = UI.rep, all = repAll(kind); return all ? all.filter(r => (!u.payer || r.payer === u.payer) && repDate(r) && repDate(r) >= u.from && repDate(r) <= u.to) : null; };
 function repBar(kind){
-  const u = UI.rep, all = ECL() ? u[kind] : localRows(kind), payers = [...new Set((all||[]).map(r => r.payer))].sort();
-  const stale = ECL() && u[kind] && u[kind+"Key"] !== repKey();
+  const u = UI.rep, kinds = kind === "both" ? ["sub","ra"] : [kind], payers = [...new Set(kinds.flatMap(k => (repAll(k)||[]).map(r => r.payer)))].sort();
+  const loaded = kinds.every(k => u[k]), stale = ECL() && loaded && !kinds.every(repLoaded);
+  const fromLabel = u.basis === "visit" ? "Visit date from" : kind === "ra" ? "Remittance date from" : "Submission date from";
+  const nFiles = kinds.map(k => `${u[k+"Files"]} ${k==="ra"?"remittance":"claim submission"} file${u[k+"Files"]===1?"":"s"}`).join(" and ");
+  const ext = kind === "both" ? "Payments and resubmissions up to 180 days after the end date are included." : u.basis === "visit" ? `Files ${kind==="ra"?"received up to 180":"sent up to 120"} days after the end date are searched for these visits.` : "";
   return `<section class="panel"><form id="repForm" class="form-grid">
-    <div class="field"><label for="rFrom">${kind==="ra"?"Remittance date from":"Submission date from"}</label><input type="date" id="rFrom" value="${u.from}" max="${TODAY}"></div>
+    <div class="field"><label for="rBasis">Report by</label><select id="rBasis"><option value="tx" ${u.basis==="tx"?"selected":""}>${kind==="ra"?"Remittance date":"Submission date"}</option><option value="visit" ${u.basis==="visit"?"selected":""}>Visit date</option></select></div>
+    <div class="field"><label for="rFrom">${fromLabel}</label><input type="date" id="rFrom" value="${u.from}" max="${TODAY}"></div>
     <div class="field"><label for="rTo">To</label><input type="date" id="rTo" value="${u.to}" max="${TODAY}"></div>
     <div class="field"><label for="rPayer">Payer</label><select id="rPayer"><option value="">All payers</option>${payers.map(p=>`<option value="${esc(p)}" ${u.payer===p?"selected":""}>${esc(payerLabel(p))}</option>`).join("")}</select></div>
-    ${ECL()?`<div class="field"><button class="btn primary" type="submit" ${u.busy?"disabled":""}>${u.busy?"Loading…":u[kind]&&!stale?"Reload from eClaimLink":"Load from eClaimLink"}</button></div>`:""}
+    ${ECL()?`<div class="field"><button class="btn primary" type="submit" ${u.busy?"disabled":""}>${u.busy?"Loading…":loaded&&!stale?"Reload from eClaimLink":"Load from eClaimLink"}</button></div>`:""}
   </form>
   <div class="muted" style="font-size:12.5px;margin-top:8px">${u.busy ? esc(u.progress) : ECL()
-    ? (u[kind] ? `${stale?"Dates changed: load again to update. ":""}Read from ${u[kind+"Files"]} ${kind==="ra"?"remittance":"claim submission"} file${u[kind+"Files"]===1?"":"s"} on ${eclLabel()}${u.errors.length?` · ${u.errors.length} could not be opened`:""}.` : `Choose the dates and load. Long ranges are searched in 90-day steps.`)
+    ? (loaded ? `${stale?"<b>Dates or report type changed: load again to update.</b> ":""}Read from ${nFiles} on ${eclLabel()}${u.errors.length?` · ${u.errors.length} could not be opened`:""}. ${ext}` : `Choose the dates and load. Long ranges are searched in 90-day steps. ${ext}`)
       + (eclNeedsSignIn() ? ` <b>Not signed in:</b> test-mode data only. <button class="btn sm" data-go="eclaimlink" type="button">Sign in to eClaimLink</button>` : "")
     : "From the records in this browser. Open the website from the clinic server and sign in to eClaimLink to report on all your eClaimLink files."}</div></section>`;
 }
-const repEmpty = kind => `<section class="panel"><div class="empty">${ECL() && !UI.rep[kind] ? "Load the report to see it here." : "Nothing in this period."}</div></section>`;
+const repEmpty = kind => `<section class="panel"><div class="empty">${ECL() && !(kind === "both" ? UI.rep.sub && UI.rep.ra : UI.rep[kind]) ? "Load the report to see it here." : "Nothing in this period."}</div></section>`;
 const repDl = id => `<button class="btn" id="${id}" type="button">Download Excel (CSV)</button>`;
 function repByPayer(rows){
   const m = {};
@@ -1676,6 +1695,38 @@ function reasons(rows){
     for (const k of cs){ const e = m[k] ||= {code:k, claims:0, denied:0, payers:{}}; e.claims++; e.denied += r.denied / cs.length; e.payers[r.payer] = (e.payers[r.payer]||0) + 1; } }
   return Object.values(m).sort((a,b) => b.denied - a.denied);
 }
+// Reconciliation: each claim first sent (or visited) in the period, matched with every resubmission and remittance for it
+const RECON = {paid:["Paid in full","--s3","Paid"], partial:["Partially paid","--s2","Part paid"], rejected:["Rejected","--s4","Rejected"], awaiting:["Resubmitted, awaiting payment","--dx","Resubmitted"], unprocessed:["Unprocessed (no remittance)","--info","Unprocessed"]};
+function recon(){
+  const u = UI.rep, subs = repAll("sub"), ras = repAll("ra");
+  if (!subs || !ras) return null;
+  const by = {}, when = r => r.at || r.date || "", byDate = (a,b) => when(a).localeCompare(when(b));
+  for (const r of subs) (by[r.claim] ||= {sub:[], ra:[]}).sub.push(r);
+  for (const r of ras) if (by[r.claim]) by[r.claim].ra.push(r);
+  const out = [];
+  for (const [id, g] of Object.entries(by)){
+    g.sub.sort(byDate); g.ra.sort(byDate);
+    const first = g.sub.find(s => !s.resub) || g.sub[0], last = g.sub[g.sub.length-1], lastRa = g.ra[g.ra.length-1];
+    const d = u.basis === "visit" ? first.visit : first.date;
+    if (!d || d < u.from || d > u.to || (u.payer && first.payer !== u.payer)) continue;
+    const resubs = g.sub.filter(s => s.resub).length, net = first.net, paid = r2(g.ra.reduce((a,r) => a + r.paid, 0));
+    let status;
+    if (!g.ra.length) status = resubs ? "awaiting" : "unprocessed";
+    else if (last.resub && when(last) >= when(lastRa) && paid < net - 0.01) status = "awaiting";
+    else status = paid >= net - 0.01 ? "paid" : paid > 0 ? "partial" : "rejected";
+    out.push({claim:id, payer:first.payer, member:first.member||"", visit:first.visit||"", submitted:first.date, resubs, lastSent:last.date, remits:g.ra.length, lastRemit:lastRa ? lastRa.date : "",
+      net, paid, balance:r2(Math.max(0, net - paid)), codes:[...new Set(g.ra.flatMap(r => r.codes||[]))], status, days:diff(last.date, TODAY)});
+  }
+  return out.sort((a,b) => (a.submitted||"").localeCompare(b.submitted||""));
+}
+const reconBadge = s => `<span class="pill" style="color:var(${RECON[s][1]})" title="${RECON[s][0]}">${RECON[s][2]}</span>`;
+const inRecords = id => claimById(id) ? "Yes" : "No";
+function reconTable(list, cols){
+  return `<div class="table-wrap"><table><thead><tr><th>Claim</th><th>Payer</th><th>Visit</th><th>First sent</th><th class="num">Resubmissions</th>${cols==="aging"?`<th>Last sent</th><th class="num">Days waiting</th>`:`<th>Last remittance</th>`}<th class="num">Net AED</th><th class="num">Paid AED</th><th class="num">Outstanding AED</th><th>Status</th>${cols==="aging"?"":"<th>Denial codes</th>"}<th>In my records</th></tr></thead><tbody>
+    ${list.slice(0,1000).map(r=>`<tr ${claimById(r.claim)?`class="click" data-claim="${esc(r.claim)}"`:""}><td class="mono">${esc(r.claim)}</td><td>${esc(payerLabel(r.payer))}</td><td class="muted">${fmtD(r.visit)}</td><td class="muted">${fmtD(r.submitted)}</td><td class="num">${r.resubs}</td>${cols==="aging"?`<td class="muted">${fmtD(r.lastSent)}</td><td class="num">${r.days}</td>`:`<td class="muted">${r.lastRemit?fmtD(r.lastRemit):"–"}</td>`}<td class="num">${aed(r.net)}</td><td class="num">${aed(r.paid)}</td><td class="num">${aed(r.balance)}</td><td>${reconBadge(r.status)}</td>${cols==="aging"?"":`<td class="wrap-cell">${r.codes.map(k=>`<span class="code" title="${esc(DENIALS[k]||"")}">${esc(k)}</span>`).join(" ")||"–"}</td>`}<td>${inRecords(r.claim)}</td></tr>`).join("") || `<tr><td colspan="12" class="empty">No claims match.</td></tr>`}
+    </tbody></table></div>${list.length>1000?`<p class="muted">First 1,000 of ${list.length} shown; the download has all of them.</p>`:""}`;
+}
+const reconMatch = r => { const q = UI.rep.q.toLowerCase(); return !q || r.claim.toLowerCase().includes(q) || r.member.toLowerCase().includes(q) || r.codes.join(" ").toLowerCase().includes(q); };
 
 R["rep-remit"] = () => {
   const rows = repRows("ra"), head0 = head("Remittance summary","Total paid and denied in eClaimLink remittance advice, by payer and by payment reference.", rows&&rows.length?repDl("repDl"):"");
@@ -1713,8 +1764,8 @@ R["rep-rejections"] = () => {
     <div class="kpi"><span class="eyebrow">Fully rejected</span><span class="v">${full}</span><span class="s">${rej.length-full} partially paid</span></div>
   </div>
   <section class="panel"><div class="filters" style="margin:0 0 10px"><input type="text" id="repQ" placeholder="Search claim or denial code" value="${esc(UI.rep.q)}" style="flex:1 1 220px"></div>
-  <div class="table-wrap"><table><thead><tr><th>Claim</th><th>Payer</th><th>Settled</th><th class="num">Claimed</th><th class="num">Paid</th><th class="num">Denied</th><th>Denial codes</th><th>File</th><th>In my records</th></tr></thead><tbody>
-    ${list.slice(0,1000).map(r=>`<tr ${claimById(r.claim)?`class="click" data-claim="${esc(r.claim)}"`:""}><td class="mono">${esc(r.claim)}</td><td>${esc(payerLabel(r.payer))}</td><td class="muted">${fmtD(r.settlement||r.date)}</td><td class="num">${aed(r.net)}</td><td class="num">${aed(r.paid)}</td><td class="num">${aed(r.denied)}</td><td class="wrap-cell">${r.codes.map(k=>`<span class="code" title="${esc(DENIALS[k]||"")}">${esc(k)}</span>`).join(" ")||"–"}</td><td class="mono muted">${esc(r.file)}</td><td>${claimById(r.claim)?"Yes":"No"}</td></tr>`).join("") || `<tr><td colspan="9" class="empty">No rejections match this search.</td></tr>`}
+  <div class="table-wrap"><table><thead><tr><th>Claim</th><th>Payer</th><th>Visit</th><th>Settled</th><th class="num">Claimed</th><th class="num">Paid</th><th class="num">Denied</th><th>Denial codes</th><th>File</th><th>In my records</th></tr></thead><tbody>
+    ${list.slice(0,1000).map(r=>`<tr ${claimById(r.claim)?`class="click" data-claim="${esc(r.claim)}"`:""}><td class="mono">${esc(r.claim)}</td><td>${esc(payerLabel(r.payer))}</td><td class="muted">${r.visit?fmtD(r.visit):"–"}</td><td class="muted">${fmtD(r.settlement||r.date)}</td><td class="num">${aed(r.net)}</td><td class="num">${aed(r.paid)}</td><td class="num">${aed(r.denied)}</td><td class="wrap-cell">${r.codes.map(k=>`<span class="code" title="${esc(DENIALS[k]||"")}">${esc(k)}</span>`).join(" ")||"–"}</td><td class="mono muted">${esc(r.file)}</td><td>${inRecords(r.claim)}</td></tr>`).join("") || `<tr><td colspan="10" class="empty">No rejections match this search.</td></tr>`}
     </tbody></table></div>${list.length>1000?`<p class="muted">First 1,000 of ${list.length} shown; the download has all of them.</p>`:""}</section>`;
 };
 R["rep-reasons"] = () => {
@@ -1738,42 +1789,104 @@ R["rep-submissions"] = () => {
   const t = rows.reduce((a,r)=>({gross:a.gross+r.gross, net:a.net+r.net}),{gross:0,net:0}), resub = rows.filter(r=>r.resub).length;
   const bp = {}; rows.forEach(r => { const p = bp[r.payer] ||= {payer:r.payer, files:new Set(), claims:0, net:0, resub:0}; p.files.add(r.file); p.claims++; p.net += r.net; if (r.resub) p.resub++; });
   const pl = Object.values(bp).sort((a,b)=>b.net-a.net);
-  const bm = {}; rows.forEach(r => { const k = (r.date||"").slice(0,7); const m = bm[k] ||= {k, claims:0, net:0, resub:0}; m.claims++; m.net += r.net; if (r.resub) m.resub++; });
+  const bm = {}; rows.forEach(r => { const k = (repDate(r)||"").slice(0,7); const m = bm[k] ||= {k, claims:0, net:0, resub:0}; m.claims++; m.net += r.net; if (r.resub) m.resub++; });
   const ml = Object.values(bm).sort((a,b)=>a.k.localeCompare(b.k));
   const mLabel = k => k ? new Date(k+"-01T00:00:00").toLocaleDateString("en-GB",{month:"short",year:"2-digit"}) : "–";
+  const by = UI.rep.basis === "visit" ? "visit month" : "month sent";
   return head0 + repBar("sub") + `<div class="kpis">
     <div class="kpi"><span class="eyebrow">Claims submitted</span><span class="v">${rows.length}</span><span class="s">in ${new Set(rows.map(r=>r.file)).size} files</span></div>
     <div class="kpi"><span class="eyebrow">Net submitted</span><span class="v">${aed(t.net)}<small>AED</small></span><span class="s">gross AED ${aed(t.gross)}</span></div>
     <div class="kpi"><span class="eyebrow">Resubmissions</span><span class="v">${resub}</span><span class="s">${(100*resub/rows.length).toFixed(1)}% of claims sent</span></div>
   </div>
   <div class="grid2">
-    <section class="panel"><div class="panel-head"><div><h2>Net submitted by month</h2><p>AED</p></div></div>${vbars(ml.map(m=>({label:mLabel(m.k), series:[{v:r2(m.net-0), color:"--s1", name:"Net submitted"}]})),{label:"Net submitted by month"})}</section>
+    <section class="panel"><div class="panel-head"><div><h2>Net submitted by ${by}</h2><p>AED</p></div></div>${vbars(ml.map(m=>({label:mLabel(m.k), series:[{v:r2(m.net-0), color:"--s1", name:"Net submitted"}]})),{label:"Net submitted by "+by})}</section>
     <section class="panel"><div class="panel-head"><div><h2>Net submitted by payer</h2><p>AED</p></div></div>${hbars(pl.map(p=>({label:payerLabel(p.payer), v:r2(p.net), color:"--s1"})),{label:"Net submitted by payer"})}</section>
   </div>
   <section class="panel"><div class="panel-head"><div><h2>By payer</h2></div></div><div class="table-wrap"><table><thead><tr><th>Payer</th><th class="num">Files</th><th class="num">Claims</th><th class="num">Resubmissions</th><th class="num">Net AED</th></tr></thead><tbody>
     ${pl.map(p=>`<tr><td><b>${esc(payerLabel(p.payer))}</b></td><td class="num">${p.files.size}</td><td class="num">${p.claims}</td><td class="num">${p.resub}</td><td class="num">${aed(p.net)}</td></tr>`).join("")}
     </tbody><tfoot><tr><td>All payers</td><td class="num">${new Set(rows.map(r=>r.file)).size}</td><td class="num">${rows.length}</td><td class="num">${resub}</td><td class="num">${aed(t.net)}</td></tr></tfoot></table></div></section>
-  <section class="panel"><div class="panel-head"><div><h2>By month</h2></div></div><div class="table-wrap"><table><thead><tr><th>Month</th><th class="num">Claims</th><th class="num">Resubmissions</th><th class="num">Net AED</th></tr></thead><tbody>
+  <section class="panel"><div class="panel-head"><div><h2>By ${by}</h2></div></div><div class="table-wrap"><table><thead><tr><th>Month</th><th class="num">Claims</th><th class="num">Resubmissions</th><th class="num">Net AED</th></tr></thead><tbody>
     ${ml.map(m=>`<tr><td>${mLabel(m.k)}</td><td class="num">${m.claims}</td><td class="num">${m.resub}</td><td class="num">${aed(m.net)}</td></tr>`).join("")}</tbody></table></div></section>`;
 };
+R["rep-recon"] = () => {
+  const u = UI.rep, all = recon(), head0 = head("Reconciliation","Each claim sent in the period, matched with its resubmissions and every remittance: paid, partly paid, rejected, resubmitted and still waiting, or never processed.", all&&all.length?repDl("repDl"):"");
+  if (!all || !all.length) return head0 + repBar("both") + repEmpty("both");
+  const sum = (l, f) => r2(l.reduce((a,r) => a + f(r), 0)), of = s => all.filter(r => r.status === s);
+  const net = sum(all, r=>r.net), paid = sum(all, r=>r.paid), denied = sum(all.filter(r=>r.status==="partial"||r.status==="rejected"), r=>r.balance);
+  const aw = of("awaiting"), un = of("unprocessed");
+  const list = all.filter(r => (!u.status || r.status === u.status) && reconMatch(r));
+  const bp = {}; all.forEach(r => { const p = bp[r.payer] ||= {payer:r.payer, claims:0, net:0, paid:0, denied:0, awaiting:0, unprocessed:0};
+    p.claims++; p.net += r.net; p.paid += r.paid; if (r.status==="partial"||r.status==="rejected") p.denied += r.balance; if (r.status==="awaiting") p.awaiting += r.balance; if (r.status==="unprocessed") p.unprocessed += r.balance; });
+  const pl = Object.values(bp).sort((a,b) => b.net - a.net);
+  return head0 + repBar("both") + `<div class="kpis">
+    <div class="kpi"><span class="eyebrow">Claims sent</span><span class="v">${all.length}</span><span class="s">AED ${aed(net)} net</span></div>
+    <div class="kpi"><span class="eyebrow">Paid</span><span class="v">${aed(paid)}<small>AED</small></span><span class="s">${net?(100*paid/net).toFixed(1):"0.0"}% collected · ${of("paid").length} paid in full, ${of("partial").length} partly</span></div>
+    <div class="kpi ${denied?"alert":""}"><span class="eyebrow">Denied, not resubmitted</span><span class="v">${aed(denied)}<small>AED</small></span><span class="s">${of("rejected").length} rejected, ${of("partial").length} partly paid</span></div>
+    <div class="kpi"><span class="eyebrow">Resubmitted, awaiting payment</span><span class="v">${aw.length}</span><span class="s">AED ${aed(sum(aw, r=>r.balance))} outstanding</span></div>
+    <div class="kpi"><span class="eyebrow">Unprocessed</span><span class="v">${un.length}</span><span class="s">AED ${aed(sum(un, r=>r.balance))} with no remittance</span></div>
+  </div>
+  <div class="grid2">
+    <section class="panel"><div class="panel-head"><div><h2>Where the money is</h2><p>Net amount sent, AED</p></div></div>${pie([{label:"Paid",v:paid,color:"--s3"},{label:"Denied, not resubmitted",v:denied,color:"--s4"},{label:"Resubmitted, awaiting",v:sum(aw,r=>r.balance),color:"--dx"},{label:"Unprocessed",v:sum(un,r=>r.balance),color:"--info"}],{fmt:v=>"AED "+aed(v),center:aedK(net),centerSub:"AED sent",label:"Where the money is"})}</section>
+    <section class="panel"><div class="panel-head"><div><h2>Claims by status</h2><p>Number of claims</p></div></div>${hbars(Object.keys(RECON).map(s=>({label:RECON[s][0], v:of(s).length, color:RECON[s][1]})),{label:"Claims by status",pl:190}).replace(/AED /g,"")}</section>
+  </div>
+  <section class="panel"><div class="panel-head"><div><h2>By payer</h2><p>AED</p></div></div><div class="table-wrap"><table><thead><tr><th>Payer</th><th class="num">Claims</th><th class="num">Net sent</th><th class="num">Paid</th><th class="num">Denied, not resubmitted</th><th class="num">Resubmitted, awaiting</th><th class="num">Unprocessed</th><th class="num">Collected</th></tr></thead><tbody>
+    ${pl.map(p=>`<tr><td><b>${esc(payerLabel(p.payer))}</b></td><td class="num">${p.claims}</td><td class="num">${aed(p.net)}</td><td class="num">${aed(p.paid)}</td><td class="num">${aed(p.denied)}</td><td class="num">${aed(p.awaiting)}</td><td class="num">${aed(p.unprocessed)}</td><td class="num">${p.net?(100*p.paid/p.net).toFixed(1)+"%":"–"}</td></tr>`).join("")}
+    </tbody><tfoot><tr><td>All payers</td><td class="num">${all.length}</td><td class="num">${aed(net)}</td><td class="num">${aed(paid)}</td><td class="num">${aed(denied)}</td><td class="num">${aed(sum(aw,r=>r.balance))}</td><td class="num">${aed(sum(un,r=>r.balance))}</td><td class="num">${net?(100*paid/net).toFixed(1)+"%":"–"}</td></tr></tfoot></table></div></section>
+  <section class="panel"><div class="filters" style="margin:0 0 10px"><select id="repStatus"><option value="">All statuses (${all.length})</option>${Object.keys(RECON).map(s=>`<option value="${s}" ${u.status===s?"selected":""}>${RECON[s][0]} (${of(s).length})</option>`).join("")}</select>
+    <input type="text" id="repQ" placeholder="Search claim, member or denial code" value="${esc(u.q)}" style="flex:1 1 220px"></div>
+  ${reconTable(list)}</section>`;
+};
+const AGING = [["0–30 days",0,30],["31–60 days",31,60],["61–90 days",61,90],["Over 90 days",91,1e9]];
+R["rep-unprocessed"] = () => {
+  const u = UI.rep, rc = recon(), all = rc ? rc.filter(r => r.status === "unprocessed" || r.status === "awaiting").sort((a,b) => b.days - a.days) : null;
+  const head0 = head("Unprocessed claims","Claims with no remittance yet, and resubmitted claims still waiting for payment, by how long they have been waiting.", all&&all.length?repDl("repDl"):"");
+  if (!all || !all.length) return head0 + repBar("both") + (rc && rc.length ? `<section class="panel"><div class="empty">Every claim sent in this period has a remittance.</div></section>` : repEmpty("both"));
+  const sum = l => r2(l.reduce((a,r) => a + r.balance, 0)), un = all.filter(r=>r.status==="unprocessed"), aw = all.filter(r=>r.status==="awaiting"), old = all.filter(r=>r.days>90);
+  const list = all.filter(r => (!u.status || r.status === u.status) && reconMatch(r));
+  const bp = {}; all.forEach(r => { const p = bp[r.payer] ||= {payer:r.payer, un:0, unAed:0, aw:0, awAed:0, old:0, oldest:0};
+    if (r.status==="unprocessed"){ p.un++; p.unAed += r.balance; } else { p.aw++; p.awAed += r.balance; } if (r.days > 90) p.old++; p.oldest = Math.max(p.oldest, r.days); });
+  const pl = Object.values(bp).sort((a,b) => (b.unAed+b.awAed) - (a.unAed+a.awAed));
+  return head0 + repBar("both") + `<div class="kpis">
+    <div class="kpi"><span class="eyebrow">Unprocessed</span><span class="v">${un.length}</span><span class="s">AED ${aed(sum(un))} with no remittance</span></div>
+    <div class="kpi"><span class="eyebrow">Resubmitted, awaiting payment</span><span class="v">${aw.length}</span><span class="s">AED ${aed(sum(aw))} outstanding</span></div>
+    <div class="kpi ${old.length?"alert":""}"><span class="eyebrow">Waiting over 90 days</span><span class="v">${old.length}</span><span class="s">AED ${aed(sum(old))} · follow up with the payer</span></div>
+  </div>
+  <div class="grid2">
+    <section class="panel"><div class="panel-head"><div><h2>How long they have waited</h2><p>Days since last sent · number of claims</p></div></div>${vbars(AGING.map(([l,a,b])=>({label:l, series:[{v:un.filter(r=>r.days>=a&&r.days<=b).length,color:"--info",name:"Unprocessed"},{v:aw.filter(r=>r.days>=a&&r.days<=b).length,color:"--dx",name:"Resubmitted, awaiting"}]})),{count:true,label:"Waiting time"})}
+      <div class="legend"><span><i style="background:var(--info)"></i>Unprocessed</span><span><i style="background:var(--dx)"></i>Resubmitted, awaiting</span></div></section>
+    <section class="panel"><div class="panel-head"><div><h2>Outstanding by payer</h2><p>AED</p></div></div>${hbars(pl.map(p=>({label:payerLabel(p.payer), v:r2(p.unAed+p.awAed), color:"--info"})),{label:"Outstanding by payer"})}</section>
+  </div>
+  <section class="panel"><div class="panel-head"><div><h2>By payer</h2></div></div><div class="table-wrap"><table><thead><tr><th>Payer</th><th class="num">Unprocessed</th><th class="num">AED</th><th class="num">Resubmitted, awaiting</th><th class="num">AED</th><th class="num">Over 90 days</th><th class="num">Oldest (days)</th></tr></thead><tbody>
+    ${pl.map(p=>`<tr><td><b>${esc(payerLabel(p.payer))}</b></td><td class="num">${p.un}</td><td class="num">${aed(p.unAed)}</td><td class="num">${p.aw}</td><td class="num">${aed(p.awAed)}</td><td class="num">${p.old}</td><td class="num">${p.oldest}</td></tr>`).join("")}
+    </tbody></table></div></section>
+  <section class="panel"><div class="filters" style="margin:0 0 10px"><select id="repStatus"><option value="">Both (${all.length})</option><option value="unprocessed" ${u.status==="unprocessed"?"selected":""}>Unprocessed (${un.length})</option><option value="awaiting" ${u.status==="awaiting"?"selected":""}>Resubmitted, awaiting payment (${aw.length})</option></select>
+    <input type="text" id="repQ" placeholder="Search claim or member" value="${esc(u.q)}" style="flex:1 1 220px"></div>
+  ${reconTable(list, "aging")}</section>`;
+};
 function repCsv(){
+  if (current === "rep-recon" || current === "rep-unprocessed"){
+    const u = UI.rep, rows = (recon() || []).filter(r => (current === "rep-recon" || r.status === "unprocessed" || r.status === "awaiting") && (!u.status || r.status === u.status) && reconMatch(r));
+    return [csvRow(["Claim","Payer","Member","Visit","First sent","Resubmissions","Last sent","Days since last sent","Remittances","Last remittance","Net AED","Paid AED","Outstanding AED","Status","Denial codes","In my records"]),
+      ...rows.map(r=>csvRow([r.claim,payerLabel(r.payer),r.member,r.visit,r.submitted,r.resubs,r.lastSent,r.days,r.remits,r.lastRemit,r.net,r.paid,r.balance,RECON[r.status][0],r.codes.join(" "),inRecords(r.claim)]))].join("\n");
+  }
   const k = REP_PAGES[current][0], rows = repRows(k) || [];
-  if (current === "rep-submissions") return [csvRow(["Claim","Payer","Member","Submitted","File","Gross AED","Net AED","Activities","Resubmission"]), ...rows.map(r=>csvRow([r.claim,payerLabel(r.payer),r.member,r.date,r.file,r.gross,r.net,r.activities,r.resub]))].join("\n");
+  if (current === "rep-submissions") return [csvRow(["Claim","Payer","Member","Visit","Submitted","File","Gross AED","Net AED","Activities","Resubmission"]), ...rows.map(r=>csvRow([r.claim,payerLabel(r.payer),r.member,r.visit,r.date,r.file,r.gross,r.net,r.activities,r.resub]))].join("\n");
   if (current === "rep-reasons") return [csvRow(["Code","Meaning","Claims","Denied AED","Payers"]), ...reasons(rows).map(e=>csvRow([e.code,DENIALS[e.code]||"",e.claims,r2(e.denied),Object.entries(e.payers).map(([p,n])=>`${payerLabel(p)} (${n})`).join("; ")]))].join("\n");
   const list = current === "rep-rejections" ? rows.filter(r=>r.denied>0) : rows;
-  return [csvRow(["Claim","Payer","Settled","Payment reference","File","Claimed AED","Paid AED","Denied AED","Denial codes"]), ...list.map(r=>csvRow([r.claim,payerLabel(r.payer),r.settlement||r.date,r.paymentRef,r.file,r.net,r.paid,r.denied,r.codes.join(" ")]))].join("\n");
+  return [csvRow(["Claim","Payer","Visit","Settled","Payment reference","File","Claimed AED","Paid AED","Denied AED","Denial codes"]), ...list.map(r=>csvRow([r.claim,payerLabel(r.payer),r.visit,r.settlement||r.date,r.paymentRef,r.file,r.net,r.paid,r.denied,r.codes.join(" ")]))].join("\n");
 }
 function bindReports(){
-  const u = UI.rep, kind = REP_PAGES[current][0], f = $("#repForm");
-  const sync = () => { u.from = $("#rFrom").value || u.from; u.to = $("#rTo").value || u.to; u.payer = $("#rPayer").value; };
+  const u = UI.rep, f = $("#repForm");
+  const sync = () => { u.from = $("#rFrom").value || u.from; u.to = $("#rTo").value || u.to; u.payer = $("#rPayer").value; u.basis = $("#rBasis").value; };
   ["#rFrom","#rTo"].forEach(id => $(id).onchange = () => { sync(); if (u.from > u.to) [u.from, u.to] = [u.to, u.from]; render(); });
-  $("#rPayer").onchange = () => { sync(); render(); };
-  f.onsubmit = async e => { e.preventDefault(); sync(); u.busy = kind; u.errors = []; render();
-    try { const r = await loadRepRows(kind); u[kind] = r.rows; u[kind+"Key"] = repKey(); u[kind+"Files"] = r.files; u.errors = r.errors; }
+  $("#rPayer").onchange = $("#rBasis").onchange = () => { sync(); render(); };
+  f.onsubmit = async e => { e.preventDefault(); sync(); u.busy = "1"; u.errors = []; render();
+    try { for (const k of repKinds()){ const w = repWin(k), r = await loadRepRows(k, w); u[k] = r.rows; u[k+"Win"] = w; u[k+"Files"] = r.files; u.errors.push(...r.errors); } }
     catch(err){ toast(err.message); }
     u.busy = ""; u.progress = ""; render(); };
+  const st = $("#repStatus"); if (st) st.onchange = () => { u.status = st.value; render(); };
   const q = $("#repQ"); if (q) q.oninput = () => { u.q = q.value; const pos = q.selectionStart; render(); const n = $("#repQ"); n.focus(); n.setSelectionRange(pos,pos); };
-  const dl = $("#repDl"); if (dl) dl.onclick = () => downloadFile(`${current.replace("rep-","")}_${u.from}_to_${u.to}${u.payer?"_"+u.payer:""}.csv`, repCsv());
+  const dl = $("#repDl"); if (dl) dl.onclick = () => downloadFile(`${current.replace("rep-","")}_${u.basis==="visit"?"visits_":""}${u.from}_to_${u.to}${u.payer?"_"+u.payer:""}.csv`, repCsv());
 }
 
 /* ---------- eClaimLink files ---------- */
