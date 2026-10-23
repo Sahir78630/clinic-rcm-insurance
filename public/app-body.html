@@ -720,6 +720,10 @@ const dlgHead = (title, sub, right="") => `<div class="dlg-head"><div><h2>${titl
 const SUBMIT_LIMIT_DAYS = 90; // typical contractual time limit; change to match your payer contracts
 const ICD10 = /^[A-TV-Z][0-9][0-9A-Z](\.[0-9A-Z]{1,4})?$/i;
 const ACT_CODE = /^(\d{5}|\d{4}[A-Z]|[A-V]\d{4}|D\d{4})$/i;
+// Codes from other DHA code sets: Dubai service codes (9, 9.01, 10.02 …), drug codes (XXXX-XXXXXX-XXXX), DRGs.
+// Activity types in eClaimLink files: 3 CPT, 4 HCPCS, 5 drug, 6 dental, 8 service code, 9 IR-DRG.
+const OTHER_CODE = /^(\d{1,3}(\.\d{1,3})?|[A-Z0-9]{4}-[A-Z0-9]{6}-[A-Z0-9]{4}|\d{2}-\d{4,})$/i;
+const isServiceCode = a => ["5","8","9","10"].includes(String(a.type||"")) || OTHER_CODE.test(a.code||"");
 const DENTAL_DX = /^(K0[0-9]|K1[0-4]|S02\.5|Z01\.2)/i;
 function paDepartments(){
   const fromServer = LIVE.cfg && LIVE.cfg.approvalDepartments;
@@ -744,9 +748,9 @@ function checkClaim(c){
   c.acts.forEach(a => {
     const tag = `Activity ${a.code || a.aid}`;
     if (!a.code) err("CODE-010",`${a.aid}: activity code is missing.`);
-    else if (!ACT_CODE.test(a.code)) warn("CODE-010",`${tag}: code format is not CPT, HCPCS or dental.`);
+    else if (!ACT_CODE.test(a.code) && !isServiceCode(a)) warn("CODE-010",`${tag}: code format is not CPT, HCPCS, dental, drug or Dubai service code.`);
     if (!(a.qty >= 1)) err("",`${tag}: quantity must be at least 1.`);
-    if (!(a.gross > 0)) err("",`${tag}: gross amount is zero.`);
+    if (!(a.gross > 0) && !isServiceCode(a)) err("",`${tag}: gross amount is zero.`);
     if (a.ps > a.gross) err("",`${tag}: patient share is more than the gross amount.`);
     if (/^D\d{4}$/i.test(a.code || "") && dx.length && !dx.some(d => DENTAL_DX.test(d))) warn("CODE-010",`${tag} is a dental code but no dental diagnosis (K00–K14) is on the claim.`);
   });
@@ -1373,7 +1377,7 @@ function addClaimsFromXml(xml, {draft = false} = {}){
     const claimNet = num(own(ce,"Net")), claimPs = num(own(ce,"PatientShare"));
     const actEls = [...ce.getElementsByTagName("Activity")];
     const acts = actEls.map((a,k) => { const net = num(own(a,"Net")), ps = claimNet ? r2(claimPs*net/claimNet) : 0;
-      return {aid:own(a,"ID")||`${id}-${k+1}`, code:own(a,"Code"), desc:"", qty:num(own(a,"Quantity"))||1, gross:r2(net+ps), ps, net:r2(net), paid:0, denial:null}; });
+      return {aid:own(a,"ID")||`${id}-${k+1}`, code:own(a,"Code"), type:own(a,"Type"), desc:"", qty:num(own(a,"Quantity"))||1, gross:r2(net+ps), ps, net:r2(net), paid:0, denial:null}; });
     const dx = [...ce.getElementsByTagName("Diagnosis")].map(d => [own(d,"Code"), ""]);
     const c = {id, patient:pt.id, payer:pid, card:own(ce,"MemberID"), dept:"–", doctor:actEls[0]?own(actEls[0],"Clinician"):"", enc:encDate,
       dx:dx.length?dx:[["",""]], acts, status:draft?"Draft":resub?"Resubmitted":"Submitted", submitted:draft?null:sent,
