@@ -1,6 +1,6 @@
 import { tag, tags, xmlUnesc } from "./soap.js";
 
-const num = v => Number(v) || 0;
+const num = v => Number(String(v ?? "").replace(/,/g, "")) || 0;
 const r2 = n => Math.round(n * 100) / 100;
 const txt = (xml, name) => xmlUnesc(tag(xml, name) ?? "").trim();
 export const rootOf = xml => (String(xml).match(/<([A-Za-z][\w.]*)[\s>]/) || [])[1] || null;

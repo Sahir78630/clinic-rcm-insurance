@@ -137,15 +137,30 @@ export async function search(ctx, q) {
   const t = transport(ctx);
   const jobs = types.flatMap(type => statuses.map(status => ({ type, status })));
   const files = [], notes = [];
+  const key = d => d ? `${d.slice(6, 10)}${d.slice(3, 5)}${d.slice(0, 2)}${d.slice(11)}` : "";
+  // eClaimLink returns only so many files per search, oldest first. Search again from the newest file's time
+  // until a search brings nothing new, so busy periods are not cut short.
   await Promise.all(jobs.map(async j => {
-    const r = await t.search({ direction, type: TYPE_CODES[j.type], status: j.status, archive, name: q.name || null,
-      callerLicense: ctx.env.FACILITY_LICENSE || null, from: dhpoDate(q.from), to: q.to >= today ? null : dhpoDate(q.to, true) });
-    r.files.forEach(f => files.push({ ...f, type: j.type, isDownloaded: f.isDownloaded ?? j.status === 2, archive }));
-    if (r.note) notes.push(r.note);
+    const got = new Set();
+    let from = dhpoDate(q.from);
+    for (let page = 0; page < 100; page++) {
+      const r = await t.search({ direction, type: TYPE_CODES[j.type], status: j.status, archive, name: q.name || null,
+        callerLicense: ctx.env.FACILITY_LICENSE || null, from, to: q.to >= today ? null : dhpoDate(q.to, true) });
+      if (r.note && !page) notes.push(r.note);
+      let added = 0, latest = "";
+      for (const f of r.files) {
+        if (key(f.transactionDate) > key(latest)) latest = f.transactionDate;
+        if (got.has(f.fileId)) continue;
+        got.add(f.fileId); added++;
+        files.push({ ...f, type: j.type, isDownloaded: f.isDownloaded ?? j.status === 2, archive });
+      }
+      const next = latest && (latest.length === 16 ? latest + ":00" : latest);
+      if (!added || !next || key(next) <= key(from)) break;
+      from = next;
+    }
   }));
   const seen = new Set();
   const unique = files.filter(f => !seen.has(f.fileId) && seen.add(f.fileId));
-  const key = d => d ? `${d.slice(6, 10)}${d.slice(3, 5)}${d.slice(0, 2)}${d.slice(11)}` : "";
   unique.sort((a, b) => key(b.transactionDate).localeCompare(key(a.transactionDate)));
   return { files: unique, notes: [...new Set(notes)] };
 }

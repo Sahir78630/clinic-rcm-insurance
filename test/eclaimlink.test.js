@@ -184,3 +184,25 @@ test("browse: live SearchTransactions sends the spec parameters and reads foundT
     assert.equal(bodies.at(-1).url, "/ClaimsAndAuthorizationsArchive.asmx");
   } finally { srv.close(); }
 });
+
+test("browse: a search eClaimLink cuts short is continued from the newest file's time", async () => {
+  // 10 files over 10 days; this fake eClaimLink returns at most 3 per search, oldest first
+  const all = Array.from({ length: 10 }, (_, i) => ({ id: String(i + 1), d: `${String(i + 1).padStart(2, "0")}/03/2025 10:00:00` }));
+  const iso = d => `${d.slice(6, 10)}${d.slice(3, 5)}${d.slice(0, 2)}${d.slice(11)}`;
+  let calls = 0;
+  const srv = createServer((req, res) => { if (req.method === "GET") return res.end(WSDL); let b = ""; req.on("data", c => b += c); req.on("end", () => {
+    calls++;
+    const from = tag(b, "transactionFromDate"), st = tag(b, "TransactionStatus");
+    const hit = st === "2" ? all.filter(f => iso(f.d) >= iso(from)).slice(0, 3) : [];
+    const list = `<Files>${hit.map(f => `<File FileID='${f.id}' FileName='c${f.id}.xml' SenderID='DHA-F-1' ReceiverID='A001' TransactionDate='${f.d}' RecordCount='1' />`).join("")}</Files>`;
+    res.end(`<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"><soap:Body><SearchTransactionsResponse><SearchTransactionsResult>0</SearchTransactionsResult><foundTransactions>${list.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</foundTransactions><errorMessage/></SearchTransactionsResponse></soap:Body></soap:Envelope>`);
+  }); });
+  await new Promise(r => srv.listen(0, r));
+  const base = `http://127.0.0.1:${srv.address().port}`;
+  const env = { ECLAIMLINK_MODE: "live", ECLAIMLINK_URL: `${base}/ValidateTransactions.asmx`, ECLAIMLINK_LOGIN: "u", ECLAIMLINK_PASSWORD: "p" };
+  try {
+    const r = await ecl.search({ db: openDb(":memory:"), cfg, env }, { direction: "sent", type: "Claim.Submission", status: "downloaded", from: "2025-03-01", to: "2025-03-31" });
+    assert.deepEqual(r.files.map(f => f.fileId).sort((a, b) => a - b), all.map(f => f.id));
+    assert.ok(calls <= 6, `${calls} searches`);
+  } finally { srv.close(); }
+});
