@@ -1121,7 +1121,9 @@ function eclSignInHtml(){
 const eclUserBar = () => LIVE.eclUser ? `<div class="muted" style="font-size:12.5px;margin:-4px 0 12px">Signed in to eClaimLink as <b>${esc(LIVE.eclUser)}</b> · <a href="#" id="eclSignOut">Sign out</a></div>` : "";
 function bindEclAccount(){
   const f = $("#eclLogin");
-  if (f) f.onsubmit = async e => { e.preventDefault(); UI.eclErr = ""; UI.eclBusy = true;
+  if (f) f.onsubmit = async e => { e.preventDefault();
+    if (!LIVE.on) { UI.eclErr = "Sign-in only works when the website is opened from your clinic server. See the note above."; render(); return; }
+    UI.eclErr = ""; UI.eclBusy = true;
     const login = $("#eclUser").value.trim(), pwd = $("#eclPwd").value; render();
     try { const st = await api("/eclaimlink/login", {login, pwd}); Object.assign(LIVE, {ecl:st.mode, eclUser:st.signedInAs}); UI.ecl.results = null; UI.ecl.report = null; toast("Signed in to eClaimLink as " + st.signedInAs); refreshEcl(); }
     catch(err){ UI.eclErr = err.message; }
@@ -1299,7 +1301,7 @@ UI.ecl = {direction:"received", type:"all", status:"all", from:isoAgo(30), to:TO
 const fileKey = f => (f.archive ? "A" : "") + f.fileId;
 R.eclaimlink = () => {
   if (!LIVE.on) return head("eClaimLink files","Browse every claim, remittance and prior authorization file on DHA eClaimLink, open any of them, and build reports.") +
-    `<section class="panel"><div class="empty" style="text-align:left">Sign-in to eClaimLink works when this website is opened from your clinic server (run <span class="code">npm start</span> on a clinic computer and open the address it prints). This copy cannot reach eClaimLink. The setup steps are in the README.</div></section>`;
+    `<div class="result warn" style="max-width:520px;margin-bottom:12px">This copy of the website cannot reach eClaimLink. To sign in, start the clinic server on a clinic computer (<span class="code">npm start</span>) and open the address it prints, usually <span class="code">http://127.0.0.1:3000</span>. Then come back to this page.</div>` + eclSignInHtml();
   if (eclNeedsSignIn() && !UI.eclTest) return head("eClaimLink files","Browse every claim, remittance and prior authorization file on DHA eClaimLink, open any of them, and build reports.") + eclSignInHtml();
   if (!ECL()) return head("eClaimLink files","Browse every claim, remittance and prior authorization file on DHA eClaimLink.") +
     `<section class="panel"><div class="empty" style="text-align:left">The eClaimLink connection is switched off on the clinic server (<span class="code">ECLAIMLINK_MODE=off</span>).</div></section>`;
