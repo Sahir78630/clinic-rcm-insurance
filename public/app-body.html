@@ -1156,12 +1156,12 @@ function bindDlg(){
   $("#dlgInner").querySelectorAll("[data-act]").forEach(b=>b.onclick=()=>{
     const a = b.dataset.act;
     if (a==="submit" && ECL()){ const c=claimById(dlg.dataset.claim); b.disabled=true; b.textContent="Sending to eClaimLink…";
-      eclUpload(claimsXml([c],false)).then(r=>{ submitClaim(c); c.events.push({d:TODAY,t:`eClaimLink transaction ${r.transactionId||"–"}`+(r.warnings?` (accepted with warnings)`:"")}); c.eclTx=r.transactionId; done("Claim sent to eClaimLink"); claimDlg(c.id); })
+      eclUpload(claimFileXml([c],{fresh:true})).then(r=>{ submitClaim(c); c.events.push({d:TODAY,t:`eClaimLink transaction ${r.transactionId||"–"}`+(r.warnings?` (accepted with warnings)`:"")}); c.eclTx=r.transactionId; done("Claim sent to eClaimLink"); claimDlg(c.id); })
         .catch(e=>{ toast(e.message); claimDlg(c.id); }); return; }
     if (a==="submit"){ submitClaim(claimById(dlg.dataset.claim)); done("Claim submitted"); claimDlg(dlg.dataset.claim); }
     if (a==="labs"){ labDlg(dlg.dataset.claim); return; }
     if (a==="dlxml"){ downloadClaimsXml([claimById(dlg.dataset.claim)]); return; }
-    if (a==="resubXml"){ const c=claimById(dlg.dataset.claim); const x=resubXml(c);
+    if (a==="resubXml"){ const c=claimById(dlg.dataset.claim); const last=c.resubs[c.resubs.length-1]; const x=c.srcXml&&last?claimFileXml([c],{resub:last}):resubXml(c);
       openDlg(dlgHead(`Resubmission file · <span class="mono">${c.id}</span>`,"eClaimLink-style Claim.Submission with a Resubmission block. Copy it into your submission tool.",`<button class="btn sm" data-act="copyXml" type="button">Copy</button>`)+`<div class="dlg-body"><textarea id="xmlOut" readonly style="min-height:360px">${esc(x)}</textarea><div class="actions"><button class="btn sm" data-claim="${c.id}" type="button">Back to claim</button></div></div>`); return; }
     if (a==="copyXml"){ const t=$("#xmlOut"); try { navigator.clipboard.writeText(t.value).then(()=>toast("Copied"),()=>{t.select();}); } catch(e){ t.select(); } return; }
     if (a==="resubmit"){ const c=claimById(dlg.dataset.claim); const type=$("#rsType").value, note=$("#rsNote").value.trim(); if (!note) return toast("Describe what was corrected before resubmitting");
@@ -1169,7 +1169,7 @@ function bindDlg(){
       const record = r => { c.status="Resubmitted"; c.resubs.push(entry); c.events.push({d:TODAY,t:`Resubmitted (${type})${note?": "+note:""}`+(r?`, eClaimLink transaction ${r.transactionId||"–"}`:"")}); done(r?"Resubmission sent to eClaimLink":"Claim resubmitted"); claimDlg(c.id); };
       if (!ECL()) return record(null);
       b.disabled=true; b.textContent="Sending to eClaimLink…";
-      c.resubs.push(entry); const xml=resubXml(c); c.resubs.pop();
+      const xml=claimFileXml([c],{fresh:true,resub:{type,note}});
       eclUpload(xml).then(record).catch(e=>{ toast(e.message); claimDlg(c.id); }); return; }
     if (a==="writeoff"){ const c=claimById(dlg.dataset.claim); const t=totals(c); c.writeOff=r2((c.writeOff||0)+t.outstanding); c.woReason=$("#woReason").value; c.events.push({d:TODAY,t:`Balance AED ${aed(t.outstanding)} written off: ${c.woReason}`}); done("Balance written off"); claimDlg(c.id); }
     if (a==="reconcile"){ const r=S.ras.find(x=>x.id===dlg.dataset.ra); const amt=parseFloat($("#bankAmt").value); if (isNaN(amt)) return toast("Enter the bank amount first"); const note=$("#bankNote").value; if (Math.abs(amt-r.amount)>0.009 && note==="No variance") return toast("Bank amount differs from the remittance. Pick a variance reason."); r.bank=r2(amt); r.status="Reconciled"; r.recOn=TODAY; r.note=note; done("Remittance reconciled"); raDlg(r.id); }
@@ -1289,11 +1289,11 @@ function bindView(){
     $("#submitDrafts").onclick=async e=>{ const d=S.claims.filter(c=>c.status==="Draft"&&!blocked(c));
       if (!ECL()){ d.forEach(submitClaim); return done(`Submitted ${d.length} claims to payers`); }
       e.target.disabled=true; e.target.textContent="Sending to eClaimLink…";
-      const byPayer = {}; d.forEach(c=>(byPayer[c.payer]=byPayer[c.payer]||[]).push(c));
+      const byPayer = {}; d.forEach(c=>(byPayer[c.payer+(c.srcXml?"|src":"")]=byPayer[c.payer+(c.srcXml?"|src":"")]||[]).push(c));
       let sent=0; const fails=[];
       for (const [pid,list] of Object.entries(byPayer)){
-        try { const r = await eclUpload(claimsXml(list,false)); list.forEach(c=>{ submitClaim(c); c.eclTx=r.transactionId; c.events.push({d:TODAY,t:`eClaimLink transaction ${r.transactionId||"–"}`}); }); sent+=list.length; }
-        catch(err){ fails.push(`${payer(pid).name}: ${err.message}`); }
+        try { const r = await eclUpload(claimFileXml(list,{fresh:true})); list.forEach(c=>{ submitClaim(c); c.eclTx=r.transactionId; c.events.push({d:TODAY,t:`eClaimLink transaction ${r.transactionId||"–"}`}); }); sent+=list.length; }
+        catch(err){ fails.push(`${payer(pid.split("|")[0]).name}: ${err.message}`); }
       }
       done(`Sent ${sent} claims to eClaimLink in ${Object.keys(byPayer).length-fails.length} files`+(fails.length?`. Failed: ${fails.join("; ")}`:"")); };
   }
@@ -1571,8 +1571,8 @@ function addClaimsFromXml(xml, {draft = false, file = ""} = {}){
   const own = (el,t) => { const x = [...el.children].find(c => c.tagName === t); return x ? x.textContent.trim() : ""; };
   const header = doc.getElementsByTagName("Header")[0];
   const sent = (header && dhpoToIso(own(header,"TransactionDate"))) || TODAY, receiver = header ? own(header,"ReceiverID") : "";
-  // Claims not sent yet keep their original XML, so the file can be downloaded again with lab results added
-  const ser = el => new XMLSerializer().serializeToString(el), headerXml = draft && header ? ser(header) : "";
+  // Claims imported from a file keep their original XML, so they can be submitted, resubmitted or downloaded as they came (with lab results added)
+  const ser = el => new XMLSerializer().serializeToString(el), headerXml = file && header ? ser(header) : "";
   let added = 0, updated = 0, skipped = 0;
   [...doc.getElementsByTagName("Claim")].forEach(ce => {
     const id = own(ce,"ID"); if (!id) return;
@@ -1600,7 +1600,7 @@ function addClaimsFromXml(xml, {draft = false, file = ""} = {}){
       events:draft?[{d:encDate,t:"Encounter"},{d:TODAY,t:"Imported from XML file"}]:[{d:encDate,t:"Encounter"},{d:sent,t:"Claim file found on eClaimLink"}],
       remits:[], resubs:resub&&!draft?[{d:sent,type:(resub.getElementsByTagName("Type")[0]||{}).textContent||"correction",note:"",amount:r2(claimNet),codes:[],outcome:null}]:[], writeOff:0, woReason:null,
       pa:actEls.map(a=>own(a,"PriorAuthorizationID")).find(Boolean)||null};
-    if (draft){ c.srcXml = ser(ce); c.srcHeader = headerXml; c.srcFile = file; }
+    if (file){ c.srcXml = ser(ce); c.srcHeader = headerXml; c.srcFile = file; }
     if (ex){ S.claims[S.claims.indexOf(ex)] = c; updated++; } else { S.claims.push(c); added++; }
   });
   return {added, updated, skipped};
@@ -1682,8 +1682,18 @@ function obsXml(doc, o, ind){
     el.appendChild(doc.createTextNode("\n" + ind + "  ")); const x = doc.createElement(t); x.textContent = v; el.appendChild(x); }
   el.appendChild(doc.createTextNode("\n" + ind)); return el;
 }
-function claimSrcXml(c){
+function claimSrcXml(c, resub){
   const doc = new DOMParser().parseFromString(c.srcXml, "application/xml"), ce = doc.documentElement;
+  // A resubmission sends the same claim with a <Resubmission> block (type and comment) after the activities
+  [...ce.children].filter(x => x.tagName === "Resubmission").forEach(x => { const p = x.previousSibling; if (p && p.nodeType === 3 && !p.textContent.trim()) p.remove(); x.remove(); });
+  if (resub){
+    const el = doc.createElement("Resubmission");
+    for (const [t, v] of [["Type", resub.type], ["Comment", resub.note]]){ el.appendChild(doc.createTextNode("\n      ")); const x = doc.createElement(t); x.textContent = v; el.appendChild(x); }
+    el.appendChild(doc.createTextNode("\n    "));
+    const contract = [...ce.children].find(x => x.tagName === "Contract");
+    ce.insertBefore(doc.createTextNode("\n    "), contract || ce.lastChild); ce.insertBefore(el, contract || ce.lastChild);
+    if (contract) ce.insertBefore(doc.createTextNode("\n    "), contract);
+  }
   for (const ae of [...ce.getElementsByTagName("Activity")]){
     const idEl = [...ae.children].find(x => x.tagName === "ID"), a = c.acts.find(x => x.aid === (idEl ? idEl.textContent.trim() : ""));
     if (!a) continue;
@@ -1695,11 +1705,16 @@ function claimSrcXml(c){
   }
   return new XMLSerializer().serializeToString(ce).replace(/ xmlns(:\w+)?="[^"]*"/g, "");
 }
-function claimFileXml(list){
-  if (!list.every(c => c.srcXml)) return claimsXml(list);
+// fresh: the file is being sent now, so its transaction date is now. resub: {type, note} to send it as a resubmission.
+function claimFileXml(list, {fresh = false, resub = null} = {}){
+  if (!list.every(c => c.srcXml)){
+    if (!resub) return claimsXml(list);
+    const c = list[0]; c.resubs.push({d:TODAY, ...resub}); const x = resubXml(c); c.resubs.pop(); return x;
+  }
   let headerXml = list[0].srcHeader || xmlHeader(list[0].payer, list.length);
   headerXml = headerXml.replace(/<RecordCount>\d*<\/RecordCount>/, `<RecordCount>${list.length}</RecordCount>`).replace(/ xmlns(:\w+)?="[^"]*"/g, "");
-  return `<?xml version="1.0" encoding="utf-8"?>\n<Claim.Submission xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">\n  ${headerXml.trim()}\n  ${list.map(claimSrcXml).join("\n  ")}\n</Claim.Submission>\n`;
+  if (fresh) headerXml = headerXml.replace(/<TransactionDate>[^<]*<\/TransactionDate>/, `<TransactionDate>${dtX(TODAY)} ${nowTime()}</TransactionDate>`);
+  return `<?xml version="1.0" encoding="utf-8"?>\n<Claim.Submission xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">\n  ${headerXml.trim()}\n  ${list.map(c => claimSrcXml(c, resub)).join("\n  ")}\n</Claim.Submission>\n`;
 }
 // Download claims as XML: one file per original file (or per payer for claims entered here)
 function downloadClaimsXml(list){
