@@ -1103,13 +1103,13 @@ function apptImportDlg(){
   openDlg(dlgHead("Import appointment list","Paste or choose the day's appointment export from your clinic system. Each patient is matched or added, then checked.") +
   `<div class="dlg-body">
     <div class="muted" style="font-size:12.5px">Columns: <span class="code">${APPT_COLS}</span>. Payer can be a name (Daman) or code (DAM). Plan and valid-until come from the insurance details captured at registration.</div>
-    <div class="actions"><button class="btn sm" id="apSample" type="button">Insert column headings</button><label class="btn sm" for="apFile">Choose CSV file</label><input type="file" id="apFile" accept=".csv,text/csv" hidden>
+    <div class="actions"><button class="btn sm" id="apSample" type="button">Insert column headings</button><label class="btn sm" for="apFile">Choose CSV, Excel or PDF file</label><input type="file" id="apFile" accept="${UPLOAD_ACCEPT}" hidden>
       <label style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" id="apReplace" checked> Replace today's list</label></div>
     <textarea id="apCsv" spellcheck="false" placeholder="${APPT_COLS}"></textarea>
     <div class="actions"><button class="btn primary" data-act="apImport" type="button">Import and verify all</button><span class="muted" id="apMsg"></span></div>
   </div>`);
   $("#apSample").onclick = () => { const t = $("#apCsv"); if (!t.value.startsWith(APPT_COLS)) t.value = APPT_COLS + "\n" + t.value; };
-  $("#apFile").onchange = e => { const f = e.target.files[0]; if (!f) return; const rd = new FileReader(); rd.onload = () => { $("#apCsv").value = rd.result; }; rd.readAsText(f); };
+  $("#apFile").onchange = async e => { const f = e.target.files[0]; if (!f) return; try { $("#apCsv").value = await fileText(f); } catch(err){ toast(err.message); } };
 }
 function importAppts(txt, replace){
   const rows = parseCsv(txt); if (!rows.length) return "The list is empty.";
@@ -1502,7 +1502,7 @@ function claimsImportDlg(){
     <div class="muted" style="font-size:12.5px"><b>XML:</b> eClaimLink <span class="code">Claim.Submission</span> files (several at once is fine). <span class="code">Remittance.Advice</span> and prior authorization files are accepted too and post to your records.<br>
     <b>CSV:</b> one row per service line with the columns <span class="code">${CLAIM_COLS}</span>. Dates as 2026-10-23 or 23/10/2026. Status is Draft unless the row says Submitted.<br>
     Importing a draft claim again replaces it; submitted claims are left as they are.</div>
-    <div class="actions"><label class="btn sm" for="ciFile">Choose CSV or XML files</label><input type="file" id="ciFile" accept=".csv,.xml,text/csv,text/xml,application/xml" multiple hidden><button class="btn sm" id="ciHead" type="button">Insert CSV column headings</button></div>
+    <div class="actions"><label class="btn sm" for="ciFile">Choose CSV, Excel, PDF or XML files</label><input type="file" id="ciFile" accept="${UPLOAD_ACCEPT},.xml,text/xml,application/xml" multiple hidden><button class="btn sm" id="ciHead" type="button">Insert CSV column headings</button></div>
     <label style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" id="ciDraft" checked> Claim XML files have not been sent yet: import them as drafts so they can be checked</label>
     <textarea id="ciCsv" spellcheck="false" placeholder="Paste CSV rows or a &lt;Claim.Submission&gt; XML file"></textarea>
     <div class="actions"><button class="btn primary" data-act="ciImport" type="button">Import</button><span class="muted" id="ciMsg"></span></div>
@@ -1510,7 +1510,8 @@ function claimsImportDlg(){
   $("#ciHead").onclick = () => { const t = $("#ciCsv"); if (!t.value.startsWith(CLAIM_COLS)) t.value = CLAIM_COLS + "\n" + t.value; };
   $("#ciFile").onchange = async e => {
     const files = [...e.target.files]; if (!files.length) return;
-    ciFiles = await Promise.all(files.map(f => f.text().then(text => ({name:f.name, text}))));
+    $("#ciMsg").textContent = "Reading files…";
+    try { ciFiles = await Promise.all(files.map(f => fileText(f).then(text => ({name:f.name, text})))); } catch(err){ $("#ciMsg").textContent = err.message; return; }
     if (ciFiles.length === 1) { $("#ciCsv").value = ciFiles[0].text; ciFiles = []; }
     else { $("#ciCsv").value = ""; $("#ciCsv").placeholder = `${files.length} files chosen: ${files.map(f=>f.name).slice(0,6).join(", ")}${files.length>6?"…":""}`; }
     $("#ciMsg").textContent = `${files.length} file${files.length===1?"":"s"} ready to import`;
@@ -1779,11 +1780,49 @@ function loadXlsx(){
   return xlsxLib ||= new Promise((ok, bad) => { const s = document.createElement("script"); s.src = "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
     s.onload = () => ok(window.XLSX); s.onerror = () => { xlsxLib = null; bad(new Error("Could not load the Excel reader. Save the file as CSV and upload that.")); }; document.head.appendChild(s); });
 }
+// PDF tables are read with pdf.js: text on the same line becomes a row, and a wide gap between words starts a new column.
+// This suits table exports from clinic and payer systems; scanned PDFs (pictures of pages) have no text to read.
+let pdfLib = null;
+function loadPdf(){
+  if (window.pdfjsLib) return Promise.resolve(window.pdfjsLib);
+  const base = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/";
+  return pdfLib ||= new Promise((ok, bad) => { const s = document.createElement("script"); s.src = base + "pdf.min.js";
+    s.onload = () => { window.pdfjsLib.GlobalWorkerOptions.workerSrc = base + "pdf.worker.min.js"; ok(window.pdfjsLib); };
+    s.onerror = () => { pdfLib = null; bad(new Error("Could not load the PDF reader. Check the internet connection, or save the file as CSV.")); }; document.head.appendChild(s); });
+}
+async function pdfRows(file){
+  const lib = await loadPdf(), pdf = await lib.getDocument({data: await file.arrayBuffer()}).promise, rows = [];
+  for (let n = 1; n <= pdf.numPages; n++){
+    const items = (await (await pdf.getPage(n)).getTextContent()).items.filter(i => i.str.trim());
+    const lines = [];
+    for (const it of items){ const y = it.transform[5], l = lines.find(l => Math.abs(l.y - y) < 3); (l || (lines[lines.length] = {y, items:[]})).items.push(it); }
+    lines.sort((a,b) => b.y - a.y);
+    for (const l of lines){
+      l.items.sort((a,b) => a.transform[4] - b.transform[4]);
+      const cells = []; let end = -1e9;
+      for (const it of l.items){ const x = it.transform[4], h = Math.abs(it.transform[3]) || 10;
+        if (cells.length && x - end < h * 0.9) cells[cells.length-1] += (x - end > h * 0.15 ? " " : "") + it.str; else cells.push(it.str);
+        end = x + it.width; }
+      rows.push(cells.map(c => c.trim()));
+    }
+  }
+  if (!rows.length) throw new Error(`${file.name} has no readable text. It may be a scanned PDF; save the data as CSV or Excel instead.`);
+  return rows;
+}
+// Any uploaded table (CSV, Excel or PDF) as rows of cells
 async function readSheet(file){
   if (/\.xlsx?$/i.test(file.name)){ const X = await loadXlsx(); const wb = X.read(await file.arrayBuffer(), {type:"array"});
-    return X.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], {header:1, raw:false, defval:""}).map(r => r.map(v => String(v))).filter(r => r.some(c => c.trim())); }
+    const ws = wb.SheetNames.map(n => wb.Sheets[n]).find(w => w["!ref"]) || wb.Sheets[wb.SheetNames[0]];
+    return X.utils.sheet_to_json(ws, {header:1, raw:false, defval:""}).map(r => r.map(v => String(v))).filter(r => r.some(c => c.trim())); }
+  if (/\.pdf$/i.test(file.name)) return pdfRows(file);
   return parseCsv((await file.text()).replace(/^﻿/, ""));
 }
+// Any uploaded file as text for the importers: XML and CSV as they are, Excel and PDF turned into CSV
+async function fileText(file){
+  if (/\.(xlsx?|pdf)$/i.test(file.name)) return (await readSheet(file)).map(csvRow).join("\n");
+  return (await file.text()).replace(/^﻿/, "");
+}
+const UPLOAD_ACCEPT = ".csv,.txt,.xlsx,.xls,.pdf,text/csv,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel";
 // Finds the code, price and description columns by their headings
 function parsePriceRows(rows){
   const isHead = r => r.some(c => /code|cpt|service/i.test(c)) && r.some(c => /price|tariff|rate|amount|net|gross|aed/i.test(c));
@@ -1821,12 +1860,12 @@ R.prices = () => {
   const v = u.view && PRICES.lists[u.view];
   return head("Payer price lists", "Upload each payer's contracted prices. Every claim is checked against its payer's list, so prices above the contract (price rejections) and codes missing from the contract are caught before submission.",
     `<button class="btn" id="prTpl" type="button">Download template</button>`) +
-  `<section class="panel"><div class="panel-head"><div><h2>Upload a price list</h2><p>CSV or Excel. Columns: code, description (optional), price. Uploading again for the same payer replaces its list.</p></div></div>
+  `<section class="panel"><div class="panel-head"><div><h2>Upload a price list</h2><p>CSV, Excel or PDF. Columns: code, description (optional), price. Uploading again for the same payer replaces its list.</p></div></div>
     <form id="prForm" class="form-grid">
       <div class="field"><label for="prKey">Payer code</label><input type="text" id="prKey" list="prPayers" placeholder="e.g. INS008, or * for all payers" value="${esc(u.key)}" required><datalist id="prPayers"><option value="*">Facility price list (all payers)</option>${knownPayerCodes().map(k => `<option value="${esc(k)}">${esc(payerName(k)||"")}</option>`).join("")}</datalist></div>
       <div class="field"><label for="prName">Payer name</label><input type="text" id="prName" placeholder="optional" value="${esc(u.name)}"></div>
       <div class="field"><label for="prDisc">Discount %</label><input id="prDisc" type="number" min="0" max="100" step="0.01" placeholder="0" value="${esc(u.disc)}"></div>
-      <div class="field"><label>File</label><label class="btn" for="prFile">${u.file ? esc(u.file) : "Choose CSV or Excel file"}</label><input type="file" id="prFile" accept=".csv,.txt,.xlsx,.xls,text/csv" hidden></div>
+      <div class="field"><label>File</label><label class="btn" for="prFile">${u.file ? esc(u.file) : "Choose CSV, Excel or PDF file"}</label><input type="file" id="prFile" accept="${UPLOAD_ACCEPT}" hidden></div>
     </form>
     ${u.preview ? `<div class="result ${u.preview.items.length ? "ok" : "warn"}" style="margin-top:10px">${u.preview.items.length} prices read${u.preview.bad.length ? `, ${u.preview.bad.length} rows skipped with no price (${esc(u.preview.bad.slice(0,5).join(", "))}${u.preview.bad.length>5?"…":""})` : ""}.
       ${u.preview.items.length ? `First rows: ${u.preview.items.slice(0,3).map(([c,p,d]) => `<span class="code">${esc(c)}</span> AED ${aed(p)}${d?" "+esc(d):""}`).join(" · ")}` : "Check that the file has a code column and a price column."}</div>
@@ -1896,10 +1935,10 @@ function payerNamesDlg(kind){
   const lines = [...seen].sort().map(k => `${k}, ${nm(k)}`).join("\n");
   const ex = doc ? "DHA-P-0000000, Dr Name" : "INS008, Insurance company name";
   openDlg(dlgHead(doc ? "Doctor names" : "Payer names", `One per line: ${doc ? "clinician licence" : "payer code"}, name. Codes from your loaded reports are listed; add the names and save.`,
-    `<label class="btn sm" for="pnFile">Import CSV</label><input type="file" id="pnFile" accept=".csv,text/csv,.txt" hidden><button class="btn sm primary" id="pnSave" type="button">Save</button>`) +
+    `<label class="btn sm" for="pnFile">Import CSV, Excel or PDF</label><input type="file" id="pnFile" accept="${UPLOAD_ACCEPT}" hidden><button class="btn sm primary" id="pnSave" type="button">Save</button>`) +
     `<div class="dlg-body"><textarea id="pnText" rows="16" style="width:100%;font-family:var(--mono,monospace)" placeholder="${ex}">${esc(lines)}</textarea>
     <p class="muted" style="font-size:12.5px">You can import a list saved as CSV: the first column is the ${doc ? "clinician licence ID" : "payer code"} and the second the name. Names are kept in this browser.</p></div>`);
-  $("#pnFile").onchange = async e => { const f = e.target.files[0]; if (!f) return; const t = await f.text();
+  $("#pnFile").onchange = async e => { const f = e.target.files[0]; if (!f) return; let t; try { t = await fileText(f); } catch(err){ toast(err.message); return; }
     const add = t.split(/\r?\n/).map(l => l.split(/[,;\t]/).map(x => x.replace(/^"|"$/g,"").trim())).filter(c => /^[A-Z]{1,5}[-\d]/i.test(c[0]||"") && c[1]).map(c => `${c[0]}, ${c[1]}`);
     $("#pnText").value = [$("#pnText").value.trim(), ...add].filter(Boolean).join("\n"); toast(`${add.length} names added from ${f.name}. Press Save.`); };
   $("#pnSave").onclick = () => { const m = {};
