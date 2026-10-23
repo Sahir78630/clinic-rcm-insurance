@@ -1,5 +1,7 @@
 import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
 import { timingSafeEqual, randomBytes } from "node:crypto";
 import { openDb, upsertMember } from "./src/db.js";
 import { checkEligibility, defaultProvider } from "./src/eligibility.js";
@@ -170,7 +172,9 @@ export function createApp({ db, cfg, env = process.env, fetchImpl } = {}) {
   };
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+// Start only when run directly (node server.js), not when imported by the tests. Compared as paths so it works on Windows too.
+const samePath = (a, b) => process.platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b;
+if (process.argv[1] && samePath(fileURLToPath(import.meta.url), resolve(process.argv[1]))) {
   const env = process.env;
   const db = openDb(env.DATABASE_FILE || "data/rcm.sqlite");
   const cfg = loadConfig();
