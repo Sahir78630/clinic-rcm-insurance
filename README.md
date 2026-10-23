@@ -119,6 +119,7 @@ The claims, remittance and denial pages keep their records in the browser in thi
 | POST | `/api/appointments/:id/verify` | Re-check one appointment |
 | POST | `/api/members` | Add or update a member record (mock provider) |
 | GET | `/api/checks?limit=` | Verification log |
+| GET | `/api/eclaimlink/service` | Namespace, operations and parameter names read from the eClaimLink WSDL (troubleshooting) |
 | GET | `/api/eclaimlink/status` | Mode, endpoint, last download, who is signed in |
 | POST | `/api/eclaimlink/login` | `{ login, pwd }` → check with eClaimLink and start a session (cookie) |
 | POST | `/api/eclaimlink/logout` | End the eClaimLink session |

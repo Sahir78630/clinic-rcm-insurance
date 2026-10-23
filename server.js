@@ -8,6 +8,7 @@ import { checkEligibility, defaultProvider } from "./src/eligibility.js";
 import { importCsv, listAppointments, verifyAll, verifyAppointment, CSV_COLUMNS } from "./src/appointments.js";
 import { loadConfig, today, findPayer, formatEid } from "./src/util.js";
 import * as ecl from "./src/eclaimlink/index.js";
+import { settings, serviceInfo } from "./src/eclaimlink/soap.js";
 
 const MAX_BODY = 5 * 1024 * 1024;
 const SESSION_IDLE = 2 * 3600e3, SESSION_MAX = 12 * 3600e3, COOKIE = "rcm_ecl";
@@ -101,6 +102,12 @@ export function createApp({ db, cfg, env = process.env, fetchImpl } = {}) {
       return { id: upsertMember(db, { ...b, payer: payer.code }) };
     }],
     ["GET", /^\/api\/eclaimlink\/status$/, req => eclStatus(req)],
+    // What the connector read from the eClaimLink WSDL, for troubleshooting (no credentials involved)
+    ["GET", /^\/api\/eclaimlink\/service$/, async () => {
+      const s = settings(env), info = await serviceInfo(s.url, { fetchImpl: ctx.fetchImpl, ns: s.ns });
+      return { url: s.url, namespace: info.ns, operations: Object.keys(info.actions), searchParameters: info.params?.SearchTransactions || null,
+        downloadParameters: info.params?.DownloadTransactionFile || null };
+    }],
     ["POST", /^\/api\/eclaimlink\/login$/, async (req, url, m, res) => {
       const ip = req.socket.remoteAddress, now = Date.now();
       const f = (failures.get(ip) || []).filter(t => now - t < 15 * 60e3);

@@ -44,19 +44,22 @@ export function settings(env = process.env) {
 // so the connector follows whatever eClaimLink publishes instead of a hard-coded value.
 const wsdlCache = new Map();
 export async function serviceInfo(url, { fetchImpl = fetch, ns } = {}) {
-  if (ns) return { ns, actions: {} };
+  if (ns) return { ns, actions: {}, params: {} };
   if (!wsdlCache.has(url)) {
     wsdlCache.set(url, (async () => {
       try {
         const res = await fetchImpl(url + "?WSDL", { signal: AbortSignal.timeout(20000) });
         const wsdl = res.ok ? await res.text() : "";
         const target = (wsdl.match(/targetNamespace="([^"]+)"/) || [])[1];
-        const actions = {};
+        const actions = {}, params = {};
         for (const m of wsdl.matchAll(/<wsdl:operation name="([^"]+)">\s*<soap:operation soapAction="([^"]*)"/g)) actions[m[1]] = m[2];
-        if (target) return { ns: target, actions };
+        // Input parameter names in WSDL order: .NET services match them case-sensitively and in sequence
+        for (const m of wsdl.matchAll(/<(?:\w+:)?element name="([^"]+)">\s*<(?:\w+:)?complexType>\s*<(?:\w+:)?sequence>([\s\S]*?)<\/(?:\w+:)?sequence>/g))
+          params[m[1]] = [...m[2].matchAll(/<(?:\w+:)?element\b[^>]*\bname="([^"]+)"/g)].map(x => x[1]);
+        if (target) return { ns: target, actions, params };
       } catch {}
       wsdlCache.delete(url); // try again on the next call
-      return { ns: DEFAULT_NS, actions: {} };
+      return { ns: DEFAULT_NS, actions: {}, params: {} };
     })());
   }
   return wsdlCache.get(url);
@@ -73,7 +76,13 @@ export async function call(op, params, outFields, { env = process.env, fetchImpl
   const target = url || s.url;
   const info = await serviceInfo(target, { fetchImpl, ns: s.ns });
   const action = info.actions[op] || `${info.ns}${op}`;
-  const body = { login: s.login, pwd: s.pwd, ...params };
+  let body = { login: s.login, pwd: s.pwd, ...params };
+  // Spell and order the parameters exactly as the WSDL does (for example TransactionStatus or fileId)
+  const declared = info.params[op];
+  if (declared && declared.length) {
+    const byLower = Object.fromEntries(Object.entries(body).map(([k, v]) => [k.toLowerCase(), v]));
+    body = Object.fromEntries(declared.filter(n => n.toLowerCase() in byLower).map(n => [n, byLower[n.toLowerCase()]]));
+  }
   const envelope = `<?xml version="1.0" encoding="utf-8"?>
 <soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
   <soap:Body>

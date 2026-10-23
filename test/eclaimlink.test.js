@@ -8,7 +8,17 @@ import { tag, tags } from "../src/eclaimlink/soap.js";
 import { parseFileList } from "../src/eclaimlink/transports.js";
 
 const cfg = loadConfig();
-const WSDL = `<wsdl:definitions targetNamespace="http://www.eClaimLink.ae/"><wsdl:binding name="b"><wsdl:operation name="SearchTransactions">
+// The WSDL spells one parameter TransactionStatus; the connector must follow its spelling and order
+const WSDL = `<wsdl:definitions targetNamespace="http://www.eClaimLink.ae/"><wsdl:types><s:schema>
+  <s:element name="SearchTransactions"><s:complexType><s:sequence>
+    <s:element minOccurs="0" maxOccurs="1" name="login" type="s:string" /><s:element minOccurs="0" maxOccurs="1" name="pwd" type="s:string" />
+    <s:element minOccurs="1" maxOccurs="1" name="direction" type="s:int" /><s:element minOccurs="0" maxOccurs="1" name="callerLicense" type="s:string" />
+    <s:element minOccurs="0" maxOccurs="1" name="ePartner" type="s:string" /><s:element minOccurs="1" maxOccurs="1" name="transactionID" type="s:int" />
+    <s:element minOccurs="1" maxOccurs="1" name="TransactionStatus" type="s:int" /><s:element minOccurs="0" maxOccurs="1" name="transactionFileName" type="s:string" />
+    <s:element minOccurs="0" maxOccurs="1" name="transactionFromDate" type="s:string" /><s:element minOccurs="0" maxOccurs="1" name="transactionToDate" type="s:string" />
+    <s:element minOccurs="1" maxOccurs="1" name="minRecordCount" type="s:int" /><s:element minOccurs="1" maxOccurs="1" name="maxRecordCount" type="s:int" />
+  </s:sequence></s:complexType></s:element></s:schema></wsdl:types>
+  <wsdl:binding name="b"><wsdl:operation name="SearchTransactions">
   <soap:operation soapAction="http://www.eClaimLink.ae/SearchTransactions" style="document" /></wsdl:operation></wsdl:binding></wsdl:definitions>`;
 
 const claimXml = (id, resub = false) => `<?xml version="1.0" encoding="utf-8"?>
@@ -146,7 +156,7 @@ test("browse: live SearchTransactions sends the spec parameters and reads foundT
   const bodies = [];
   const srv = createServer((req, res) => { if (req.method === "GET") return res.end(WSDL); let b = ""; req.on("data", c => b += c); req.on("end", () => {
     bodies.push({ url: req.url, op: req.headers.soapaction.replace(/"/g, "").split("/").pop(), body: b });
-    const list = tag(b, "transactionStatus") === "1" ? "<Files><File FileID='7' FileName='ra7.xml' SenderID='A001' ReceiverID='DHA-F-1' TransactionDate='01/10/2026 08:00:00' RecordCount='4' IsDownloaded='False' /></Files>" : "<Files></Files>";
+    const list = tag(b, "TransactionStatus") === "1" ? "<Files><File FileID='7' FileName='ra7.xml' SenderID='A001' ReceiverID='DHA-F-1' TransactionDate='01/10/2026 08:00:00' RecordCount='4' IsDownloaded='False' /></Files>" : "<Files></Files>";
     res.end(`<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"><soap:Body><SearchTransactionsResponse><SearchTransactionsResult>0</SearchTransactionsResult><foundTransactions>${list.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</foundTransactions><errorMessage/></SearchTransactionsResponse></soap:Body></soap:Envelope>`);
   }); });
   await new Promise(r => srv.listen(0, r));
@@ -159,6 +169,8 @@ test("browse: live SearchTransactions sends the spec parameters and reads foundT
     const b = bodies[0].body;
     assert.equal(tag(b, "direction"), "2");
     assert.equal(tag(b, "transactionID"), "8");
+    assert.equal(tag(b, "TransactionStatus"), "1", "spelled as in the WSDL");
+    assert.equal(tag(b, "transactionStatus"), null);
     assert.equal(tag(b, "callerLicense"), "DHA-F-1");
     assert.equal(tag(b, "transactionFromDate"), "01/09/2026 00:00:00");
     assert.equal(tag(b, "transactionToDate"), "01/10/2026 23:59:59");
