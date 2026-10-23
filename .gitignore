@@ -4,3 +4,4 @@ data/
 *.sqlite-*
 .env
 *.log
+staff-login.env
