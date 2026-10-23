@@ -8,6 +8,9 @@ import { tag, tags } from "../src/eclaimlink/soap.js";
 import { parseFileList } from "../src/eclaimlink/transports.js";
 
 const cfg = loadConfig();
+const WSDL = `<wsdl:definitions targetNamespace="http://www.eClaimLink.ae/"><wsdl:binding name="b"><wsdl:operation name="SearchTransactions">
+  <soap:operation soapAction="http://www.eClaimLink.ae/SearchTransactions" style="document" /></wsdl:operation></wsdl:binding></wsdl:definitions>`;
+
 const claimXml = (id, resub = false) => `<?xml version="1.0" encoding="utf-8"?>
 <Claim.Submission>
   <Header><SenderID>DHA-F-0000000</SenderID><ReceiverID>DAM</ReceiverID><TransactionDate>23/10/2026 10:00</TransactionDate><RecordCount>1</RecordCount><DispositionFlag>TEST</DispositionFlag></Header>
@@ -56,7 +59,7 @@ test("parseFileList reads the GetNewTransactions list", () => {
 function fakeDhpo() {
   const calls = [];
   const raXml = "<Remittance.Advice><Header><SenderID>A001</SenderID><ReceiverID>DHA-F-1</ReceiverID><RecordCount>1</RecordCount></Header><Claim><ID>CLM-9</ID></Claim></Remittance.Advice>";
-  const srv = createServer((req, res) => {
+  const srv = createServer((req, res) => { if (req.method === "GET") return res.end(WSDL);
     let b = ""; req.on("data", c => b += c); req.on("end", () => {
       const op = req.headers.soapaction.replace(/"/g, "").split("/").pop();
       calls.push({ op, body: b, login: tag(b, "login"), pwd: tag(b, "pwd") });
@@ -85,6 +88,7 @@ test("live mode speaks SOAP to the post office: upload, list, download, mark dow
     const up = await ecl.upload(ctx, { xml: claimXml("CLM-1"), fileName: "claims1.xml" });
     assert.deepEqual([up.ok, up.warnings, up.transactionId, up.errorReport], [true, true, "778", "Claim CLM-1: missing clinician"]);
     assert.equal(calls[0].op, "UploadTransaction");
+    assert.match(calls[0].body, /<UploadTransaction xmlns="http:\/\/www\.eClaimLink\.ae\/">/, "namespace read from the service WSDL");
     assert.equal(calls[0].login, "clinic");
     assert.equal(calls[0].pwd, "p&amp;ss", "password is XML-escaped in the envelope");
     assert.match(Buffer.from(tag(calls[0].body, "fileContent"), "base64").toString(), /<ID>CLM-1<\/ID>/);
@@ -140,7 +144,7 @@ test("browse: date range limits follow the DHPO rules", async () => {
 
 test("browse: live SearchTransactions sends the spec parameters and reads foundTransactions", async () => {
   const bodies = [];
-  const srv = createServer((req, res) => { let b = ""; req.on("data", c => b += c); req.on("end", () => {
+  const srv = createServer((req, res) => { if (req.method === "GET") return res.end(WSDL); let b = ""; req.on("data", c => b += c); req.on("end", () => {
     bodies.push({ url: req.url, op: req.headers.soapaction.replace(/"/g, "").split("/").pop(), body: b });
     const list = tag(b, "transactionStatus") === "1" ? "<Files><File FileID='7' FileName='ra7.xml' SenderID='A001' ReceiverID='DHA-F-1' TransactionDate='01/10/2026 08:00:00' RecordCount='4' IsDownloaded='False' /></Files>" : "<Files></Files>";
     res.end(`<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"><soap:Body><SearchTransactionsResponse><SearchTransactionsResult>0</SearchTransactionsResult><foundTransactions>${list.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</foundTransactions><errorMessage/></SearchTransactionsResponse></soap:Body></soap:Envelope>`);

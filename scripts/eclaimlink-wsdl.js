@@ -9,7 +9,7 @@ const target = (wsdl.match(/targetNamespace="([^"]+)"/) || [])[1];
 const ops = [...new Set([...wsdl.matchAll(/<wsdl:operation name="([^"]+)"/g)].map(m => m[1]))];
 console.log(`Endpoint:          ${url} (HTTP ${res.status})`);
 console.log(`WSDL namespace:    ${target || "not found"}`);
-console.log(`Configured:        ${ns}${target && target !== ns ? "   <-- set ECLAIMLINK_NAMESPACE to the WSDL value" : ""}`);
+console.log(`Configured:        ${ns || "read from the WSDL automatically"}${ns && target && target !== ns ? "   <-- remove ECLAIMLINK_NAMESPACE or set it to the WSDL value" : ""}`);
 console.log(`Operations:        ${ops.join(", ") || "none found"}`);
 // input parameter names, which SOAP matches case-sensitively (for example fileID vs fileId)
 for (const op of ["UploadTransaction", "GetNewTransactions", "GetNewPriorAuthorizationTransactions", "DownloadTransactionFile", "SetTransactionDownloaded"]) {

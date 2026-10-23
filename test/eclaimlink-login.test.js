@@ -6,10 +6,13 @@ import { loadConfig } from "../src/util.js";
 import { tag } from "../src/eclaimlink/soap.js";
 import { createApp } from "../server.js";
 
+const WSDL = `<wsdl:definitions targetNamespace="http://www.eClaimLink.ae/"><wsdl:binding name="b"><wsdl:operation name="SearchTransactions">
+  <soap:operation soapAction="http://www.eClaimLink.ae/SearchTransactions" style="document" /></wsdl:operation></wsdl:binding></wsdl:definitions>`;
+
 // A stand-in eClaimLink that only knows one user, nurse1 / s3cret
 function fakeDhpo() {
   const calls = [];
-  const srv = createServer((req, res) => { let b = ""; req.on("data", c => b += c); req.on("end", () => {
+  const srv = createServer((req, res) => { if (req.method === "GET") return res.end(WSDL); let b = ""; req.on("data", c => b += c); req.on("end", () => {
     const op = req.headers.soapaction.replace(/"/g, "").split("/").pop();
     calls.push({ op, login: tag(b, "login"), pwd: tag(b, "pwd") });
     const ok = tag(b, "login") === "nurse1" && tag(b, "pwd") === "s3cret";

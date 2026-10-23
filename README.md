@@ -98,7 +98,7 @@ Every file sent or received is kept in the `eclaimlink_files` table with its res
 **Going live checklist**
 
 1. Get the facility's web service login from eClaimLink, and test on their QA environment first if they provide one (`ECLAIMLINK_URL`).
-2. From a computer on the clinic network, run `npm run eclaimlink:wsdl`. It prints the service namespace and operations. If the namespace differs from `ECLAIMLINK_NAMESPACE`, set it to the printed value.
+2. From a computer on the clinic network, run `npm run eclaimlink:wsdl`. It prints the service namespace and operations. The connector reads the namespace from the WSDL by itself; set `ECLAIMLINK_NAMESPACE` only to override it.
 3. Fill in `FACILITY_LICENSE` and each payer's `eclaimlinkId` in `config/payers.json`. They replace the placeholder facility ID and short payer codes in outgoing files.
 4. Send one claim and check it on the eClaimLink portal before sending batches.
 

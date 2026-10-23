@@ -6,7 +6,8 @@
 export const DEFAULT_URL = "https://dhpo.eclaimlink.ae/ValidateTransactions.asmx";
 // Files older than the archiving period (24 months for claims, 6 for authorizations) live here
 export const DEFAULT_ARCHIVE_URL = "https://dhpo.eclaimlink.ae/ClaimsAndAuthorizationsArchive.asmx";
-export const DEFAULT_NS = "https://www.shafafiya.org/v2/";
+// Used only when the WSDL cannot be read; the service's own WSDL is checked first (see serviceInfo)
+export const DEFAULT_NS = "http://www.eClaimLink.ae/";
 
 export const xmlEsc = s => String(s ?? "").replace(/[<>&'"]/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", "'": "&apos;", '"': "&quot;" }[c]));
 export const xmlUnesc = s => String(s ?? "").replace(/&(lt|gt|amp|apos|quot|#\d+|#x[0-9a-f]+);/gi, (m, e) =>
@@ -29,7 +30,7 @@ export class EClaimLinkError extends Error {
 export function settings(env = process.env) {
   return {
     url: env.ECLAIMLINK_URL || DEFAULT_URL,
-    ns: env.ECLAIMLINK_NAMESPACE || DEFAULT_NS,
+    ns: env.ECLAIMLINK_NAMESPACE || null,
     login: env.ECLAIMLINK_LOGIN || "",
     pwd: env.ECLAIMLINK_PASSWORD || "",
     timeout: Number(env.ECLAIMLINK_TIMEOUT_MS) || 60000,
@@ -37,6 +38,28 @@ export function settings(env = process.env) {
     archiveSearchOp: env.ECLAIMLINK_ARCHIVE_SEARCH_OP || "SearchTransactions",
     archiveDownloadOp: env.ECLAIMLINK_ARCHIVE_DOWNLOAD_OP || "DownloadTransactionFile",
   };
+}
+
+// Namespace and SOAPAction of each operation, read once per endpoint from its WSDL,
+// so the connector follows whatever eClaimLink publishes instead of a hard-coded value.
+const wsdlCache = new Map();
+export async function serviceInfo(url, { fetchImpl = fetch, ns } = {}) {
+  if (ns) return { ns, actions: {} };
+  if (!wsdlCache.has(url)) {
+    wsdlCache.set(url, (async () => {
+      try {
+        const res = await fetchImpl(url + "?WSDL", { signal: AbortSignal.timeout(20000) });
+        const wsdl = res.ok ? await res.text() : "";
+        const target = (wsdl.match(/targetNamespace="([^"]+)"/) || [])[1];
+        const actions = {};
+        for (const m of wsdl.matchAll(/<wsdl:operation name="([^"]+)">\s*<soap:operation soapAction="([^"]*)"/g)) actions[m[1]] = m[2];
+        if (target) return { ns: target, actions };
+      } catch {}
+      wsdlCache.delete(url); // try again on the next call
+      return { ns: DEFAULT_NS, actions: {} };
+    })());
+  }
+  return wsdlCache.get(url);
 }
 
 /**
@@ -47,18 +70,21 @@ export function settings(env = process.env) {
 export async function call(op, params, outFields, { env = process.env, fetchImpl = fetch, url, allow = [] } = {}) {
   const s = settings(env);
   if (!s.login || !s.pwd) throw new EClaimLinkError(op, "config", "ECLAIMLINK_LOGIN and ECLAIMLINK_PASSWORD are not set");
+  const target = url || s.url;
+  const info = await serviceInfo(target, { fetchImpl, ns: s.ns });
+  const action = info.actions[op] || `${info.ns}${op}`;
   const body = { login: s.login, pwd: s.pwd, ...params };
   const envelope = `<?xml version="1.0" encoding="utf-8"?>
 <soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
   <soap:Body>
-    <${op} xmlns="${xmlEsc(s.ns)}">
+    <${op} xmlns="${xmlEsc(info.ns)}">
 ${Object.entries(body).map(([k, v]) => v === null ? `      <${k} xsi:nil="true" />` : `      <${k}>${xmlEsc(v)}</${k}>`).join("\n")}
     </${op}>
   </soap:Body>
 </soap:Envelope>`;
-  const res = await fetchImpl(url || s.url, {
+  const res = await fetchImpl(target, {
     method: "POST",
-    headers: { "content-type": "text/xml; charset=utf-8", soapaction: `"${s.ns}${op}"` },
+    headers: { "content-type": "text/xml; charset=utf-8", soapaction: `"${action}"` },
     body: envelope, signal: AbortSignal.timeout(s.timeout),
   });
   const text = await res.text();
