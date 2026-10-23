@@ -1,0 +1,6 @@
+
+> clinic-rcm-insurance@0.1.0 start
+> node --disable-warning=ExperimentalWarning server.js
+
+APP_USERNAME / APP_PASSWORD are not set: anyone who can reach this server can use it. Set them before exposing it beyond this computer.
+Clinic RCM running at http://127.0.0.1:3301 (eligibility provider: mock, eClaimLink: mock)

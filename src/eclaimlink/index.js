@@ -1,5 +1,6 @@
 import { settings, tag } from "./soap.js";
 import { liveTransport, mockTransport } from "./transports.js";
+import { summarize, buildReport } from "./summary.js";
 
 const UPLOAD_TYPES = ["Claim.Submission", "Prior.Request"];
 
@@ -90,4 +91,59 @@ export function getFile(ctx, id) {
 
 export function markApplied(ctx, id) {
   return ctx.db.prepare("UPDATE eclaimlink_files SET applied_at = datetime('now') WHERE id = ? AND direction = 'in' AND applied_at IS NULL").run(id).changes > 0;
+}
+
+// ---- browsing everything on eClaimLink ----
+
+export const TYPE_CODES = { "Claim.Submission": 2, "Remittance.Advice": 8, "Prior.Request": 16, "Prior.Authorization": 32 };
+const badRequest = msg => Object.assign(new Error(msg), { code: 400 });
+const ISO = /^\d{4}-\d{2}-\d{2}$/;
+const dhpoDate = (iso, end) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)} ${end ? "23:59:59" : "00:00:00"}`;
+
+/**
+ * Search sent or received files. q: { direction: "received"|"sent", type: "all"|<root name>,
+ * status: "all"|"new"|"downloaded", from, to (YYYY-MM-DD), name, archive }
+ * With type "all" each transaction type is searched separately, so every row carries its type.
+ */
+export async function search(ctx, q) {
+  const direction = q.direction === "sent" ? 1 : 2;
+  const archive = Boolean(q.archive);
+  if (!ISO.test(q.from || "") || !ISO.test(q.to || "")) throw badRequest("Choose a from and to date");
+  if (q.from > q.to) throw badRequest("The from date is after the to date");
+  const days = (new Date(q.to) - new Date(q.from)) / 864e5;
+  if (days > (archive ? 31 : 100)) throw badRequest(archive ? "Archive searches can cover at most one month" : "eClaimLink searches can cover at most 100 days");
+  const types = q.type && q.type !== "all" ? [q.type] : Object.keys(TYPE_CODES);
+  if (types.some(t => !TYPE_CODES[t])) throw badRequest(`Unknown file type ${q.type}`);
+  const statuses = q.status === "new" ? [1] : q.status === "downloaded" ? [2] : [1, 2];
+  const today = new Date().toISOString().slice(0, 10);
+  const t = transport(ctx);
+  const jobs = types.flatMap(type => statuses.map(status => ({ type, status })));
+  const files = [], notes = [];
+  await Promise.all(jobs.map(async j => {
+    const r = await t.search({ direction, type: TYPE_CODES[j.type], status: j.status, archive, name: q.name || null,
+      callerLicense: ctx.env.FACILITY_LICENSE || null, from: dhpoDate(q.from), to: q.to >= today ? null : dhpoDate(q.to, true) });
+    r.files.forEach(f => files.push({ ...f, type: j.type, isDownloaded: f.isDownloaded ?? j.status === 2, archive }));
+    if (r.note) notes.push(r.note);
+  }));
+  const seen = new Set();
+  const unique = files.filter(f => !seen.has(f.fileId) && seen.add(f.fileId));
+  const key = d => d ? `${d.slice(6, 10)}${d.slice(3, 5)}${d.slice(0, 2)}${d.slice(11)}` : "";
+  unique.sort((a, b) => key(b.transactionDate).localeCompare(key(a.transactionDate)));
+  return { files: unique, notes: [...new Set(notes)] };
+}
+
+export async function view(ctx, fileId, { archive } = {}) {
+  const f = await transport(ctx).view(fileId, { archive });
+  return { fileId, fileName: f.fileName, xml: f.xml, summary: summarize(f.xml) };
+}
+
+// Opens up to 200 files (four at a time) and combines them into one report
+export async function report(ctx, files) {
+  if (!Array.isArray(files) || !files.length) throw badRequest("Choose files for the report");
+  const list = files.slice(0, 200), out = [], errors = [];
+  let next = 0;
+  const worker = async () => { while (next < list.length) { const f = list[next++];
+    try { out.push((await view(ctx, f.fileId, { archive: f.archive })).summary); } catch (e) { errors.push({ fileId: f.fileId, error: e.message }); } } };
+  await Promise.all(Array.from({ length: Math.min(4, list.length) }, worker));
+  return { ...buildReport(out), errors, truncated: files.length > list.length };
 }

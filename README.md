@@ -2,7 +2,14 @@
 
 Insurance revenue cycle console for a Dubai polyclinic, plus a small server that runs eligibility checks for every patient on the day's appointment list.
 
-The website covers eligibility and access, prior approvals, claims, remittance and reconciliation, denials, resubmissions and insurance receivables aging by payer, in AED. When it is opened from this server, the **Eligibility & access** page uses the server for real checks, and claims, resubmissions, prior requests and remittances move through DHA eClaimLink. Every other page still runs on sample data stored in the browser.
+The website covers eligibility and access, prior approvals, claims, remittance and reconciliation, denials, resubmissions and insurance receivables aging by payer, in AED. The system starts empty: there is no sample data. When it is opened from this server, the **Eligibility & access** page uses the server for real checks, and claims, resubmissions, prior requests and remittances move through DHA eClaimLink. Claims, payments and denials are kept in the browser of the billing workstation in this version; appointments, eligibility checks and every eClaimLink file are kept in the server database.
+
+## Getting your records in
+
+1. **Facility details** (sidebar): facility name and DHA licence.
+2. **Claims**: on the Claims page choose **Import claims** and paste a CSV from your clinic system with the columns `claim_id,patient_name,emirates_id,payer,card_no,encounter_date,department,doctor,icd10,cpt,description,quantity,gross,patient_share,prior_auth,status,submitted_date` (one row per service line). Or open **eClaimLink files**, search the claim files you have sent, and choose **Add all to my records**.
+3. **Payments**: on **eClaimLink files**, search received remittance files and add them, or use **Download from eClaimLink** for new ones. Each file is posted once, whichever way it arrives.
+4. **Today's patients**: import the appointment list on **Eligibility & access**.
 
 ## Run it
 
@@ -75,6 +82,8 @@ The server connects to the eClaimLink (Dubai Health Post Office) web service wit
 | Prior approvals: **New request** | `Prior.Request` |
 | Remittance or Prior approvals: **Download from eClaimLink** | New `Remittance.Advice` files post payments and denial codes to claims. `Prior.Authorization` replies update approval requests. |
 
+**eClaimLink files page.** Search everything sent or received on eClaimLink by type (claim submissions, remittance advice, prior requests, prior authorizations), download status, date range (up to 100 days) and file name, including the archive (up to one month per search). Open any file to see its claims, payments, denial codes or approval decisions and the raw XML, add it to your records, or build a report across the results: remittances by payer with denial rate, denial codes by value, and claims submitted by payer. Opening a file there does not mark it as downloaded on eClaimLink.
+
 Every file sent or received is kept in the `eclaimlink_files` table with its result code, transaction ID and any error report. Downloaded files are only marked as downloaded on eClaimLink after they are safely stored.
 
 **Modes.** `ECLAIMLINK_MODE=mock` (the default without credentials) simulates eClaimLink inside the local database. Each uploaded claim comes back as a remittance on the next download (about one in five has an activity denied with MNEC-004), and each prior request comes back approved. Use it to train staff. Set `ECLAIMLINK_LOGIN` and `ECLAIMLINK_PASSWORD` to switch to `live`.
@@ -88,7 +97,7 @@ Every file sent or received is kept in the `eclaimlink_files` table with its res
 
 The connector follows the DHPO Web Service Specification v4.0 (March 2026): `UploadTransaction`, `GetNewTransactions`, `GetNewPriorAuthorizationTransactions` (DHA's recommended way to collect prior authorization replies), `DownloadTransactionFile` and `SetTransactionDownloaded`, with the shared result codes (1 = accepted with warnings, 2 = nothing new, negative = error). The specification has no eligibility operation, so eligibility still goes through the providers above. Files older than the archiving period (24 months for claims, 6 for authorizations) move to DHA's separate archive service, which this connector does not call.
 
-The claims, remittance and denial pages keep their records in the browser in this version, so use one workstation for eClaimLink billing until claims are moved into the server database.
+The claims, remittance and denial pages keep their records in the browser in this version, so use one workstation for eClaimLink billing until claims are moved into the server database. If the archive service on your account uses different operation names, set `ECLAIMLINK_ARCHIVE_SEARCH_OP` and `ECLAIMLINK_ARCHIVE_DOWNLOAD_OP`.
 
 ## API
 
@@ -109,6 +118,9 @@ The claims, remittance and denial pages keep their records in the browser in thi
 | GET | `/api/eclaimlink/files?direction=&type=&unapplied=1` | File log (with XML when `unapplied=1`) |
 | GET | `/api/eclaimlink/files/:id` | One file with its XML and error report |
 | POST | `/api/eclaimlink/files/:id/applied` | Mark a downloaded file as posted |
+| GET | `/api/eclaimlink/search?direction=received\|sent&type=all\|Claim.Submission\|…&status=all\|new\|downloaded&from=&to=&name=&archive=1` | Search eClaimLink (SearchTransactions) |
+| GET | `/api/eclaimlink/remote/:fileId?archive=1` | Open one eClaimLink file with a summary, without marking it downloaded |
+| POST | `/api/eclaimlink/report` | `{ files: [{ fileId, archive }] }` → combined report |
 
 ## Before going live
 

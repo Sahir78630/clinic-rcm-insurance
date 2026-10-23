@@ -40,7 +40,7 @@ export function createApp({ db, cfg, env = process.env, fetchImpl } = {}) {
 
   const routes = [
     ["GET", /^\/api\/health$/, () => ({ ok: true, provider: defaultProvider(env), eclaimlink: ecl.mode(env), facility: env.FACILITY_LICENSE || null, today: today() })],
-    ["GET", /^\/api\/config$/, () => ({ payers: cfg.payers.map(({ code, name, kind, terms }) => ({ code, name, kind, terms })), approvalDepartments: cfg.approvalDepartments, csvColumns: CSV_COLUMNS, provider: defaultProvider(env) })],
+    ["GET", /^\/api\/config$/, () => ({ payers: cfg.payers.map(({ code, name, kind, terms, eclaimlinkId }) => ({ code, name, kind, terms, eclaimlinkId })), approvalDepartments: cfg.approvalDepartments, csvColumns: CSV_COLUMNS, provider: defaultProvider(env) })],
     ["POST", /^\/api\/eligibility$/, async req => {
       const b = await readJson(req);
       return checkEligibility(ctx, { emiratesId: b.emiratesId, cardNo: b.cardNo, payer: b.payer, department: b.department, source: "walk-in" });
@@ -86,6 +86,13 @@ export function createApp({ db, cfg, env = process.env, fetchImpl } = {}) {
       if (!f) throw Object.assign(new Error("File not found"), { code: 404 });
       return f;
     }],
+    ["GET", /^\/api\/eclaimlink\/search$/, (req, url) => {
+      const p = url.searchParams;
+      return ecl.search(ctx, { direction: p.get("direction"), type: p.get("type") || "all", status: p.get("status") || "all",
+        from: p.get("from"), to: p.get("to"), name: p.get("name"), archive: p.get("archive") === "1" });
+    }],
+    ["GET", /^\/api\/eclaimlink\/remote\/([\w.-]+)$/, (req, url, m) => ecl.view(ctx, m[1], { archive: url.searchParams.get("archive") === "1" })],
+    ["POST", /^\/api\/eclaimlink\/report$/, async req => ecl.report(ctx, (await readJson(req)).files)],
     ["POST", /^\/api\/eclaimlink\/files\/(\d+)\/applied$/, (req, url, m) => ({ applied: ecl.markApplied(ctx, Number(m[1])) })],
     ["GET", /^\/api\/checks$/, (req, url) => {
       const limit = Math.min(500, Number(url.searchParams.get("limit")) || 50);

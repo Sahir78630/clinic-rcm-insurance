@@ -60,7 +60,6 @@ main{min-width:0;padding-block:22px 48px;padding-left:max(16px, env(safe-area-in
 .wrap{max-width:1240px;margin:0 auto;display:flex;flex-direction:column;gap:18px}
 .page-head{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap}
 .page-head p{margin:4px 0 0;color:var(--muted);max-width:70ch}
-.sample-note{font-size:12px;background:var(--warn-soft);color:var(--warn);border-radius:6px;padding:6px 10px}
 
 .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px}
 .kpi{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:12px 14px;display:flex;flex-direction:column;gap:4px}
@@ -166,14 +165,15 @@ dialog::backdrop{background:rgba(8,16,14,.45)}
 <div class="app">
   <aside class="rail">
     <div class="brand">
-      <div class="brand-mark">AW</div>
-      <div><b>Al Waha Polyclinic</b><span>Insurance revenue cycle</span></div>
+      <div class="brand-mark" id="brandMark">RC</div>
+      <div><b id="brandName">Polyclinic</b><span>Insurance revenue cycle</span></div>
     </div>
     <nav class="nav" id="nav"></nav>
     <div class="rail-foot">
-      <div>Facility licence <span class="mono">DHA-F-0000000</span> (sample)</div>
-      <div>All figures in AED. Data is sample data stored in this browser.</div>
-      <button class="btn sm" id="resetBtn" type="button">Reset sample data</button>
+      <div>Facility licence <span class="mono" id="licenceText">not set</span></div>
+      <div>All figures in AED. Claims and payments are stored in this browser.</div>
+      <button class="btn sm" id="facilityBtn" type="button">Facility details</button>
+      <button class="btn sm danger" id="resetBtn" type="button">Clear all data</button>
     </div>
   </aside>
   <main><div class="wrap" id="view"></div></main>
@@ -200,7 +200,6 @@ const diff = (a,b) => Math.round((new Date(b+"T00:00:00") - new Date(a+"T00:00:0
 const TODAY = toISO(new Date());
 const fmtD = iso => iso ? new Date(iso+"T00:00:00").toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"}) : "–";
 const nowTime = () => { const d = new Date(); return z(d.getHours())+":"+z(d.getMinutes()); };
-function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
 
 /* ---------- reference data ---------- */
 const PAYERS = [
@@ -248,153 +247,15 @@ const DENIALS = {
 };
 const BUCKETS = [["0–30",0,30,"--b1"],["31–60",31,60,"--b2"],["61–90",61,90,"--b3"],["91–180",91,180,"--b4"],["180+",181,1e9,"--b5"]];
 
-/* ---------- sample data ---------- */
-function seed(){
-  const rng = mulberry32(971);
-  const pick = a => a[Math.floor(rng()*a.length)];
-  const ri = (a,b) => a + Math.floor(rng()*(b-a+1));
-  const wpick = () => { let t = rng()*100; for (const p of PAYERS){ t -= p.w; if (t <= 0) return p; } return PAYERS[0]; };
-  const FN = ["Ahmed","Fatima","Mohammed","Aisha","Rajesh","Anjali","Maria","John","Sara","Yousef","Noor","Imran","Grace","Hassan","Leila","Arjun","Mei","Omar","Reem","Daniel","Khadija","Vikram","Joy","Tariq","Hiba","Sanjay","Elif","Ravi","Amal","Paolo"];
-  const LN = ["Al Mansoori","Khan","Santos","Pillai","Al Falasi","Rahman","Thomas","Haddad","Sharma","Al Nuaimi","Reyes","Iyer","Abdullah","Fernandes","Chen","Al Suwaidi","Qureshi","Morgan","Nasser","Das"];
-  const patients = [];
-  for (let i=0;i<220;i++){
-    const p = wpick(), plan = pick(PLANS), yr = ri(1958,2022);
-    const validTo = rng() < 0.08 ? addDays(TODAY,-ri(5,90)) : addDays(TODAY,ri(20,330));
-    patients.push({id:"P"+(10500+i),name:pick(FN)+" "+pick(LN),dob:yr+"-"+z(ri(1,12))+"-"+z(ri(1,28)),
-      eid:`784-${yr}-${String(ri(1000000,9999999))}-${ri(0,9)}`,mobile:`05${ri(0,8)} ${ri(100,999)} ${ri(1000,9999)}`,
-      policy:{payer:p.id,plan:plan.name,card:`${p.prefix}-${ri(100000,999999)}-${ri(10,99)}`,validFrom:addDays(validTo,-365),validTo,copay:plan.copay,ded:plan.ded,network:plan.network}});
-  }
-  const claims = [], auths = [];
-  let paSeq = 31000;
-  for (let i=0;i<560;i++){
-    const pt = pick(patients), deptName = pick(Object.keys(DEPTS)), d = DEPTS[deptName];
-    const encAge = Math.floor(Math.pow(rng(),1.25)*230);
-    const enc = addDays(TODAY,-encAge);
-    const acts = [];
-    const main = pick(d.acts); acts.push({code:main[0],desc:main[1],qty:1,price:main[2]});
-    const nx = d.extra.length ? ri(0,2) : 0;
-    const used = new Set([main[0]]);
-    for (let k=0;k<nx;k++){ const e = pick(d.extra); if (used.has(e[0])) continue; used.add(e[0]); acts.push({code:e[0],desc:e[1],qty:deptName==="Physiotherapy"?ri(1,3):1,price:e[2]}); }
-    const plan = PLANS.find(x => x.name === pt.policy.plan);
-    let grossAll = acts.reduce((s,a)=>s+a.price*a.qty,0);
-    let psAll = Math.min(grossAll, plan.ded + grossAll*plan.copay/100);
-    const id = "CLM-"+(246000+i);
-    const c = {id,patient:pt.id,payer:pt.policy.payer,card:pt.policy.card,dept:deptName,doctor:pick(d.dr),enc,
-      dx:[pick(d.dx)],acts:acts.map((a,k)=>{const g=a.price*a.qty; const ps=r2(psAll*g/grossAll); return {aid:id+"-"+(k+1),code:a.code,desc:a.desc,qty:a.qty,gross:g,ps,net:r2(g-ps),paid:0,denial:null};}),
-      status:"Draft",submitted:null,events:[{d:enc,t:"Encounter recorded, "+deptName}],remits:[],resubs:[],writeOff:0,woReason:null,pa:null};
-    if (d.pa && rng() < 0.85){
-      const paid = "PA-"+(paSeq++);
-      const req = r2(c.acts.reduce((s,a)=>s+a.net,0));
-      auths.push({id:paid,patient:pt.id,payer:c.payer,dept:deptName,code:c.acts[c.acts.length-1].code,desc:c.acts[c.acts.length-1].desc,dx:c.dx[0][0],requested:req,approved:req,status:"Approved",reqOn:addDays(enc,-ri(1,4)),respOn:addDays(enc,-ri(0,1)),validTo:addDays(enc,29),claim:id});
-      c.pa = paid;
-    }
-    const remitAge = encAge;
-    if (encAge <= 3 && rng() < 0.85){ claims.push(c); continue; }
-    c.submitted = addDays(enc, Math.min(ri(1,4), encAge));
-    c.status = "Submitted"; c.events.push({d:c.submitted,t:"Submitted to "+payer(c.payer).name+" via eClaimLink"});
-    const sAge = diff(c.submitted,TODAY);
-    if (sAge < 24 || (sAge < 45 && rng() < 0.45) || rng() < 0.07){ claims.push(c); continue; }
-    const rDate = addDays(c.submitted, ri(22, Math.min(sAge, 75)));
-    const r = rng();
-    if (r < 0.75){ c.acts.forEach(a => a.paid = a.net); }
-    else if (r < 0.89){
-      c.acts.forEach(a => a.paid = a.net);
-      const a = c.acts[c.acts.length-1];
-      const code = pick(["MNEC-004","PRCE-002","CODE-010","AUTH-003","PRCE-001","NCOV-003","PRCE-002"]);
-      a.denial = code; a.paid = code === "PRCE-002" ? r2(a.net*0.82) : 0;
-    } else if (r < 0.945){
-      const code = !c.pa && d.pa ? "AUTH-001" : pick(["ELIG-001","CLAI-012","MNEC-003","DUPL-002","ELIG-005"]);
-      c.acts.forEach(a => { a.paid = 0; a.denial = code; });
-    } else { c.acts.forEach(a => a.paid = a.net); }
-    const paidSum = r2(c.acts.reduce((s,a)=>s+a.paid,0)), deniedSum = r2(c.acts.reduce((s,a)=>s+a.net,0) - paidSum);
-    c.status = "Remitted"; c.remitDate = rDate;
-    c.remits.push({ra:null,d:rDate,paid:paidSum,denied:deniedSum});
-    c.events.push({d:rDate,t:`Remittance received: paid AED ${aed(paidSum)}`+(deniedSum>0?`, denied AED ${aed(deniedSum)}`:"")});
-    const rAge = diff(rDate,TODAY);
-    if (deniedSum > 0 && rAge > 25 && rng() < 0.35){
-      const rd = addDays(rDate, ri(5,18));
-      const den = c.acts.filter(a=>a.denial).map(a=>a.denial);
-      const type = rng() < 0.75 ? "correction" : "internal complaint";
-      const note = den.some(k=>k.startsWith("AUTH")) ? "Attached prior approval reference and approval letter"
-        : den.some(k=>k.startsWith("CODE")) ? "Corrected ICD-10 to match activity, attached clinical notes"
-        : den.some(k=>k.startsWith("PRCE")) ? "Disputed price against contracted tariff, attached price list"
-        : den.some(k=>k.startsWith("ELIG")) ? "Attached eligibility confirmation from date of service"
-        : "Attached clinical notes and medical justification";
-      c.status = "Resubmitted"; c.resubs.push({d:rd,type,note,amount:deniedSum,codes:[...new Set(den)],outcome:null});
-      c.events.push({d:rd,t:`Resubmitted (${type}): ${note}`});
-      const resAge = diff(rd,TODAY);
-      if (resAge > 30 && rng() < 0.7){
-        const od = addDays(rd, ri(20, Math.min(resAge, 45)));
-        const o = rng(); let got = 0;
-        c.acts.forEach(a => { if (!a.denial) return; const due = r2(a.net - a.paid);
-          const add = o < 0.55 ? due : o < 0.8 ? r2(due*0.5) : 0;
-          a.paid = r2(a.paid + add); got += add; if (a.paid >= a.net - 0.009) a.denial = null; });
-        got = r2(got);
-        c.resubs[0].outcome = {d:od,paid:got,denied:r2(deniedSum-got)};
-        c.remits.push({ra:null,d:od,paid:got,denied:r2(deniedSum-got)});
-        c.status = "Remitted";
-        c.events.push({d:od,t:`Resubmission outcome: recovered AED ${aed(got)}`+(deniedSum-got>0.009?`, still denied AED ${aed(deniedSum-got)}`:"")});
-      }
-    } else if (deniedSum > 0 && rAge > 70 && rng() < 0.35){
-      c.writeOff = deniedSum; c.woReason = "Contractual / non-recoverable";
-      c.events.push({d:addDays(rDate,30),t:`Balance AED ${aed(deniedSum)} written off`});
-    }
-    claims.push(c);
-  }
-  // remittance advice batches: group by payer + settlement week
-  const ras = {}; let payRef = 880100;
-  claims.forEach(c => c.remits.forEach(rem => {
-    const wk = addDays(rem.d, -((new Date(rem.d+"T00:00:00").getDay()+3)%7)); // snap to Thursday
-    const key = c.payer+wk;
-    if (!ras[key]) ras[key] = {id:`RA-${c.payer}-${wk.replace(/-/g,"")}`,payer:c.payer,date:wk,payRef:"TT"+(payRef++),lines:[],amount:0,bank:null,status:"Unreconciled",recOn:null,source:"eClaimLink download"};
-    const ra = ras[key];
-    rem.ra = ra.id; rem.d = wk; c.remitDate = wk;
-    ra.lines.push({claim:c.id,paid:rem.paid,denied:rem.denied});
-    ra.amount = r2(ra.amount + rem.paid);
-  }));
-  claims.forEach(c => c.resubs.forEach((x,i) => { if (x.outcome){ const rem = c.remits[c.remits.length-1]; x.outcome.d = rem.d; x.outcome.ra = rem.ra; } }));
-  const raList = Object.values(ras).sort((a,b)=>b.date.localeCompare(a.date));
-  raList.forEach((ra,i) => {
-    const age = diff(ra.date,TODAY);
-    if (age > 21){
-      if (rng() < 0.12){ ra.bank = r2(ra.amount - [25,50,ra.amount*0.05][ri(0,2)]); }
-      else { ra.bank = ra.amount; ra.status = "Reconciled"; ra.recOn = addDays(ra.date, ri(3,10)); }
-    } else if (rng() < 0.6){ ra.bank = ra.amount; }
-  });
-  // pending and recent prior approvals for upcoming visits
-  const pend = ["Pending","Pending","Pending","Pending","Pending","Approved","Approved","Partially approved","Rejected","Rejected","Pending","Approved"];
-  pend.forEach((st,i) => {
-    const pt = pick(patients), deptName = pick(["Dental","Physiotherapy","Radiology","Orthopedics","ENT","Dermatology"]), d = DEPTS[deptName];
-    const a = d.extra.length ? pick(d.extra) : pick(d.acts);
-    const req = r2(a[2]*(deptName==="Physiotherapy"?6:1)*(1-pt.policy.copay/100));
-    const reqOn = addDays(TODAY,-ri(0,6));
-    const x = {id:"PA-"+(paSeq++),patient:pt.id,payer:pt.policy.payer,dept:deptName,code:a[0],desc:a[1]+(deptName==="Physiotherapy"?" × 6 sessions":""),dx:pick(d.dx)[0],requested:req,approved:0,status:st,reqOn,respOn:null,validTo:null,claim:null,note:""};
-    if (st !== "Pending"){ x.respOn = addDays(reqOn,ri(0,2)); if (x.respOn > TODAY) x.respOn = TODAY; x.validTo = addDays(x.respOn,30); }
-    if (st === "Approved") x.approved = req;
-    if (st === "Partially approved"){ x.approved = r2(req*0.5); x.note = "Approved 3 of 6 sessions"; }
-    if (st === "Rejected"){ x.note = pick(["MNEC-004: insufficient clinical justification","NCOV-003: not covered under plan"]); }
-    auths.push(x);
-  });
-  // today's appointments
-  const appts = [];
-  const used = new Set();
-  const slots = ["08:30","09:00","09:20","10:00","10:40","11:15","12:00","13:30","15:00","16:10","17:00","18:20","19:00","20:15"];
-  slots.forEach((t,i) => {
-    let pt; do { pt = pick(patients); } while (used.has(pt.id)); used.add(pt.id);
-    const dept = pick(Object.keys(DEPTS));
-    appts.push({id:"AP"+(i+1),time:t,patient:pt.id,dept,doctor:pick(DEPTS[dept].dr),status:"Not verified",checked:null});
-  });
-  const log = [];
-  for (let i=0;i<3;i++){ const ap = appts[i]; const res = verify(ap.patient, null, null, ap.dept, patients); ap.status = res.status; ap.checked = slots[i]; log.unshift({t:TODAY+" "+addMinutes(slots[i],-25),pt:ap.patient,payer:res.payer,card:res.card,status:res.status,src:"Appointment"}); }
-  return {v:4,seededOn:TODAY,patients,claims,ras:raList,auths:auths.sort((a,b)=>b.reqOn.localeCompare(a.reqOn)),appts,log,raSeq:1};
-}
-function addMinutes(t,m){ let [h,mi] = t.split(":").map(Number); let x = h*60+mi+m; return z(Math.floor(x/60))+":"+z(x%60); }
+/* ---------- records ---------- */
+// Everything starts empty: records come from imports, the clinic server and eClaimLink
+const emptyState = () => ({v:5,patients:[],claims:[],ras:[],auths:[],appts:[],log:[],raSeq:1,posted:{},facility:{name:"",licence:""}});
 
 /* ---------- state ---------- */
-const KEY = "aw-rcm-v4";
+const KEY = "rcm-v5";
 let S;
 try { S = JSON.parse(localStorage.getItem(KEY)); } catch(e) { S = null; }
-if (!S || S.v !== 4) S = seed();
+if (!S || S.v !== 5) S = emptyState();
 function save(){ try { localStorage.setItem(KEY, JSON.stringify(S)); } catch(e) {} }
 const patient = id => S.patients.find(p => p.id === id) || {name:"Unknown",policy:{}};
 const claimById = id => S.claims.find(c => c.id === id);
@@ -415,7 +276,7 @@ function status(c){
 }
 const STATUS_PILL = {"Draft":"p-mute","Submitted":"p-info","Resubmitted":"p-info","Paid":"p-ok","Closed":"p-mute","Partially paid":"p-warn","Rejected":"p-bad",
   "Eligible":"p-ok","Not eligible":"p-bad","Inactive":"p-bad","Not found":"p-bad","Not verified":"p-mute","Check failed":"p-bad","Approval needed":"p-warn",
-  "Pending":"p-info","Accepted":"p-ok","Accepted with warnings":"p-warn","Posted":"p-ok","Waiting":"p-info","Awaiting payer":"p-info","Recovered":"p-ok","Partially recovered":"p-warn","Denied again":"p-bad","Approved":"p-ok","Partially approved":"p-warn","Reconciled":"p-ok","Unreconciled":"p-warn","Variance":"p-bad","Awaiting deposit":"p-info"};
+  "Pending":"p-info","New":"p-info","Downloaded":"p-mute","Accepted":"p-ok","Accepted with warnings":"p-warn","Posted":"p-ok","Waiting":"p-info","Awaiting payer":"p-info","Recovered":"p-ok","Partially recovered":"p-warn","Denied again":"p-bad","Approved":"p-ok","Partially approved":"p-warn","Reconciled":"p-ok","Unreconciled":"p-warn","Variance":"p-bad","Awaiting deposit":"p-info"};
 const pill = s => `<span class="pill ${STATUS_PILL[s]||"p-mute"}">${esc(s)}</span>`;
 const ageBasis = c => c.status === "Resubmitted" && c.resubs.length ? c.resubs[c.resubs.length-1].d : c.submitted;
 const ageOf = (c, basis) => diff(basis === "enc" ? c.enc : (c.submitted || c.enc), TODAY);
@@ -477,7 +338,7 @@ const legendBuckets = () => `<div class="legend">${BUCKETS.map(b=>`<span><i styl
 const VIEWS = [
   ["", [["overview","Overview"]]],
   ["Front office", [["eligibility","Eligibility & access"],["approvals","Prior approvals"]]],
-  ["Billing", [["claims","Claims"],["remittance","Remittance & reconciliation"],["denials","Denials"],["resubmissions","Resubmissions"]]],
+  ["Billing", [["claims","Claims"],["remittance","Remittance & reconciliation"],["denials","Denials"],["resubmissions","Resubmissions"],["eclaimlink","eClaimLink files"]]],
   ["Finance", [["receivables","Insurance receivables"]]]
 ];
 let current = (location.hash||"").slice(1);
@@ -495,7 +356,7 @@ function renderNav(){
     `<button type="button" data-go="${id}" ${id===current?'aria-current="page"':""}><span>${label}</span>${n[id]?`<span class="count">${n[id]}</span>`:""}</button>`).join("")}</div>`).join("");
 }
 function go(v){ current = v; try { history.replaceState(null,"","#"+v); } catch(e) {} render(); window.scrollTo(0,0); }
-function render(){ renderNav(); $("#view").innerHTML = R[current](); bindView(); }
+function render(){ renderBrand(); renderNav(); $("#view").innerHTML = R[current](); bindView(); }
 function toast(msg){ const t = $("#toast"); t.textContent = msg; t.hidden = false; clearTimeout(toast.h); toast.h = setTimeout(()=>t.hidden=true, 2600); }
 function head(title, sub, right=""){ return `<div class="page-head"><div><h1>${title}</h1><p>${sub}</p></div><div class="actions">${right}</div></div>`; }
 
@@ -519,7 +380,7 @@ R.overview = () => {
   for (let i=5;i>=0;i--){ const d = new Date(d0.getFullYear(), d0.getMonth()-i, 1); months.push({key:d.getFullYear()+"-"+z(d.getMonth()+1),label:d.toLocaleDateString("en-GB",{month:"short"})}); }
   months.forEach(m => { m.billed = S.claims.filter(c=>c.submitted && c.submitted.startsWith(m.key)).reduce((s,c)=>s+totals(c).net,0); m.col = S.ras.filter(r=>r.date.startsWith(m.key)).reduce((s,r)=>s+r.amount,0); });
   const byPayer = PAYERS.map(p=>({label:p.name,v:ab.rows[p.id]?ab.rows[p.id].total:0})).filter(x=>x.v>0).sort((a,b)=>b.v-a.v);
-  return head("Revenue cycle overview",`Insurance position as of ${fmtD(TODAY)}. Outstanding balances are net of patient share and age from claim submission.`, `<span class="sample-note">Sample data</span>`) +
+  return head("Revenue cycle overview",`Insurance position as of ${fmtD(TODAY)}. Outstanding balances are net of patient share and age from claim submission.`) + (S.claims.length ? "" : gettingStarted()) +
   `<div class="kpis">
     <div class="kpi"><span class="eyebrow">Outstanding insurance AR</span><span class="v">${aed(ar)}<small>AED</small></span><span class="s">${live.filter(c=>totals(c).outstanding>0).length} open claims</span></div>
     <div class="kpi"><span class="eyebrow">Collected, last 30 days</span><span class="v">${aed(col30)}<small>AED</small></span><span class="s">from ${S.ras.filter(r=>diff(r.date,TODAY)<=30).length} remittances</span></div>
@@ -549,7 +410,6 @@ R.overview = () => {
 R.eligibility = () => {
   if (LIVE.on) return liveEligibility();
   const v = UI.verifyResult;
-  const samples = [S.patients[0],S.patients[5],S.patients.find(p=>p.policy.validTo<TODAY)].filter(Boolean);
   return head("Eligibility & access","Verify insurance cover before the patient sees the doctor. Each check records plan, network, co-pay and whether the service needs prior approval.") +
   `<section class="panel"><div class="panel-head"><div><h2>Today's appointments</h2><p>${fmtD(TODAY)} · ${S.appts.filter(a=>a.status!=="Not verified").length} of ${S.appts.length} verified</p></div>
     <div class="actions"><button class="btn" id="importAppts" type="button">Import appointment list</button><button class="btn primary" id="verifyAll" type="button">Verify all remaining</button></div></div>
@@ -564,7 +424,6 @@ R.eligibility = () => {
         <div class="field"><label for="vDept">Service</label><select id="vDept">${Object.keys(DEPTS).map(d=>`<option>${esc(d)}</option>`).join("")}</select></div>
         <div class="field"><button class="btn primary" type="submit">Check eligibility</button></div>
       </form>
-      <div class="chips"><span class="muted" style="font-size:12px;align-self:center">Try a sample member:</span>${samples.map(p=>`<button type="button" class="chip" data-sample="${p.id}">${esc(p.name)} · ${esc(payer(p.policy.payer).name)}${p.policy.validTo<TODAY?" (expired)":""}</button>`).join("")}<button type="button" class="chip" data-sampleeid="${S.patients.find(p=>p.policy.payer==="DAM"&&p.policy.validTo>=TODAY).id}">Daman member by Emirates ID</button></div>
       ${v ? resultCard(v) : `<div class="empty">Results of a walk-in check appear here.</div>`}
     </section>
     <section class="panel"><div class="panel-head"><div><h2>Verification log</h2><p>Most recent first</p></div></div>
@@ -612,7 +471,7 @@ R.claims = () => {
   const drafts = S.claims.filter(c=>c.status==="Draft");
   const STS = ["Draft","Submitted","Resubmitted","Paid","Partially paid","Rejected","Closed"];
   return head("Claims","Every insurance claim from encounter to settlement. Open a claim to see activities, payer decisions and history.",
-    `<button class="btn primary" id="submitDrafts" type="button" ${drafts.length?"":"disabled"}>Submit ${drafts.length} draft claim${drafts.length===1?"":"s"}</button>`) +
+    `<button class="btn" id="importClaims" type="button">Import claims</button><button class="btn primary" id="submitDrafts" type="button" ${drafts.length?"":"disabled"}>Submit ${drafts.length} draft claim${drafts.length===1?"":"s"}</button>`) +
   `<div class="filters">
     <input type="text" id="fq" placeholder="Search claim, patient or card" value="${esc(UI.claimQ)}" style="flex:1 1 220px">
     <select id="fpayer"><option value="">All payers</option>${PAYERS.map(p=>`<option value="${p.id}" ${UI.claimPayer===p.id?"selected":""}>${esc(p.name)}</option>`).join("")}</select>
@@ -635,7 +494,7 @@ R.remittance = () => {
   </div>
   ${ECL()?eclPanel():""}
   <section class="panel"><div class="panel-head"><div><h2>Import remittance advice</h2><p>Paste a <span class="code">Remittance.Advice</span> XML file as downloaded from the payer or DHA eClaimLink. Payments and denial codes post to matching claim activities.</p></div>
-    <div class="actions"><button class="btn" id="sampleRa" type="button">Load a sample file</button><label class="btn" for="raFile">Choose file</label><input type="file" id="raFile" accept=".xml,text/xml" hidden></div></div>
+    <div class="actions"><label class="btn" for="raFile">Choose file</label><input type="file" id="raFile" accept=".xml,text/xml" hidden></div></div>
     <textarea id="raXml" spellcheck="false" placeholder="&lt;Remittance.Advice&gt; … &lt;/Remittance.Advice&gt;"></textarea>
     <div class="actions"><button class="btn primary" id="importRa" type="button">Import and post payments</button><span class="muted" id="raMsg"></span></div>
   </section>
@@ -681,13 +540,13 @@ function claimBlock(c, resub){
     <ID>${c.id}</ID>
     <MemberID>${esc(c.card)}</MemberID>
     <PayerID>${c.payer}</PayerID>
-    <ProviderID>DHA-F-0000000</ProviderID>
+    <ProviderID>${facLic()}</ProviderID>
     <EmiratesIDNumber>${esc(p.eid)}</EmiratesIDNumber>
     <Gross>${t.gross.toFixed(2)}</Gross>
     <PatientShare>${t.ps.toFixed(2)}</PatientShare>
     <Net>${t.net.toFixed(2)}</Net>
     <Encounter>
-      <FacilityID>DHA-F-0000000</FacilityID>
+      <FacilityID>${facLic()}</FacilityID>
       <Type>1</Type>
       <PatientID>${p.id}</PatientID>
       <Start>${dt(c.enc)} 09:00</Start>
@@ -713,7 +572,7 @@ ${c.acts.map(a=>`    <Activity>
   </Claim>`;
 }
 const xmlHeader = (receiver, count) => `  <Header>
-    <SenderID>DHA-F-0000000</SenderID>
+    <SenderID>${facLic()}</SenderID>
     <ReceiverID>${receiver}</ReceiverID>
     <TransactionDate>${dtX(TODAY)} ${nowTime()}</TransactionDate>
     <RecordCount>${count}</RecordCount>
@@ -741,7 +600,7 @@ ${xmlHeader(a.payer, 1)}
     <EmiratesIDNumber>${esc(p.eid)}</EmiratesIDNumber>
     <DateOrdered>${dtX(TODAY)}</DateOrdered>
     <Encounter>
-      <FacilityID>DHA-F-0000000</FacilityID>
+      <FacilityID>${facLic()}</FacilityID>
       <Type>1</Type>
     </Encounter>
     <Diagnosis>
@@ -944,13 +803,6 @@ function memberDlg(input, payerId){
 }
 
 const APPT_COLS = "time,patient_name,emirates_id,payer,card_no,plan,valid_until,department,doctor";
-function apptSampleCsv(){
-  const rows = [APPT_COLS];
-  const ex = S.patients.slice(0,3);
-  ex.forEach((p,i) => rows.push([["08:30","09:15","10:00"][i],`"${p.name}"`,p.eid,payer(p.policy.payer).name,p.policy.card,p.policy.plan,p.policy.validTo,"General Practice",""].join(",")));
-  rows.push(`11:30,"Example New Patient",784-1988-1234567-1,Daman,DM-555123-01,Gold,${addDays(TODAY,200)},Dermatology,`);
-  return rows.join("\n");
-}
 function parseCsv(txt){
   const out = []; let row = [], cur = "", q = false;
   for (let i=0;i<txt.length;i++){ const ch = txt[i];
@@ -965,12 +817,12 @@ function apptImportDlg(){
   openDlg(dlgHead("Import appointment list","Paste or choose the day's appointment export from your clinic system. Each patient is matched or added, then checked.") +
   `<div class="dlg-body">
     <div class="muted" style="font-size:12.5px">Columns: <span class="code">${APPT_COLS}</span>. Payer can be a name (Daman) or code (DAM). Plan and valid-until come from the insurance details captured at registration.</div>
-    <div class="actions"><button class="btn sm" id="apSample" type="button">Load example</button><label class="btn sm" for="apFile">Choose CSV file</label><input type="file" id="apFile" accept=".csv,text/csv" hidden>
+    <div class="actions"><button class="btn sm" id="apSample" type="button">Insert column headings</button><label class="btn sm" for="apFile">Choose CSV file</label><input type="file" id="apFile" accept=".csv,text/csv" hidden>
       <label style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" id="apReplace" checked> Replace today's list</label></div>
     <textarea id="apCsv" spellcheck="false" placeholder="${APPT_COLS}"></textarea>
     <div class="actions"><button class="btn primary" data-act="apImport" type="button">Import and verify all</button><span class="muted" id="apMsg"></span></div>
   </div>`);
-  $("#apSample").onclick = () => { $("#apCsv").value = apptSampleCsv(); };
+  $("#apSample").onclick = () => { const t = $("#apCsv"); if (!t.value.startsWith(APPT_COLS)) t.value = APPT_COLS + "\n" + t.value; };
   $("#apFile").onchange = e => { const f = e.target.files[0]; if (!f) return; const rd = new FileReader(); rd.onload = () => { $("#apCsv").value = rd.result; }; rd.readAsText(f); };
 }
 function importAppts(txt, replace){
@@ -1033,6 +885,9 @@ function bindDlg(){
       eclUpload(xml).then(record).catch(e=>{ toast(e.message); claimDlg(c.id); }); return; }
     if (a==="writeoff"){ const c=claimById(dlg.dataset.claim); const t=totals(c); c.writeOff=r2((c.writeOff||0)+t.outstanding); c.woReason=$("#woReason").value; c.events.push({d:TODAY,t:`Balance AED ${aed(t.outstanding)} written off: ${c.woReason}`}); done("Balance written off"); claimDlg(c.id); }
     if (a==="reconcile"){ const r=S.ras.find(x=>x.id===dlg.dataset.ra); const amt=parseFloat($("#bankAmt").value); if (isNaN(amt)) return toast("Enter the bank amount first"); const note=$("#bankNote").value; if (Math.abs(amt-r.amount)>0.009 && note==="No variance") return toast("Bank amount differs from the remittance. Pick a variance reason."); r.bank=r2(amt); r.status="Reconciled"; r.recOn=TODAY; r.note=note; done("Remittance reconciled"); raDlg(r.id); }
+    if (a==="facSave"){ S.facility = {name:$("#fName").value.trim(), licence:$("#fLic").value.trim().toUpperCase()}; closeDlg(); done("Facility details saved"); return; }
+    if (a==="ciImport"){ const t=$("#ciCsv").value.trim(); if(!t){ $("#ciMsg").textContent="Paste or choose a CSV first."; return; } const r=importClaimsCsv(t); if (r.error){ $("#ciMsg").textContent=r.error; return; }
+      closeDlg(); current="claims"; done(`Imported ${r.added} claims`+(r.existing?`, ${r.existing} already here`:"")+(r.skipped.length?`. Skipped ${r.skipped.length}: ${r.skipped.slice(0,3).join("; ")}`:"")); return; }
     if (a==="apImport" && LIVE.on){ const t=$("#apCsv").value.trim(); if(!t){ $("#apMsg").textContent="Paste or choose a CSV first."; return; } b.disabled=true; $("#apMsg").textContent="Importing and checking with the payer…";
       api("/appointments/import",{csv:t,replace:$("#apReplace").checked}).then(r=>{ LIVE.appts=r.appointments; closeDlg(); refreshLog(); toast(`Imported ${r.imported}, checked ${r.checked}`+(r.skipped.length?`. Skipped ${r.skipped.length}: `+r.skipped.slice(0,3).map(x=>"line "+x.line+" "+x.reason).join("; "):"")); render(); })
         .catch(e=>{ b.disabled=false; $("#apMsg").textContent=e.message; }); return; }
@@ -1049,9 +904,10 @@ function bindDlg(){
       S.log.unshift({t:TODAY+" "+nowTime(),pt:res.patient||null,payer:res.payer,card:res.card,status:res.status,src:"Walk-in"});
       closeDlg(); done(`${name} registered with ${payer(pid).name}`); }
     if (a==="paSave"){ const x=S.auths.find(y=>y.id===dlg.dataset.pa); x.status=$("#paDec").value; x.approved=x.status==="Rejected"?0:r2(parseFloat($("#paAmt").value)||0); x.note=$("#paNote").value.trim(); x.respOn=TODAY; x.validTo=x.status==="Rejected"?null:addDays(TODAY,30); done("Response saved"); closeDlg(); }
+    if (a==="paCreate" && !S.patients.length) return toast("Add patients first: import claims or today's appointment list");
     if (a==="paCreate"){ const pt=patient($("#npPt").value), dd=$("#npDept").value, code=$("#npAct").value, all=[...DEPTS[dd].acts,...DEPTS[dd].extra], act=all.find(x=>x[0]===code), qty=Math.max(1,parseInt($("#npQty").value)||1);
-      const id = "PA-"+(Math.max(...S.auths.map(x=>parseInt(x.id.slice(3))))+1);
-      const rec={id,patient:pt.id,payer:pt.policy.payer,dept:dd,code,desc:act[1]+(qty>1?` × ${qty}`:""),dx:$("#npDx").value,requested:r2(act[2]*qty*(1-pt.policy.copay/100)),approved:0,status:"Pending",reqOn:TODAY,respOn:null,validTo:null,claim:null,note:""};
+      const id = "PA-"+(Math.max(1000,...S.auths.map(x=>parseInt(x.id.slice(3))||0))+1);
+      const rec={id,patient:pt.id,payer:pt.policy.payer,dept:dd,code,desc:act[1]+(qty>1?` × ${qty}`:""),dx:$("#npDx").value,requested:r2(act[2]*qty*(1-(pt.policy.copay||0)/100)),approved:0,status:"Pending",reqOn:TODAY,respOn:null,validTo:null,claim:null,note:""};
       const finish = r => { if (r) rec.note = `eClaimLink transaction ${r.transactionId||"–"}`; S.auths.unshift(rec); UI.paFilter="All"; closeDlg(); current="approvals"; done("Request "+id+" sent to "+payer(pt.policy.payer).name+(r?" via eClaimLink":"")); };
       if (!ECL()) return finish(null);
       b.disabled=true; b.textContent="Sending to eClaimLink…";
@@ -1061,42 +917,6 @@ function bindDlg(){
 function done(msg){ save(); render(); toast(msg); }
 
 /* ---------- remittance import ---------- */
-function sampleRaXml(){
-  const cand = S.claims.filter(c=>c.status==="Submitted"||c.status==="Resubmitted").sort((a,b)=>a.submitted.localeCompare(b.submitted));
-  if (!cand.length) return null;
-  const pid = cand[0].payer;
-  const pick = cand.filter(c=>c.payer===pid).slice(0,6);
-  const ref = "TT"+(990000+S.raSeq);
-  const lines = pick.map((c,i) => {
-    const resub = c.status === "Resubmitted";
-    return `  <Claim>
-    <ID>${c.id}</ID>
-    <IDPayer>${pid}${String(700000+i)}</IDPayer>
-    <ProviderID>DHA-F-0000000</ProviderID>
-    <PaymentReference>${ref}</PaymentReference>
-    <DateSettlement>${TODAY.split("-").reverse().join("/")}</DateSettlement>
-${c.acts.map((a,k)=>{ const due = resub ? r2(a.net-a.paid) : a.net; if (resub && due<=0) return ""; const deny = !resub && i===1 && k===c.acts.length-1;
-  return `    <Activity>
-      <ID>${a.aid}</ID>
-      <Code>${a.code}</Code>
-      <Quantity>${a.qty}</Quantity>
-      <Net>${resub?due:a.net}</Net>
-      <PaymentAmount>${deny?0:due}</PaymentAmount>${deny?`
-      <DenialCode>MNEC-004</DenialCode>`:""}
-    </Activity>`; }).filter(Boolean).join("\n")}
-  </Claim>`; }).join("\n");
-  return `<?xml version="1.0" encoding="utf-8"?>
-<Remittance.Advice>
-  <Header>
-    <SenderID>${pid}</SenderID>
-    <ReceiverID>DHA-F-0000000</ReceiverID>
-    <TransactionDate>${TODAY.split("-").reverse().join("/")} 10:15</TransactionDate>
-    <RecordCount>${pick.length}</RecordCount>
-    <DispositionFlag>PRODUCTION</DispositionFlag>
-  </Header>
-${lines}
-</Remittance.Advice>`;
-}
 function importRa(xml, opts={}){
   let doc;
   try { doc = new DOMParser().parseFromString(xml,"application/xml"); } catch(e) { return "Could not read the file."; }
@@ -1154,8 +974,6 @@ function bindView(){
     v.querySelectorAll("[data-verify]").forEach(b=>b.onclick=()=>{ const ap=S.appts.find(a=>a.id===b.dataset.verify); const res=doVerify(ap); save(); render(); openDlg(dlgHead("Eligibility result",`${ap.time} · ${esc(ap.dept)} · ${esc(ap.doctor)}`)+`<div class="dlg-body">${resultCard(res)}</div>`); });
     $("#importAppts").onclick=apptImportDlg;
     $("#verifyAll").onclick=()=>{ const left=S.appts.filter(a=>a.status==="Not verified"); left.forEach(doVerify); done(left.length?`Verified ${left.length} appointments`:"All appointments are already verified"); };
-    v.querySelectorAll("[data-sample]").forEach(b=>b.onclick=()=>{ const p=patient(b.dataset.sample); $("#vPayer").value=p.policy.payer; $("#vCard").value=p.policy.card; });
-    v.querySelectorAll("[data-sampleeid]").forEach(b=>b.onclick=()=>{ const p=patient(b.dataset.sampleeid); $("#vPayer").value=p.policy.payer; $("#vCard").value=p.eid; });
     $("#verifyForm").onsubmit=e=>{ e.preventDefault(); const res=verify(null,$("#vPayer").value,$("#vCard").value,$("#vDept").value); UI.verifyResult=res; S.log.unshift({t:TODAY+" "+nowTime(),pt:res.patient||null,payer:res.payer,card:res.card,status:res.status,src:"Walk-in"}); save(); render(); };
   }
   if (current==="approvals"){
@@ -1168,6 +986,7 @@ function bindView(){
     $("#fpayer").onchange=e=>{UI.claimPayer=e.target.value;render();};
     $("#fstatus").onchange=e=>{UI.claimStatus=e.target.value;render();};
     $("#fdept").onchange=e=>{UI.claimDept=e.target.value;render();};
+    $("#importClaims").onclick=claimsImportDlg;
     $("#submitDrafts").onclick=async e=>{ const d=S.claims.filter(c=>c.status==="Draft");
       if (!ECL()){ d.forEach(submitClaim); return done(`Submitted ${d.length} claims to payers`); }
       e.target.disabled=true; e.target.textContent="Sending to eClaimLink…";
@@ -1180,10 +999,11 @@ function bindView(){
       done(`Sent ${sent} claims to eClaimLink in ${Object.keys(byPayer).length-fails.length} files`+(fails.length?`. Failed: ${fails.join("; ")}`:"")); };
   }
   if (current==="remittance"){
-    $("#sampleRa").onclick=()=>{ const x=sampleRaXml(); if(!x) return toast("No submitted claims are waiting for payment"); $("#raXml").value=x; $("#raMsg").textContent="Sample file loaded. Review it, then import."; };
     $("#raFile").onchange=e=>{ const f=e.target.files[0]; if(!f) return; const rd=new FileReader(); rd.onload=()=>{ $("#raXml").value=rd.result; $("#raMsg").textContent=f.name+" loaded."; }; rd.readAsText(f); };
     $("#importRa").onclick=()=>{ const x=$("#raXml").value.trim(); if(!x){ $("#raMsg").textContent="Paste or load a remittance file first."; return; } const err=importRa(x); if(err) $("#raMsg").textContent=err; };
   }
+  if (current==="eclaimlink") bindEcl(v);
+  v.querySelectorAll("[data-facility]").forEach(b=>b.onclick=facilityDlg);
   if (current==="resubmissions"){ v.querySelectorAll("[data-rsfilter]").forEach(b=>b.onclick=()=>{ UI.rsFilter=b.dataset.rsfilter; render(); }); }
   if (current==="receivables"){
     v.querySelectorAll("[data-basis]").forEach(b=>b.onclick=()=>{ UI.arBasis=b.dataset.basis; try{localStorage.setItem(KEY+"-ui",JSON.stringify({arBasis:UI.arBasis}));}catch(e){} render(); });
@@ -1216,9 +1036,11 @@ async function eclSync(btn){
     const files = await api("/eclaimlink/files?unapplied=1&limit=200");
     let ras=0, paid=0, claims=0, pas=0; const unknown=[], other=[];
     for (const f of files.slice().reverse()){
-      if (f.type === "Remittance.Advice"){ const r = importRa(f.xml,{quiet:true,source:"eClaimLink "+f.file_name}); if (r && typeof r === "object"){ ras++; paid+=r.total; claims+=r.count; unknown.push(...r.unknown); } else if (r) unknown.push(f.file_name+": "+r); }
+      if (f.file_id && S.posted[f.file_id]){ /* already added from the eClaimLink files page */ }
+      else if (f.type === "Remittance.Advice"){ const r = importRa(f.xml,{quiet:true,source:"eClaimLink "+f.file_name}); if (r && typeof r === "object"){ ras++; paid+=r.total; claims+=r.count; unknown.push(...r.unknown); } else if (r) unknown.push(f.file_name+": "+r); }
       else if (f.type === "Prior.Authorization"){ pas += applyPriorAuth(f.xml); }
       else other.push(f.type);
+      if (f.file_id) S.posted[f.file_id] = TODAY;
       await api(`/eclaimlink/files/${f.id}/applied`,{});
     }
     save(); LIVE.eclLast = new Date().toISOString(); await refreshEcl(); render();
@@ -1283,17 +1105,286 @@ function bindLive(v){
 }
 async function bootLive(){
   try {
-    const [h, appts, log] = await Promise.all([api("/health"), api("/appointments"), api("/checks?limit=30")]);
+    const [h, appts, log, cfg] = await Promise.all([api("/health"), api("/appointments"), api("/checks?limit=30"), api("/config").catch(()=>null)]);
+    LIVE.cfg = cfg;
+    if (h.facility && !S.facility.licence){ S.facility.licence = h.facility; save(); }
     Object.assign(LIVE, {on:true, provider:h.provider, appts, log, ecl:h.eclaimlink||"off"});
     await refreshEcl();
     UI.verifyResult = null; render();
   } catch(e) { toast("Clinic server not reachable: " + e.message); }
 }
 
+/* ---------- facility and getting started ---------- */
+const facLic = () => (S.facility && S.facility.licence) || "DHA-F-0000000";
+function renderBrand(){
+  const n = (S.facility && S.facility.name) || "Polyclinic";
+  $("#brandName").textContent = n;
+  $("#brandMark").textContent = n.split(/\s+/).filter(w=>/^[A-Za-z]/.test(w)).slice(0,2).map(w=>w[0].toUpperCase()).join("") || "RC";
+  $("#licenceText").textContent = (S.facility && S.facility.licence) || "not set";
+}
+function facilityDlg(){
+  openDlg(dlgHead("Facility details","Shown in the sidebar and written into the files sent to eClaimLink.") +
+  `<div class="dlg-body"><div class="form-grid">
+    <div class="field"><label for="fName">Facility name</label><input type="text" id="fName" value="${esc(S.facility.name)}" placeholder="e.g. Al Barsha Polyclinic"></div>
+    <div class="field"><label for="fLic">DHA facility licence</label><input type="text" id="fLic" value="${esc(S.facility.licence)}" placeholder="DHA-F-0000000"></div>
+  </div><div class="actions"><button class="btn primary" data-act="facSave" type="button">Save</button></div></div>`);
+}
+function gettingStarted(){
+  const step = (n, title, body, btn) => `<div class="kpi"><span class="eyebrow">Step ${n}</span><b>${title}</b><span class="s">${body}</span>${btn||""}</div>`;
+  return `<section class="panel"><div class="panel-head"><div><h2>No records yet</h2><p>This system starts empty. Add your facility, then load claims from your clinic system or from eClaimLink.</p></div></div>
+  <div class="kpis">
+    ${step(1,"Facility details","Name and DHA licence used on every eClaimLink file.",`<button class="btn sm" data-facility type="button">Set details</button>`)}
+    ${step(2,"Load claims","Import a claims CSV from your clinic system, or add the claim files you already sent through eClaimLink.",`<div class="actions"><button class="btn sm" data-go="claims" type="button">Import claims</button>${LIVE.on?`<button class="btn sm" data-go="eclaimlink" type="button">eClaimLink files</button>`:""}</div>`)}
+    ${step(3,"Load payments","Download remittances from eClaimLink, or import a remittance XML file. Payments post to matching claims.",`<button class="btn sm" data-go="remittance" type="button">Remittances</button>`)}
+    ${step(4,"Today's patients","Import the appointment list to check every patient's eligibility.",`<button class="btn sm" data-go="eligibility" type="button">Eligibility</button>`)}
+  </div></section>`;
+}
+
+/* ---------- loading real records ---------- */
+const CLAIM_COLS = "claim_id,patient_name,emirates_id,payer,card_no,encounter_date,department,doctor,icd10,cpt,description,quantity,gross,patient_share,prior_auth,status,submitted_date";
+const isoDate = v => { v = String(v||"").trim(); if (/^\d{4}-\d{2}-\d{2}/.test(v)) return v.slice(0,10); const m = v.match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})/); return m ? `${m[3]}-${m[2].padStart(2,"0")}-${m[1].padStart(2,"0")}` : null; };
+const num = v => parseFloat(String(v||"").replace(/,/g,"")) || 0;
+function payerFrom(v){
+  const k = norm(v); if (!k) return null;
+  const c = (LIVE.cfg && LIVE.cfg.payers || []).find(p => p.eclaimlinkId && norm(p.eclaimlinkId) === k);
+  if (c) return c.code;
+  const p = PAYERS.find(p => norm(p.id) === k || norm(p.name) === k) || PAYERS.find(p => norm(p.name).startsWith(k) || k.startsWith(norm(p.name)));
+  return p ? p.id : null;
+}
+const payerLabel = id => { const code = payerFrom(id); return code ? payer(code).name : (id || "–"); };
+function findOrAddPatient({name, eid, card, payerId}){
+  const k1 = norm(eid), k2 = norm(card);
+  let p = S.patients.find(x => (k1 && norm(x.eid) === k1) || (k2 && norm(x.policy.card) === k2));
+  if (!p){
+    p = {id:"P"+(S.patients.length+1)+"-"+Date.now().toString(36).slice(-4), name:name||(card?"Member "+card:"Unnamed patient"), dob:"", eid:eid||"", mobile:"",
+      policy:{payer:payerId||"", plan:"", card:card||"", validFrom:"", validTo:"", copay:null, ded:null, network:""}};
+    S.patients.push(p);
+  } else if (name && /^Member |^Unnamed/.test(p.name)) p.name = name;
+  return p;
+}
+function claimsImportDlg(){
+  openDlg(dlgHead("Import claims","Paste or choose a CSV export from your clinic system. One row per service line; rows with the same claim_id form one claim.") +
+  `<div class="dlg-body">
+    <div class="muted" style="font-size:12.5px">Columns: <span class="code">${CLAIM_COLS}</span>. Dates as 2026-10-23 or 23/10/2026. Status is Draft unless the row says Submitted. Claims that already exist are skipped.</div>
+    <div class="actions"><button class="btn sm" id="ciHead" type="button">Insert column headings</button><label class="btn sm" for="ciFile">Choose CSV file</label><input type="file" id="ciFile" accept=".csv,text/csv" hidden></div>
+    <textarea id="ciCsv" spellcheck="false" placeholder="${CLAIM_COLS}"></textarea>
+    <div class="actions"><button class="btn primary" data-act="ciImport" type="button">Import claims</button><span class="muted" id="ciMsg"></span></div>
+  </div>`);
+  $("#ciHead").onclick = () => { const t = $("#ciCsv"); if (!t.value.startsWith(CLAIM_COLS)) t.value = CLAIM_COLS + "\n" + t.value; };
+  $("#ciFile").onchange = e => { const f = e.target.files[0]; if (!f) return; const rd = new FileReader(); rd.onload = () => { $("#ciCsv").value = rd.result; }; rd.readAsText(f); };
+}
+function importClaimsCsv(txt){
+  const rows = parseCsv(txt); if (!rows.length) return {error:"The file is empty."};
+  let hdr = rows[0].map(h => h.trim().toLowerCase().replace(/[^a-z0-9]+/g,"_").replace(/^_|_$/g,""));
+  if (hdr.includes("claim_id")) rows.shift(); else hdr = CLAIM_COLS.split(",");
+  const col = (r,k) => { const i = hdr.indexOf(k); return i < 0 ? "" : (r[i]||"").trim(); };
+  const groups = new Map(), skipped = [];
+  rows.forEach((r,i) => { const id = col(r,"claim_id"); if (!id){ skipped.push(`line ${i+2}: no claim_id`); return; } if (!groups.has(id)) groups.set(id,[]); groups.get(id).push(r); });
+  let added = 0, existing = 0;
+  for (const [id, rs] of groups){
+    if (claimById(id)){ existing++; continue; }
+    const r0 = rs[0], pid = payerFrom(col(r0,"payer"));
+    if (!pid){ skipped.push(`${id}: unknown payer "${col(r0,"payer")}"`); continue; }
+    const enc = isoDate(col(r0,"encounter_date"));
+    if (!enc){ skipped.push(`${id}: missing or invalid encounter_date`); continue; }
+    const pt = findOrAddPatient({name:col(r0,"patient_name"), eid:col(r0,"emirates_id"), card:col(r0,"card_no"), payerId:pid});
+    const acts = rs.map((r,k) => { const g = num(col(r,"gross")), ps = num(col(r,"patient_share"));
+      return {aid:`${id}-${k+1}`, code:col(r,"cpt"), desc:col(r,"description"), qty:Math.max(1,parseInt(col(r,"quantity"))||1), gross:r2(g), ps:r2(ps), net:r2(g-ps), paid:0, denial:null}; });
+    const dx = [...new Set(rs.flatMap(r => col(r,"icd10").split(/[;|]/).map(x=>x.trim()).filter(Boolean)))].map(c => [c,""]);
+    const submitted = /^submit/i.test(col(r0,"status")) ? (isoDate(col(r0,"submitted_date")) || enc) : null;
+    const c = {id, patient:pt.id, payer:pid, card:col(r0,"card_no")||pt.policy.card, dept:col(r0,"department")||"–", doctor:col(r0,"doctor")||"",
+      enc, dx:dx.length?dx:[["",""]], acts, status:submitted?"Submitted":"Draft", submitted, events:[{d:enc,t:"Imported from clinic system"}], remits:[], resubs:[], writeOff:0, woReason:null, pa:col(r0,"prior_auth")||null};
+    if (submitted) c.events.push({d:submitted,t:"Submitted to "+payer(pid).name});
+    S.claims.push(c); added++;
+  }
+  save();
+  return {added, existing, skipped};
+}
+const dhpoToIso = v => { const m = String(v||"").match(/^(\d{2})\/(\d{2})\/(\d{4})/); return m ? `${m[3]}-${m[2]}-${m[1]}` : null; };
+// Claim.Submission files you sent through eClaimLink become claims here, so remittances can match them
+function addClaimsFromXml(xml){
+  const doc = new DOMParser().parseFromString(xml,"application/xml");
+  const own = (el,t) => { const x = [...el.children].find(c => c.tagName === t); return x ? x.textContent.trim() : ""; };
+  const header = doc.getElementsByTagName("Header")[0];
+  const sent = (header && dhpoToIso(own(header,"TransactionDate"))) || TODAY, receiver = header ? own(header,"ReceiverID") : "";
+  let added = 0, updated = 0, skipped = 0;
+  [...doc.getElementsByTagName("Claim")].forEach(ce => {
+    const id = own(ce,"ID"); if (!id) return;
+    const resub = ce.getElementsByTagName("Resubmission")[0];
+    const ex = claimById(id);
+    if (ex){
+      if (resub && !ex.resubs.some(x => x.d === sent)){ const note = resub.getElementsByTagName("Comment")[0];
+        ex.resubs.push({d:sent,type:(resub.getElementsByTagName("Type")[0]||{}).textContent||"correction",note:note?note.textContent:"",amount:totals(ex).outstanding,codes:[...new Set(ex.acts.map(a=>a.denial).filter(Boolean))],outcome:null});
+        ex.status = "Resubmitted"; ex.events.push({d:sent,t:"Resubmission found on eClaimLink"}); updated++; }
+      else skipped++;
+      return;
+    }
+    const pid = payerFrom(own(ce,"PayerID")) || payerFrom(receiver) || own(ce,"PayerID") || receiver;
+    const enc = ce.getElementsByTagName("Encounter")[0];
+    const encDate = (enc && dhpoToIso(own(enc,"Start"))) || sent;
+    const pt = findOrAddPatient({eid:own(ce,"EmiratesIDNumber"), card:own(ce,"MemberID"), payerId:pid});
+    const claimNet = num(own(ce,"Net")), claimPs = num(own(ce,"PatientShare"));
+    const actEls = [...ce.getElementsByTagName("Activity")];
+    const acts = actEls.map((a,k) => { const net = num(own(a,"Net")), ps = claimNet ? r2(claimPs*net/claimNet) : 0;
+      return {aid:own(a,"ID")||`${id}-${k+1}`, code:own(a,"Code"), desc:"", qty:num(own(a,"Quantity"))||1, gross:r2(net+ps), ps, net:r2(net), paid:0, denial:null}; });
+    const dx = [...ce.getElementsByTagName("Diagnosis")].map(d => [own(d,"Code"), ""]);
+    S.claims.push({id, patient:pt.id, payer:pid, card:own(ce,"MemberID"), dept:"–", doctor:actEls[0]?own(actEls[0],"Clinician"):"", enc:encDate,
+      dx:dx.length?dx:[["",""]], acts, status:resub?"Resubmitted":"Submitted", submitted:sent, events:[{d:encDate,t:"Encounter"},{d:sent,t:"Claim file found on eClaimLink"}],
+      remits:[], resubs:resub?[{d:sent,type:(resub.getElementsByTagName("Type")[0]||{}).textContent||"correction",note:"",amount:r2(claimNet),codes:[],outcome:null}]:[], writeOff:0, woReason:null,
+      pa:actEls.map(a=>own(a,"PriorAuthorizationID")).find(Boolean)||null});
+    added++;
+  });
+  return {added, updated, skipped};
+}
+function addAuthsFromXml(xml){
+  const doc = new DOMParser().parseFromString(xml,"application/xml");
+  const own = (el,t) => { const x = [...el.children].find(c => c.tagName === t); return x ? x.textContent.trim() : ""; };
+  let added = 0;
+  [...doc.getElementsByTagName("Authorization")].forEach(au => {
+    const id = own(au,"ID"); if (!id || S.auths.some(a => a.id === id)) return;
+    const pid = payerFrom(own(au,"PayerID")) || own(au,"PayerID");
+    const pt = findOrAddPatient({eid:own(au,"EmiratesIDNumber"), card:own(au,"MemberID"), payerId:pid});
+    const acts = [...au.getElementsByTagName("Activity")], dx = au.getElementsByTagName("Diagnosis")[0];
+    S.auths.unshift({id, patient:pt.id, payer:pid, dept:"–", code:acts.map(a=>own(a,"Code")).join(", "), desc:"", dx:dx?own(dx,"Code"):"",
+      requested:r2(acts.reduce((s,a)=>s+num(own(a,"Net")),0)), approved:0, status:"Pending", reqOn:dhpoToIso(own(au,"DateOrdered"))||TODAY, respOn:null, validTo:null, claim:null, note:"Found on eClaimLink"});
+    added++;
+  });
+  return added;
+}
+// Puts one eClaimLink file into this system's records, once
+function applyEclFile(key, type, xml, name){
+  if (S.posted[key]) return {done:false, msg:`already in your records since ${fmtD(S.posted[key])}`};
+  let msg;
+  if (type === "Claim.Submission"){ const r = addClaimsFromXml(xml); msg = `${r.added} claims added`+(r.updated?`, ${r.updated} resubmissions recorded`:"")+(r.skipped?`, ${r.skipped} already here`:""); }
+  else if (type === "Remittance.Advice"){ const r = importRa(xml,{quiet:true,source:"eClaimLink "+(name||key)}); msg = typeof r === "string" ? r : `AED ${aed(r.total)} posted to ${r.count} claims`+(r.unknown.length?`, ${r.unknown.length} claims not in your records`:""); }
+  else if (type === "Prior.Request"){ msg = `${addAuthsFromXml(xml)} approval requests added`; }
+  else if (type === "Prior.Authorization"){ msg = `${applyPriorAuth(xml)} approval replies recorded`; }
+  else return {done:false, msg:`${type} files are view only`};
+  S.posted[key] = TODAY; save();
+  return {done:true, msg};
+}
+
+/* ---------- eClaimLink files ---------- */
+const isoAgo = n => addDays(TODAY,-n);
+UI.ecl = {direction:"received", type:"all", status:"all", from:isoAgo(30), to:TODAY, name:"", archive:false, results:null, notes:[], report:null, busy:""};
+const fileKey = f => (f.archive ? "A" : "") + f.fileId;
+R.eclaimlink = () => {
+  if (!ECL()) return head("eClaimLink files","Browse every claim, remittance and prior authorization file on DHA eClaimLink, open any of them, and build reports.") +
+    `<section class="panel"><div class="empty" style="text-align:left">This page works when the website is opened from your clinic server with your eClaimLink web service login set (<span class="code">ECLAIMLINK_LOGIN</span> and <span class="code">ECLAIMLINK_PASSWORD</span>). The setup steps are in the README.</div></section>`;
+  const u = UI.ecl, res = u.results;
+  const TYPES = [["all","All types"],["Claim.Submission","Claim submissions"],["Remittance.Advice","Remittance advice"],["Prior.Request","Prior requests"],["Prior.Authorization","Prior authorizations"]];
+  const inRecords = res ? res.filter(f => S.posted[fileKey(f)]).length : 0;
+  return head("eClaimLink files",`Search everything sent or received on ${eclLabel()}. Searches cover up to 100 days, or one month in the archive (claims older than 24 months, authorizations older than 6).`) +
+  `<section class="panel"><form id="eclForm" class="form-grid">
+    <div class="field"><label for="eDir">Files</label><select id="eDir"><option value="received" ${u.direction==="received"?"selected":""}>Received from payers</option><option value="sent" ${u.direction==="sent"?"selected":""}>Sent by this facility</option></select></div>
+    <div class="field"><label for="eType">Type</label><select id="eType">${TYPES.map(t=>`<option value="${t[0]}" ${u.type===t[0]?"selected":""}>${t[1]}</option>`).join("")}</select></div>
+    <div class="field"><label for="eStatus">Download status</label><select id="eStatus"><option value="all">All</option><option value="new" ${u.status==="new"?"selected":""}>Not yet downloaded</option><option value="downloaded" ${u.status==="downloaded"?"selected":""}>Already downloaded</option></select></div>
+    <div class="field"><label for="eFrom">From</label><input type="date" id="eFrom" value="${u.from}" max="${TODAY}"></div>
+    <div class="field"><label for="eTo">To</label><input type="date" id="eTo" value="${u.to}" max="${TODAY}"></div>
+    <div class="field"><label for="eName">File name contains</label><input type="text" id="eName" value="${esc(u.name)}"></div>
+    <div class="field"><label style="display:flex;gap:6px;align-items:center;font-weight:500;color:var(--ink)"><input type="checkbox" id="eArch" ${u.archive?"checked":""}> Search the archive</label></div>
+    <div class="field"><button class="btn primary" type="submit" ${u.busy?"disabled":""}>${u.busy==="search"?"Searching…":"Search eClaimLink"}</button></div>
+  </form></section>
+  ${res ? `<section class="panel"><div class="panel-head"><div><h2>${res.length} file${res.length===1?"":"s"}</h2><p>${inRecords} already in your records${u.notes.length?" · "+esc(u.notes.join("; ")):""}${res.length>=500?" · eClaimLink returns at most 500 per search, narrow the dates":""}</p></div>
+    <div class="actions"><button class="btn" id="eReport" type="button" ${!res.length||u.busy?"disabled":""}>${u.busy==="report"?"Building report…":"Build report"}</button><button class="btn primary" id="eLoadAll" type="button" ${!res.length||u.busy||inRecords===res.length?"disabled":""}>${u.busy==="load"?"Loading…":"Add all to my records"}</button></div></div>
+    <div class="table-wrap"><table><thead><tr><th>Date</th><th>File</th><th>Type</th><th>${u.direction==="sent"?"To":"From"}</th><th class="num">Records</th><th>eClaimLink</th><th>My records</th></tr></thead><tbody>
+    ${res.map((f,i)=>`<tr class="click" data-eview="${i}" tabindex="0"><td class="mono muted">${esc(f.transactionDate||"")}</td><td class="mono">${esc(f.fileName||f.fileId)}</td><td><span class="code">${esc(f.type)}</span></td><td>${esc(payerLabel(u.direction==="sent"?f.receiver:f.sender))}</td><td class="num">${f.recordCount??"–"}</td><td>${pill(f.isDownloaded?"Downloaded":"New")}</td><td>${S.posted[fileKey(f)]?pill("Posted"):"–"}</td></tr>`).join("") || `<tr><td colspan="7" class="empty">No files match this search.</td></tr>`}
+    </tbody></table></div></section>` : `<div class="muted" style="font-size:12.5px">Choose what to look for and search. Opening a file here does not mark it as downloaded, so the Download from eClaimLink button still collects it.</div>`}
+  ${u.report ? reportHtml(u.report) : ""}`;
+};
+function reportHtml(r){
+  const pay = Object.entries(r.remittanceByPayer).sort((a,b)=>b[1].net-a[1].net);
+  const sub = Object.entries(r.submissionsByPayer).sort((a,b)=>b[1].net-a[1].net);
+  const codes = Object.entries(r.denialCodes).sort((a,b)=>b[1].amount-a[1].amount);
+  const tot = pay.reduce((s,[,v])=>({net:s.net+v.net,paid:s.paid+v.paid,denied:s.denied+v.denied,claims:s.claims+v.claims}),{net:0,paid:0,denied:0,claims:0});
+  return `<section class="panel"><div class="panel-head"><div><h2>Report</h2><p>${r.files} files opened${r.errors.length?` · ${r.errors.length} could not be opened`:""}${r.truncated?" · first 200 files only":""}</p></div><button class="btn sm" id="eReportCsv" type="button">Copy as CSV</button></div>
+  <div class="kpis">${Object.entries(r.byType).map(([t,v])=>`<div class="kpi"><span class="eyebrow">${esc(t)}</span><span class="v">${v.files}<small>files</small></span><span class="s">${v.records} records</span></div>`).join("")}
+    ${pay.length?`<div class="kpi"><span class="eyebrow">Denied in remittances</span><span class="v">${tot.net?(100*tot.denied/tot.net).toFixed(1):"0.0"}<small>%</small></span><span class="s">AED ${aed(tot.denied)} of ${aed(tot.net)}</span></div>`:""}
+    ${r.priorAuthorizations.approved+r.priorAuthorizations.rejected?`<div class="kpi"><span class="eyebrow">Prior authorizations</span><span class="v">${r.priorAuthorizations.approved}<small>approved</small></span><span class="s">${r.priorAuthorizations.rejected} rejected · AED ${aed(r.priorAuthorizations.approvedAmount)}</span></div>`:""}</div>
+  ${pay.length?`<h3>Remittances by payer</h3><div class="table-wrap"><table><thead><tr><th>Payer</th><th class="num">Files</th><th class="num">Claims</th><th class="num">Claimed AED</th><th class="num">Paid</th><th class="num">Denied</th><th class="num">Denial rate</th></tr></thead><tbody>
+    ${pay.map(([k,v])=>`<tr><td><b>${esc(payerLabel(k))}</b> <span class="muted mono">${esc(k)}</span></td><td class="num">${v.files}</td><td class="num">${v.claims}</td><td class="num">${aed(v.net)}</td><td class="num">${aed(v.paid)}</td><td class="num">${aed(v.denied)}</td><td class="num">${v.net?(100*v.denied/v.net).toFixed(1)+"%":"–"}</td></tr>`).join("")}
+    </tbody><tfoot><tr><td>All payers</td><td></td><td class="num">${tot.claims}</td><td class="num">${aed(tot.net)}</td><td class="num">${aed(tot.paid)}</td><td class="num">${aed(tot.denied)}</td><td class="num">${tot.net?(100*tot.denied/tot.net).toFixed(1)+"%":"–"}</td></tr></tfoot></table></div>`:""}
+  ${codes.length?`<h3>Denial codes</h3><div class="table-wrap"><table><thead><tr><th>Code</th><th>Meaning</th><th class="num">Files</th><th class="num">Denied AED</th></tr></thead><tbody>
+    ${codes.map(([k,v])=>`<tr><td><span class="code">${esc(k)}</span></td><td class="wrap-cell">${esc(DENIALS[k]||"")}</td><td class="num">${v.count}</td><td class="num">${aed(v.amount)}</td></tr>`).join("")}</tbody></table></div>`:""}
+  ${sub.length?`<h3>Claims submitted by payer</h3><div class="table-wrap"><table><thead><tr><th>Payer</th><th class="num">Files</th><th class="num">Claims</th><th class="num">Resubmissions</th><th class="num">Net AED</th></tr></thead><tbody>
+    ${sub.map(([k,v])=>`<tr><td><b>${esc(payerLabel(k))}</b> <span class="muted mono">${esc(k)}</span></td><td class="num">${v.files}</td><td class="num">${v.claims}</td><td class="num">${v.resubmissions}</td><td class="num">${aed(v.net)}</td></tr>`).join("")}</tbody></table></div>`:""}
+  </section>`;
+}
+function reportCsv(r){
+  const L = [["Section","Payer / code","Files","Claims","Claimed or net AED","Paid AED","Denied AED"].join(",")];
+  Object.entries(r.remittanceByPayer).forEach(([k,v])=>L.push(["Remittances",`"${payerLabel(k)} (${k})"`,v.files,v.claims,v.net.toFixed(2),v.paid.toFixed(2),v.denied.toFixed(2)].join(",")));
+  Object.entries(r.denialCodes).forEach(([k,v])=>L.push(["Denial code",k,v.count,"","","",v.amount.toFixed(2)].join(",")));
+  Object.entries(r.submissionsByPayer).forEach(([k,v])=>L.push(["Submissions",`"${payerLabel(k)} (${k})"`,v.files,v.claims,v.net.toFixed(2),"",""].join(",")));
+  return L.join("\n");
+}
+async function eclViewDlg(i){
+  const f = UI.ecl.results[i];
+  openDlg(dlgHead(`<span class="mono" style="font-size:14px">${esc(f.fileName||f.fileId)}</span>`, "Opening from eClaimLink…") + `<div class="dlg-body"><div class="empty">Loading the file…</div></div>`);
+  let v;
+  try { v = await api(`/eclaimlink/remote/${encodeURIComponent(f.fileId)}${f.archive?"?archive=1":""}`); }
+  catch(e){ $("#dlgInner").querySelector(".dlg-body").innerHTML = `<div class="result bad">${esc(e.message)}</div>`; return; }
+  const s = v.summary, t = s.totals, key = fileKey(f), posted = S.posted[key];
+  const money = n => "AED " + aed(n);
+  const facts = s.type==="Remittance.Advice" ? [["Claims",t.claims],["Claimed",money(t.net)],["Paid",money(t.paid)],["Denied",money(t.denied)],["Payment ref.",t.paymentRefs.join(", ")||"–"]]
+    : s.type==="Claim.Submission" ? [["Claims",t.claims],["Gross",money(t.gross)],["Net",money(t.net)],["Resubmissions",t.resubmissions]]
+    : s.type==="Prior.Authorization" ? [["Replies",t.authorizations],["Approved",t.approved],["Rejected",t.rejected],["Approved amount",money(t.approvedAmount)]]
+    : s.type==="Prior.Request" ? [["Requests",t.requests],["Requested",money(t.net)]] : [];
+  const rows = s.rows.slice(0,300);
+  const table = s.type==="Remittance.Advice" ? `<thead><tr><th>Claim</th><th>Payer ref.</th><th>Settled</th><th class="num">Claimed</th><th class="num">Paid</th><th class="num">Denied</th><th>Codes</th><th>In my records</th></tr></thead><tbody>${rows.map(r=>`<tr><td class="mono">${esc(r.id)}</td><td class="mono muted">${esc(r.payerRef)}</td><td class="muted">${esc(r.settlement)}</td><td class="num">${aed(r.net)}</td><td class="num">${aed(r.paid)}</td><td class="num">${r.denied?aed(r.denied):"–"}</td><td>${r.denialCodes.map(k=>`<span class="code" title="${esc(DENIALS[k]||"")}">${esc(k)}</span>`).join(" ")}</td><td>${claimById(r.id)?"Yes":"No"}</td></tr>`).join("")}</tbody>`
+    : s.type==="Claim.Submission" ? `<thead><tr><th>Claim</th><th>Member</th><th>Payer</th><th class="num">Activities</th><th class="num">Gross</th><th class="num">Net</th><th>Resubmission</th><th>In my records</th></tr></thead><tbody>${rows.map(r=>`<tr><td class="mono">${esc(r.id)}</td><td class="mono">${esc(r.member)}</td><td>${esc(payerLabel(r.payer))}</td><td class="num">${r.activities}</td><td class="num">${aed(r.gross)}</td><td class="num">${aed(r.net)}</td><td>${esc(r.resubmission||"–")}</td><td>${claimById(r.id)?"Yes":"No"}</td></tr>`).join("")}</tbody>`
+    : s.type==="Prior.Authorization" ? `<thead><tr><th>Request</th><th>Result</th><th>Payer ref.</th><th class="num">Approved AED</th><th>Valid</th><th>Comments</th></tr></thead><tbody>${rows.map(r=>`<tr><td class="mono">${esc(r.id)}</td><td>${pill(/^y/i.test(r.result)?"Approved":"Rejected")}</td><td class="mono muted">${esc(r.payerRef)}</td><td class="num">${aed(r.approved)}</td><td class="muted">${esc(r.start)} – ${esc(r.end)}</td><td class="wrap-cell">${esc([r.denialCode,r.comments].filter(Boolean).join(": "))}</td></tr>`).join("")}</tbody>`
+    : s.type==="Prior.Request" ? `<thead><tr><th>Request</th><th>Member</th><th>Payer</th><th class="num">Activities</th><th class="num">Requested AED</th></tr></thead><tbody>${rows.map(r=>`<tr><td class="mono">${esc(r.id)}</td><td class="mono">${esc(r.member)}</td><td>${esc(payerLabel(r.payer))}</td><td class="num">${r.activities}</td><td class="num">${aed(r.net)}</td></tr>`).join("")}</tbody>` : "";
+  const applyLabel = {"Claim.Submission":"Add these claims to my records","Remittance.Advice":"Post these payments to my claims","Prior.Request":"Add these approval requests","Prior.Authorization":"Record these approval replies"}[s.type];
+  openDlg(dlgHead(`<span class="mono" style="font-size:14px">${esc(v.fileName||f.fileName||f.fileId)}</span>`, `${esc(s.type||"Unknown type")} · ${esc(payerLabel(s.header.sender))} → ${esc(payerLabel(s.header.receiver))} · ${esc(s.header.date)}${s.header.disposition?" · "+esc(s.header.disposition):""}`,
+    `<button class="btn sm" data-act="copyXml" type="button">Copy XML</button>`) +
+  `<div class="dlg-body">
+    ${facts.length?`<dl class="kv">${facts.map(([k,val])=>`<div><dt>${k}</dt><dd>${esc(val)}</dd></div>`).join("")}</dl>`:""}
+    ${applyLabel?`<div class="actions">${posted?`<span class="muted">In your records since ${fmtD(posted)}.</span>`:`<button class="btn primary" data-eapply type="button">${applyLabel}</button>`}</div>`:""}
+    ${table?`<div class="table-wrap"><table>${table}</table></div>${s.rows.length>300?`<div class="muted">Showing 300 of ${s.rows.length} records.</div>`:""}`:""}
+    <details><summary>File contents (XML)</summary><textarea id="xmlOut" readonly style="min-height:300px;margin-top:8px">${esc(v.xml)}</textarea></details>
+  </div>`);
+  const b = $("#dlgInner").querySelector("[data-eapply]");
+  if (b) b.onclick = () => { const r = applyEclFile(key, s.type, v.xml, v.fileName||f.fileName); toast(r.msg.charAt(0).toUpperCase()+r.msg.slice(1)); render(); eclViewDlg(i); };
+}
+function bindEcl(v){
+  const u = UI.ecl;
+  const f = $("#eclForm"); if (!f) return;
+  f.onsubmit = async e => { e.preventDefault();
+    Object.assign(u, {direction:$("#eDir").value, type:$("#eType").value, status:$("#eStatus").value, from:$("#eFrom").value, to:$("#eTo").value, name:$("#eName").value.trim(), archive:$("#eArch").checked, busy:"search", report:null});
+    render();
+    try { const q = new URLSearchParams({direction:u.direction, type:u.type, status:u.status, from:u.from, to:u.to}); if (u.name) q.set("name",u.name); if (u.archive) q.set("archive","1");
+      const r = await api("/eclaimlink/search?"+q); u.results = r.files.map(x=>({...x, archive:u.archive})); u.notes = r.notes; }
+    catch(err){ toast(err.message); }
+    u.busy = ""; render(); };
+  v.querySelectorAll("[data-eview]").forEach(el => { el.onclick = () => eclViewDlg(Number(el.dataset.eview)); el.onkeydown = e => { if (e.key==="Enter") eclViewDlg(Number(el.dataset.eview)); }; });
+  const rep = $("#eReport");
+  if (rep) rep.onclick = async () => { u.busy = "report"; render();
+    try { u.report = await api("/eclaimlink/report",{files:u.results.map(x=>({fileId:x.fileId, archive:x.archive}))}); } catch(err){ toast(err.message); }
+    u.busy = ""; render(); };
+  const csv = $("#eReportCsv");
+  if (csv) csv.onclick = () => { const t = reportCsv(u.report); try { navigator.clipboard.writeText(t).then(()=>toast("Report copied as CSV"),()=>{}); } catch(e){} };
+  const all = $("#eLoadAll");
+  if (all) all.onclick = async () => {
+    const order = {"Claim.Submission":0,"Prior.Request":1,"Remittance.Advice":2,"Prior.Authorization":3};
+    const todo = u.results.filter(x => !S.posted[fileKey(x)] && x.type in order)
+      .sort((a,b) => order[a.type]-order[b.type] || dhpoKey(a.transactionDate).localeCompare(dhpoKey(b.transactionDate)));
+    u.busy = "load"; render();
+    let ok = 0; const fails = [];
+    for (const x of todo){
+      try { const v2 = await api(`/eclaimlink/remote/${encodeURIComponent(x.fileId)}${x.archive?"?archive=1":""}`); if (applyEclFile(fileKey(x), v2.summary.type, v2.xml, x.fileName).done) ok++; }
+      catch(err){ fails.push(x.fileName||x.fileId); }
+    }
+    u.busy = ""; render();
+    toast(`Added ${ok} file${ok===1?"":"s"} to your records`+(fails.length?`. ${fails.length} could not be opened`:""));
+  };
+}
+const dhpoKey = d => d ? `${d.slice(6,10)}${d.slice(3,5)}${d.slice(0,2)}${d.slice(11)}` : "";
+
 /* ---------- boot ---------- */
+$("#facilityBtn").onclick = facilityDlg;
 $("#nav").addEventListener("click", e => { const b = e.target.closest("[data-go]"); if (b) go(b.dataset.go); });
 let resetArm = 0;
-$("#resetBtn").onclick = () => { const b = $("#resetBtn"); if (Date.now()-resetArm < 4000){ S = seed(); UI.verifyResult=null; save(); render(); b.textContent="Reset sample data"; toast("Sample data restored"); resetArm=0; } else { resetArm = Date.now(); b.textContent = "Click again to confirm"; setTimeout(()=>{ b.textContent="Reset sample data"; }, 4000); } };
+$("#resetBtn").onclick = () => { const b = $("#resetBtn"); if (Date.now()-resetArm < 4000){ S = emptyState(); UI.verifyResult=null; save(); render(); b.textContent="Clear all data"; toast("All records on this computer were cleared"); resetArm=0; } else { resetArm = Date.now(); b.textContent = "Click again to clear everything"; setTimeout(()=>{ b.textContent="Clear all data"; }, 4000); } };
 window.addEventListener("hashchange", () => { const h = location.hash.slice(1); if (h && h!==current && R[h]) { current = h; render(); } });
 save(); render();
 if (API_BASE) bootLive();

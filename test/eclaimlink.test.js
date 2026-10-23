@@ -49,7 +49,7 @@ test("facility licence and payer IDs are swapped in before upload", () => {
 
 test("parseFileList reads the GetNewTransactions list", () => {
   const l = parseFileList(`<Files><File FileID='11' FileName='ra.xml' SenderID='A001' ReceiverID="DHA-F-1" TransactionDate='23/10/2026 09:00' RecordCount='3' IsDownloaded='False' /></Files>`);
-  assert.deepEqual(l, [{ fileId: "11", fileName: "ra.xml", sender: "A001", receiver: "DHA-F-1", transactionDate: "23/10/2026 09:00", recordCount: 3 }]);
+  assert.deepEqual(l, [{ fileId: "11", fileName: "ra.xml", sender: "A001", receiver: "DHA-F-1", transactionDate: "23/10/2026 09:00", recordCount: 3, isDownloaded: false }]);
 });
 
 // A stand-in for the eClaimLink SOAP endpoint, answering the four post office operations
@@ -106,4 +106,61 @@ test("live mode without credentials reports a clear error", async () => {
   const up = await ecl.upload(ctx, { xml: claimXml("CLM-4") });
   assert.equal(up.ok, false);
   assert.match(up.errorMessage, /ECLAIMLINK_LOGIN/);
+});
+
+test("browse: search sent and received files, open one, build a report (test mode)", async () => {
+  const ctx = { db: openDb(":memory:"), cfg, env: { ECLAIMLINK_MODE: "mock" } };
+  await ecl.upload(ctx, { xml: claimXml("CLM-10") });
+  await ecl.upload(ctx, { xml: claimXml("CLM-11", true) });
+  const today = new Date().toISOString().slice(0, 10), from = new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10);
+  const recvNew = await ecl.search(ctx, { direction: "received", type: "all", status: "new", from, to: today });
+  assert.equal(recvNew.files.length, 2);
+  assert.ok(recvNew.files.every(f => f.type === "Remittance.Advice" && f.isDownloaded === false));
+  await ecl.sync(ctx);
+  const recvDone = await ecl.search(ctx, { direction: "received", type: "Remittance.Advice", status: "downloaded", from, to: today });
+  assert.equal(recvDone.files.length, 2);
+  const sent = await ecl.search(ctx, { direction: "sent", type: "all", status: "all", from, to: today });
+  assert.deepEqual(sent.files.map(f => f.type), ["Claim.Submission", "Claim.Submission"]);
+  const v = await ecl.view(ctx, sent.files[0].fileId);
+  assert.equal(v.summary.type, "Claim.Submission");
+  assert.equal(v.summary.totals.net, 264);
+  const rep = await ecl.report(ctx, [...recvDone.files, ...sent.files].map(f => ({ fileId: f.fileId })));
+  assert.equal(rep.files, 4);
+  assert.equal(rep.byType["Remittance.Advice"].records, 2);
+  assert.equal(rep.submissionsByPayer.DAM.resubmissions, 1);
+  assert.equal(rep.remittanceByPayer.DAM.claims, 2);
+  assert.equal(rep.errors.length, 0);
+});
+
+test("browse: date range limits follow the DHPO rules", async () => {
+  const ctx = { db: openDb(":memory:"), cfg, env: { ECLAIMLINK_MODE: "mock" } };
+  await assert.rejects(ecl.search(ctx, { direction: "received", from: "2026-01-01", to: "2026-06-30" }), /100 days/);
+  await assert.rejects(ecl.search(ctx, { direction: "received", from: "2024-01-01", to: "2024-03-01", archive: true }), /one month/);
+});
+
+test("browse: live SearchTransactions sends the spec parameters and reads foundTransactions", async () => {
+  const bodies = [];
+  const srv = createServer((req, res) => { let b = ""; req.on("data", c => b += c); req.on("end", () => {
+    bodies.push({ url: req.url, op: req.headers.soapaction.replace(/"/g, "").split("/").pop(), body: b });
+    const list = tag(b, "transactionStatus") === "1" ? "<Files><File FileID='7' FileName='ra7.xml' SenderID='A001' ReceiverID='DHA-F-1' TransactionDate='01/10/2026 08:00:00' RecordCount='4' IsDownloaded='False' /></Files>" : "<Files></Files>";
+    res.end(`<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"><soap:Body><SearchTransactionsResponse><SearchTransactionsResult>0</SearchTransactionsResult><foundTransactions>${list.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</foundTransactions><errorMessage/></SearchTransactionsResponse></soap:Body></soap:Envelope>`);
+  }); });
+  await new Promise(r => srv.listen(0, r));
+  const base = `http://127.0.0.1:${srv.address().port}`;
+  const env = { ECLAIMLINK_MODE: "live", ECLAIMLINK_URL: `${base}/ValidateTransactions.asmx`, ECLAIMLINK_ARCHIVE_URL: `${base}/ClaimsAndAuthorizationsArchive.asmx`,
+    ECLAIMLINK_LOGIN: "u", ECLAIMLINK_PASSWORD: "p", FACILITY_LICENSE: "DHA-F-1" };
+  try {
+    const r = await ecl.search({ db: openDb(":memory:"), cfg, env }, { direction: "received", type: "Remittance.Advice", status: "all", from: "2026-09-01", to: "2026-10-01" });
+    assert.deepEqual(r.files.map(f => [f.fileId, f.type, f.isDownloaded, f.recordCount]), [["7", "Remittance.Advice", false, 4]]);
+    const b = bodies[0].body;
+    assert.equal(tag(b, "direction"), "2");
+    assert.equal(tag(b, "transactionID"), "8");
+    assert.equal(tag(b, "callerLicense"), "DHA-F-1");
+    assert.equal(tag(b, "transactionFromDate"), "01/09/2026 00:00:00");
+    assert.equal(tag(b, "transactionToDate"), "01/10/2026 23:59:59");
+    assert.match(b, /<ePartner xsi:nil="true" \/>/);
+    assert.equal(tag(b, "minRecordCount"), "-1");
+    await ecl.search({ db: openDb(":memory:"), cfg, env }, { direction: "sent", type: "Claim.Submission", status: "new", from: "2024-01-01", to: "2024-01-20", archive: true });
+    assert.equal(bodies.at(-1).url, "/ClaimsAndAuthorizationsArchive.asmx");
+  } finally { srv.close(); }
 });

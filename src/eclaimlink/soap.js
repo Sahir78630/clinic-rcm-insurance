@@ -4,6 +4,8 @@
 // the WSDL eClaimLink gives your facility: run `npm run eclaimlink:wsdl` from the clinic network.
 
 export const DEFAULT_URL = "https://dhpo.eclaimlink.ae/ValidateTransactions.asmx";
+// Files older than the archiving period (24 months for claims, 6 for authorizations) live here
+export const DEFAULT_ARCHIVE_URL = "https://dhpo.eclaimlink.ae/ClaimsAndAuthorizationsArchive.asmx";
 export const DEFAULT_NS = "https://www.shafafiya.org/v2/";
 
 export const xmlEsc = s => String(s ?? "").replace(/[<>&'"]/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", "'": "&apos;", '"': "&quot;" }[c]));
@@ -31,6 +33,9 @@ export function settings(env = process.env) {
     login: env.ECLAIMLINK_LOGIN || "",
     pwd: env.ECLAIMLINK_PASSWORD || "",
     timeout: Number(env.ECLAIMLINK_TIMEOUT_MS) || 60000,
+    archiveUrl: env.ECLAIMLINK_ARCHIVE_URL || DEFAULT_ARCHIVE_URL,
+    archiveSearchOp: env.ECLAIMLINK_ARCHIVE_SEARCH_OP || "SearchTransactions",
+    archiveDownloadOp: env.ECLAIMLINK_ARCHIVE_DOWNLOAD_OP || "DownloadTransactionFile",
   };
 }
 
@@ -39,7 +44,7 @@ export function settings(env = process.env) {
  * The post office returns an int result: 0 or above is success (above 0 means success with
  * warnings, for example a file accepted with an error report), negative is failure.
  */
-export async function call(op, params, outFields, { env = process.env, fetchImpl = fetch } = {}) {
+export async function call(op, params, outFields, { env = process.env, fetchImpl = fetch, url, allow = [] } = {}) {
   const s = settings(env);
   if (!s.login || !s.pwd) throw new EClaimLinkError(op, "config", "ECLAIMLINK_LOGIN and ECLAIMLINK_PASSWORD are not set");
   const body = { login: s.login, pwd: s.pwd, ...params };
@@ -47,11 +52,11 @@ export async function call(op, params, outFields, { env = process.env, fetchImpl
 <soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
   <soap:Body>
     <${op} xmlns="${xmlEsc(s.ns)}">
-${Object.entries(body).map(([k, v]) => `      <${k}>${xmlEsc(v)}</${k}>`).join("\n")}
+${Object.entries(body).map(([k, v]) => v === null ? `      <${k} xsi:nil="true" />` : `      <${k}>${xmlEsc(v)}</${k}>`).join("\n")}
     </${op}>
   </soap:Body>
 </soap:Envelope>`;
-  const res = await fetchImpl(s.url, {
+  const res = await fetchImpl(url || s.url, {
     method: "POST",
     headers: { "content-type": "text/xml; charset=utf-8", soapaction: `"${s.ns}${op}"` },
     body: envelope, signal: AbortSignal.timeout(s.timeout),
@@ -64,6 +69,6 @@ ${Object.entries(body).map(([k, v]) => `      <${k}>${xmlEsc(v)}</${k}>`).join("
   if (resp === null) throw new EClaimLinkError(op, "parse", "response did not contain " + op + "Response");
   const result = Number(tag(resp, `${op}Result`));
   const out = Object.fromEntries(outFields.map(f => [f, xmlUnesc(tag(resp, f) ?? "")]));
-  if (!Number.isFinite(result) || result < 0) throw new EClaimLinkError(op, result, out.errorMessage);
+  if (!Number.isFinite(result) || (result < 0 && !allow.includes(result))) throw new EClaimLinkError(op, result, out.errorMessage);
   return { result, out };
 }

@@ -1,4 +1,4 @@
-import { call, tag, tags, xmlUnesc } from "./soap.js";
+import { call, settings, tag, tags, xmlUnesc } from "./soap.js";
 
 // A transport moves files to and from eClaimLink. "live" talks to the real web service,
 // "mock" simulates it inside the clinic database so the whole workflow can be tried without credentials.
@@ -31,6 +31,24 @@ export function liveTransport(opts) {
     async markDownloaded(fileId) {
       await call("SetTransactionDownloaded", { [fileParam]: fileId }, ["errorMessage"], opts);
     },
+    // SearchTransactions: q = { direction 1|2, type, status 1|2, from, to (dd/MM/yyyy HH:mm:ss), name, callerLicense, partner, archive }
+    async search(q) {
+      const s = settings(opts.env || process.env);
+      const op = q.archive ? s.archiveSearchOp : "SearchTransactions";
+      const { result, out } = await call(op, {
+        direction: q.direction, callerLicense: q.callerLicense || null, ePartner: q.partner || null,
+        transactionID: q.type, transactionStatus: q.status, transactionFileName: q.name || null,
+        transactionFromDate: q.from || null, transactionToDate: q.to || null, minRecordCount: -1, maxRecordCount: -1,
+      }, ["foundTransactions", "errorMessage"], { ...opts, url: q.archive ? s.archiveUrl : undefined, allow: [-10] });
+      return { files: result === -10 ? [] : parseFileList(out.foundTransactions), note: result === -10 ? out.errorMessage || "No matching files" : null };
+    },
+    // Opens a file without flagging it as downloaded, so the inbox still offers it
+    async view(fileId, { archive } = {}) {
+      const s = settings(opts.env || process.env);
+      const { out } = await call(archive ? s.archiveDownloadOp : "DownloadTransactionFile", { [fileParam]: fileId }, ["fileName", "file", "errorMessage"],
+        { ...opts, url: archive ? s.archiveUrl : undefined });
+      return { fileName: out.fileName || null, xml: Buffer.from(out.file, "base64").toString("utf8") };
+    },
   };
 }
 
@@ -44,10 +62,11 @@ function decodeReport(b64) {
 
 // GetNewTransactions returns a list like <Files><File FileID='…' FileName='…' SenderID='…' … /></Files>
 export function parseFileList(xml) {
+  const flag = v => v == null ? null : /^true$/i.test(v);
   return [...String(xml || "").matchAll(/<File\b([^>]*?)\/?>/g)].map(m => {
     const attrs = Object.fromEntries([...m[1].matchAll(/([\w:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g)].map(a => [a[1].toLowerCase(), xmlUnesc(a[2] ?? a[3])]));
     return { fileId: attrs.fileid, fileName: attrs.filename, sender: attrs.senderid, receiver: attrs.receiverid,
-      transactionDate: attrs.transactiondate, recordCount: Number(attrs.recordcount) || null };
+      transactionDate: attrs.transactiondate, recordCount: Number(attrs.recordcount) || null, isDownloaded: flag(attrs.isdownloaded) };
   }).filter(f => f.fileId);
 }
 
@@ -126,14 +145,44 @@ ${tags(a, "Activity").map(x => `    <Activity>
     },
     async listNew() {
       return db.prepare("SELECT id, file_name, sender, receiver, record_count, created_at FROM eclaimlink_mock_inbox WHERE downloaded = 0 ORDER BY id").all()
-        .map(r => ({ fileId: String(r.id), fileName: r.file_name, sender: r.sender, receiver: r.receiver, transactionDate: r.created_at, recordCount: r.record_count }));
+        .map(r => ({ fileId: `M${r.id}`, fileName: r.file_name, sender: r.sender, receiver: r.receiver, transactionDate: r.created_at, recordCount: r.record_count }));
     },
     async download(fileId) {
-      const r = db.prepare("SELECT file_name, xml FROM eclaimlink_mock_inbox WHERE id = ?").get(Number(fileId));
+      const r = db.prepare("SELECT file_name, xml FROM eclaimlink_mock_inbox WHERE id = ?").get(Number(String(fileId).replace(/^M/, "")));
       return { fileName: r.file_name, xml: r.xml };
     },
     async markDownloaded(fileId) {
-      db.prepare("UPDATE eclaimlink_mock_inbox SET downloaded = 1 WHERE id = ?").run(Number(fileId));
+      db.prepare("UPDATE eclaimlink_mock_inbox SET downloaded = 1 WHERE id = ?").run(Number(String(fileId).replace(/^M/, "")));
+    },
+    // Received files are the simulated inbox; sent files are the accepted uploads in the file log
+    async search(q) {
+      const types = { 2: "Claim.Submission", 4: "Person.Register", 8: "Remittance.Advice", 16: "Prior.Request", 32: "Prior.Authorization" };
+      const want = q.type === -1 ? null : types[q.type];
+      const toIso = d => d ? `${d.slice(6, 10)}-${d.slice(3, 5)}-${d.slice(0, 2)} ${d.slice(11) || "00:00:00"}` : null;
+      const from = toIso(q.from), to = toIso(q.to);
+      const rows = q.direction === 2
+        ? db.prepare("SELECT 'M' || id AS fid, id, file_name, sender, receiver, record_count, created_at, downloaded, xml FROM eclaimlink_mock_inbox").all()
+        : db.prepare("SELECT 'S' || id AS fid, id, file_name, sender, receiver, record_count, created_at, 1 AS downloaded, xml FROM eclaimlink_files WHERE direction = 'out' AND result_code >= 0").all();
+      const files = rows.filter(r => {
+        const type = (r.xml.match(/<([A-Za-z][\w.]*)[\s>]/) || [])[1];
+        if (want && type !== want) return false;
+        if (q.status === 1 && r.downloaded) return false;
+        if (q.status === 2 && !r.downloaded) return false;
+        if (from && r.created_at < from) return false;
+        if (to && r.created_at > to) return false;
+        if (q.name && !r.file_name.toLowerCase().includes(q.name.toLowerCase())) return false;
+        return true;
+      }).map(r => { const [y, m, d] = r.created_at.slice(0, 10).split("-");
+        return { fileId: r.fid, fileName: r.file_name, sender: r.sender, receiver: r.receiver, transactionDate: `${d}/${m}/${y} ${r.created_at.slice(11)}`, recordCount: r.record_count, isDownloaded: Boolean(r.downloaded) }; });
+      return { files: q.archive ? [] : files, note: q.archive ? "The archive is empty in test mode" : null };
+    },
+    async view(fileId) {
+      const id = Number(String(fileId).slice(1));
+      const r = String(fileId)[0] === "S"
+        ? db.prepare("SELECT file_name, xml FROM eclaimlink_files WHERE id = ?").get(id)
+        : db.prepare("SELECT file_name, xml FROM eclaimlink_mock_inbox WHERE id = ?").get(id);
+      if (!r) throw Object.assign(new Error("File not found"), { code: 404 });
+      return { fileName: r.file_name, xml: r.xml };
     },
   };
 }
