@@ -557,6 +557,7 @@ R.claims = () => {
   const list = S.claims.filter(c => {
     const p = patient(c.patient);
     if (q && !(c.id.toLowerCase().includes(q) || p.name.toLowerCase().includes(q) || c.card.toLowerCase().includes(q))) return false;
+    if (UI.claimTpa && (c.tpa||"") !== UI.claimTpa) return false;
     if (UI.claimPayer && c.payer !== UI.claimPayer) return false;
     if (UI.claimStatus && status(c) !== UI.claimStatus) return false;
     if (UI.claimDept && c.dept !== UI.claimDept) return false;
@@ -574,7 +575,8 @@ R.claims = () => {
   (drafts.length ? `<div class="result ${nBlocked?"warn":"ok"}" style="margin-bottom:12px"><div><b>Claim check:</b> ${ready.length} of ${drafts.length} draft claims are ready to submit${nBlocked?`. ${nBlocked} ha${nBlocked===1?"s":"ve"} errors and will not be sent until fixed. <button class="btn sm" id="showBlocked" type="button">Show them</button>`:"."}</div></div>` : "") +
   `<div class="filters">
     <input type="text" id="fq" placeholder="Search claim, patient or card" value="${esc(UI.claimQ)}" style="flex:1 1 220px">
-    <select id="fpayer"><option value="">All payers</option>${PAYERS.map(p=>`<option value="${p.id}" ${UI.claimPayer===p.id?"selected":""}>${esc(p.name)}</option>`).join("")}</select>
+    <select id="ftpa" title="TPA the claim file was sent to"><option value="">All TPAs</option>${[...new Set(S.claims.map(c=>c.tpa).filter(Boolean))].sort().map(t=>`<option value="${esc(t)}" ${UI.claimTpa===t?"selected":""}>${esc(payerText(t))}</option>`).join("")}</select>
+    <select id="fpayer"><option value="">All payers</option>${[...new Set([...PAYERS.map(p=>p.id), ...S.claims.filter(c=>!UI.claimTpa||c.tpa===UI.claimTpa).map(c=>c.payer)])].filter(Boolean).sort((a,b)=>payerText(a).localeCompare(payerText(b))).map(p=>`<option value="${esc(p)}" ${UI.claimPayer===p?"selected":""}>${esc(payerText(p))}</option>`).join("")}</select>
     <select id="fstatus"><option value="">All statuses</option>${STS.map(s=>`<option ${UI.claimStatus===s?"selected":""}>${s}</option>`).join("")}</select>
     <select id="fdept"><option value="">All departments</option>${Object.keys(DEPTS).map(d=>`<option ${UI.claimDept===d?"selected":""}>${esc(d)}</option>`).join("")}</select>
     <label class="muted" style="display:flex;gap:6px;align-items:center;font-size:12.5px">Visit date <input type="date" id="ffrom" value="${UI.claimFrom}" aria-label="Visit date from"> to <input type="date" id="fto" value="${UI.claimTo}" aria-label="Visit date to"></label>
@@ -1258,7 +1260,7 @@ function importRa(xml, opts={}){
 function bindView(){
   const v = $("#view");
   const am = $("#actMonths"); if (am) am.onchange = () => { UI.actMonths = Number(am.value); render(); };
-  v.querySelectorAll("[data-go]").forEach(b=>b.onclick=()=>{ if (b.dataset.status){ UI.claimStatus=b.dataset.status; UI.claimPayer=""; UI.claimQ=""; UI.claimDept=""; UI.claimFrom=""; UI.claimTo=""; } go(b.dataset.go); });
+  v.querySelectorAll("[data-go]").forEach(b=>b.onclick=()=>{ if (b.dataset.status){ UI.claimStatus=b.dataset.status; UI.claimPayer=""; UI.claimTpa=""; UI.claimQ=""; UI.claimDept=""; UI.claimFrom=""; UI.claimTo=""; } go(b.dataset.go); });
   v.querySelectorAll("[data-claim]").forEach(el=>{ el.onclick=()=>claimDlg(el.dataset.claim); el.onkeydown=e=>{ if(e.key==="Enter") claimDlg(el.dataset.claim); }; });
   v.querySelectorAll("[data-ra]").forEach(el=>{ el.onclick=()=>raDlg(el.dataset.ra); el.onkeydown=e=>{ if(e.key==="Enter") raDlg(el.dataset.ra); }; });
   v.querySelectorAll("[data-newpa]").forEach(b=>b.onclick=()=>newPaDlg(b.dataset.newpa,b.dataset.dept));
@@ -1280,6 +1282,7 @@ function bindView(){
   if (current==="claims"){
     const q=$("#fq"); q.oninput=()=>{ UI.claimQ=q.value; const pos=q.selectionStart; render(); const n=$("#fq"); n.focus(); n.setSelectionRange(pos,pos); };
     $("#fpayer").onchange=e=>{UI.claimPayer=e.target.value;render();};
+    $("#ftpa").onchange=e=>{UI.claimTpa=e.target.value;UI.claimPayer="";render();};
     $("#fstatus").onchange=e=>{UI.claimStatus=e.target.value;render();};
     $("#fdept").onchange=e=>{UI.claimDept=e.target.value;render();};
     $("#ffrom").onchange=e=>{UI.claimFrom=e.target.value;render();};
@@ -1288,7 +1291,7 @@ function bindView(){
     $("#importClaims").onclick=claimsImportDlg;
     $("#checkAll").onclick=checkAllDlg;
     $("#claimsXml").onclick=()=>downloadClaimsXml((UI.claimList||[]).map(claimById).filter(Boolean));
-    const sb=$("#showBlocked"); if (sb) sb.onclick=()=>{ UI.claimStatus="Draft"; UI.claimPayer=""; UI.claimQ=""; UI.claimDept=""; UI.claimFrom=""; UI.claimTo=""; render(); };
+    const sb=$("#showBlocked"); if (sb) sb.onclick=()=>{ UI.claimStatus="Draft"; UI.claimPayer=""; UI.claimTpa=""; UI.claimQ=""; UI.claimDept=""; UI.claimFrom=""; UI.claimTo=""; render(); };
     $("#submitDrafts").onclick=async e=>{ const d=S.claims.filter(c=>c.status==="Draft"&&!blocked(c));
       if (!ECL()){ d.forEach(submitClaim); return done(`Submitted ${d.length} claims to payers`); }
       e.target.disabled=true; e.target.textContent="Sending to eClaimLink…";
