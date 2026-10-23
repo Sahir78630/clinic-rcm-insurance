@@ -723,6 +723,34 @@ const ACT_CODE = /^(\d{5}|\d{4}[A-Z]|[A-V]\d{4}|D\d{4})$/i;
 // Codes from other DHA code sets: Dubai service codes (9, 9.01, 10.02 …), drug codes (XXXX-XXXXXX-XXXX), DRGs.
 // Activity types in eClaimLink files: 3 CPT, 4 HCPCS, 5 drug, 6 dental, 8 service code, 9 IR-DRG.
 const OTHER_CODE = /^(\d{1,3}(\.\d{1,3})?|[A-Z0-9]{4}-[A-Z0-9]{6}-[A-Z0-9]{4}|\d{2}-\d{4,})$/i;
+// ICD-10-CM Excludes1 pairs: the two conditions cannot be coded together on one claim.
+// Prefix match without the dot ("R10" covers R10.0, R10.30 …). A common outpatient selection, not the full list.
+const EXCLUDES1 = [
+  ["R10","N23","renal colic is coded with N23, not as abdominal pain"],
+  ["R10","M54","dorsalgia (back pain) is not abdominal pain"],
+  ["R10","R14","flatulence and related conditions"],
+  ["E11","E10","type 1 and type 2 diabetes"],["E11","E08",""],["E11","E09",""],["E11","E13",""],["E11","R739","hyperglycaemia NOS"],["E11","O244","gestational diabetes"],
+  ["E10","E08",""],["E10","E09",""],["E10","E13",""],["E10","R739","hyperglycaemia NOS"],["E10","O244","gestational diabetes"],
+  ["J06","J22","acute respiratory infection NOS"],["J06","J020","streptococcal pharyngitis"],["J06","J09",""],["J06","J10",""],["J06","J11","influenza"],
+  ["J00","J02","acute pharyngitis"],["J00","J30","allergic rhinitis"],["J00","J310","rhinitis NOS"],
+  ["J02","J060","acute laryngopharyngitis"],["J02","J36","peritonsillar abscess"],
+  ["J30","J310","rhinitis NOS"],
+  ["M545","S39012","low back strain"],["M545","M512","lumbago due to disc displacement"],
+  ["N390","N30","cystitis is the specified site"],["N390","N34","urethritis is the specified site"],
+  ["R51","G43","migraine"],["R51","G442","tension-type headache"],["R51","G500","trigeminal neuralgia"],
+  ["R42","H81","vertigo syndromes"],
+  ["R05","J410","smoker's cough"],["R05","R042","cough with haemorrhage"],
+  ["Z34","O","complications of pregnancy are coded in chapter O"],
+  ["Z000","Z02","examination for administrative purposes"],
+];
+function excludes1(dxList){
+  const k = d => d.toUpperCase().replace(/\./g,""), found = [];
+  for (const [a,b,why] of EXCLUDES1){
+    const x = dxList.filter(d => k(d).startsWith(a)), y = dxList.filter(d => k(d).startsWith(b) && !x.includes(d));
+    if (x.length && y.length) found.push(`${x.join(", ")} and ${y.join(", ")} cannot be coded together (ICD-10 Excludes1${why?": "+why:""}). Keep the more specific code.`);
+  }
+  return found;
+}
 const isServiceCode = a => ["5","8","9","10"].includes(String(a.type||"")) || OTHER_CODE.test(a.code||"");
 const DENTAL_DX = /^(K0[0-9]|K1[0-4]|S02\.5|Z01\.2)/i;
 function paDepartments(){
@@ -744,6 +772,7 @@ function checkClaim(c){
   const dx = (c.dx || []).map(d => (d[0] || "").trim()).filter(Boolean);
   if (!dx.length) err("CODE-010","No diagnosis code.");
   dx.filter(d => !ICD10.test(d)).forEach(d => err("CODE-010",`Diagnosis ${d} is not a valid ICD-10 code.`));
+  excludes1(dx).forEach(m => err("CODE-010", m));
   if (!c.acts.length) err("","The claim has no activities.");
   c.acts.forEach(a => {
     const tag = `Activity ${a.code || a.aid}`;
