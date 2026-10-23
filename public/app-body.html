@@ -388,6 +388,39 @@ function claimsActivity(nMonths){
   }
   return months;
 }
+// Donut (pie) chart: slices separated by a 2px surface gap, legend with value and share
+function pie(items, opts={}){
+  const total = items.reduce((a,i)=>a+i.v,0), R0 = 70, R1 = 42, C = 80;
+  let a0 = -Math.PI/2, g = "";
+  const pt = (r,a) => `${(C+r*Math.cos(a)).toFixed(2)} ${(C+r*Math.sin(a)).toFixed(2)}`;
+  const fmt = opts.fmt || (v => String(v));
+  if (!total) g = `<circle cx="${C}" cy="${C}" r="${(R0+R1)/2}" fill="none" stroke="var(--line)" stroke-width="${R0-R1}"/>`;
+  else items.filter(i=>i.v>0).forEach(i => {
+    const a1 = a0 + 2*Math.PI*i.v/total, big = a1-a0 > Math.PI ? 1 : 0;
+    const d = a1 - a0 >= 2*Math.PI - 1e-6
+      ? `M ${pt(R0,a0)} A ${R0} ${R0} 0 1 1 ${pt(R0,a0+Math.PI)} A ${R0} ${R0} 0 1 1 ${pt(R0,a0)} M ${pt(R1,a0)} A ${R1} ${R1} 0 1 0 ${pt(R1,a0+Math.PI)} A ${R1} ${R1} 0 1 0 ${pt(R1,a0)} Z`
+      : `M ${pt(R0,a0)} A ${R0} ${R0} 0 ${big} 1 ${pt(R0,a1)} L ${pt(R1,a1)} A ${R1} ${R1} 0 ${big} 0 ${pt(R1,a0)} Z`;
+    g += `<path d="${d}" fill="var(${i.color})" stroke="var(--surface)" stroke-width="2" fill-rule="evenodd"><title>${esc(i.label)}: ${fmt(i.v)} (${(100*i.v/total).toFixed(1)}%)</title></path>`;
+    a0 = a1;
+  });
+  g += `<text x="${C}" y="${C-2}" text-anchor="middle" class="lbl" style="font-size:15px;font-weight:600">${esc(opts.center ?? fmt(total))}</text><text x="${C}" y="${C+14}" text-anchor="middle">${esc(opts.centerSub||"total")}</text>`;
+  return `<div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap"><div class="chart" style="width:160px;flex:none"><svg viewBox="0 0 160 160" role="img" aria-label="${esc(opts.label||"pie chart")}">${g}</svg></div>
+    <div style="display:grid;gap:6px;font-size:13px">${items.map(i=>`<div><i style="display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;background:var(${i.color})"></i>${esc(i.label)} <b>${fmt(i.v)}</b> <span class="muted">${total?(100*i.v/total).toFixed(1):"0.0"}%</span></div>`).join("")}</div></div>`;
+}
+function pieHtml(nMonths){
+  const months = claimsActivity(nMonths), from = months[0].key;
+  const subs = S.claims.filter(c => c.submitted && c.submitted.slice(0,7) >= from);
+  const amt = {paid:0, denied:0, wait:0}, cnt = {"Paid":0,"Partially paid":0,"Rejected":0,"Awaiting payer":0};
+  for (const c of subs){
+    const t = totals(c); amt.paid += t.paid; amt.denied += t.denied; amt.wait += Math.max(0, t.net - t.paid - t.denied);
+    const st = status(c); cnt[st === "Paid" || st === "Closed" ? "Paid" : st === "Partially paid" ? "Partially paid" : st === "Rejected" ? "Rejected" : "Awaiting payer"]++;
+  }
+  const money = v => "AED " + aed(v);
+  return `<div class="grid2" style="margin-top:12px">
+    <div><h3 style="margin:4px 0 8px">Submitted amount: where it stands</h3>${pie([{label:"Paid",v:r2(amt.paid),color:"--s3"},{label:"Denied",v:r2(amt.denied),color:"--s4"},{label:"Awaiting payment",v:r2(amt.wait),color:"--s1"}],{fmt:money,center:aedK(amt.paid+amt.denied+amt.wait),centerSub:"AED submitted",label:"Submitted amount by outcome"})}</div>
+    <div><h3 style="margin:4px 0 8px">Claims by status</h3>${pie([{label:"Paid",v:cnt["Paid"],color:"--s3"},{label:"Partially paid",v:cnt["Partially paid"],color:"--s2"},{label:"Rejected",v:cnt["Rejected"],color:"--s4"},{label:"Awaiting payer",v:cnt["Awaiting payer"],color:"--s1"}],{centerSub:"claims",label:"Claims by status"})}</div>
+  </div>`;
+}
 function activityHtml(){
   const n = UI.actMonths, months = claimsActivity(n);
   const sum = k => months.reduce((a,m)=>({n:a.n+m.n[k], v:a.v+m.v[k]}),{n:0,v:0});
@@ -400,6 +433,7 @@ function activityHtml(){
       <div><h3 style="margin:4px 0 6px">Number of claims</h3>${legend}${vbars(items((m,k)=>m.n[k]),{label:"Number of claims per month",w:620,h:240,count:true})}</div>
       <div><h3 style="margin:4px 0 6px">Amount, AED</h3>${legend}${vbars(items((m,k)=>r2(m.v[k])),{label:"Claim amounts per month in AED",w:620,h:240})}</div>
     </div>
+    ${pieHtml(n)}
     <details style="margin-top:8px"><summary class="muted" style="cursor:pointer;font-size:12.5px">Show as table</summary>
       <div class="table-wrap" style="margin-top:8px"><table><thead><tr><th>Month</th>${ACT_SERIES.map(([,name])=>`<th class="num">${name}</th><th class="num">AED</th>`).join("")}</tr></thead><tbody>
       ${months.map(m=>`<tr><td>${esc(m.label)}</td>${ACT_SERIES.map(([k])=>`<td class="num">${m.n[k]}</td><td class="num">${aed(m.v[k])}</td>`).join("")}</tr>`).join("")}
