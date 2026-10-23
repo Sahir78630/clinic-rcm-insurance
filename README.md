@@ -87,6 +87,8 @@ The server connects to the eClaimLink (Dubai Health Post Office) web service wit
 | Prior approvals: **New request** | `Prior.Request` |
 | Remittance or Prior approvals: **Download from eClaimLink** | New `Remittance.Advice` files post payments and denial codes to claims. `Prior.Authorization` replies update approval requests. |
 
+**Reports.** The Reports section has four pages built from eClaimLink files for any date range (searched in 90-day steps): **Remittance summary** (paid, claimed and denied by payer and by payment reference), **Rejections** (every claim with a denied amount and its codes), **Rejection reasons** (denial codes by amount and claims, with the payers using them) and **Submissions** (claims and net amount sent, by payer and month, with resubmissions). Each downloads as CSV. Without the server they use the records in the browser.
+
 **Signing in with your own eClaimLink login.** Each member of staff can sign in on the **eClaimLink files** page with their own eClaimLink (DHPO) username and password. The server checks the login with eClaimLink, then uses it for everything that browser does on eClaimLink: searching and opening files, reports, submitting claims and resubmissions, and downloading remittances. The password stays in the server's memory only (never on disk, never sent back to the browser) and is forgotten on sign-out, after 2 hours without use, after 12 hours, or when the server restarts. After five wrong passwords from one computer, sign-in pauses for 15 minutes so eClaimLink does not lock the account. With no one signed in, the server uses `ECLAIMLINK_LOGIN` and `ECLAIMLINK_PASSWORD` if they are set, otherwise test mode. Serve the app over HTTPS before staff sign in from other computers.
 
 **eClaimLink files page.** Search everything sent or received on eClaimLink by type (claim submissions, remittance advice, prior requests, prior authorizations), download status, date range (up to 100 days) and file name, including the archive (up to one month per search). Open any file to see its claims, payments, denial codes or approval decisions and the raw XML, add it to your records, or build a report across the results: remittances by payer with denial rate, denial codes by value, and claims submitted by payer. Opening a file there does not mark it as downloaded on eClaimLink.
@@ -130,6 +132,7 @@ The claims, remittance and denial pages keep their records in the browser in thi
 | POST | `/api/eclaimlink/files/:id/applied` | Mark a downloaded file as posted |
 | GET | `/api/eclaimlink/search?direction=received\|sent&type=all\|Claim.Submission\|…&status=all\|new\|downloaded&from=&to=&name=&archive=1` | Search eClaimLink (SearchTransactions) |
 | GET | `/api/eclaimlink/remote/:fileId?archive=1` | Open one eClaimLink file with a summary, without marking it downloaded |
+| POST | `/api/eclaimlink/rows` | `{ files: [{ fileId, archive }] }` → each file's claim rows (Reports pages) |
 | POST | `/api/eclaimlink/report` | `{ files: [{ fileId, archive }] }` → combined report |
 
 ## Before going live

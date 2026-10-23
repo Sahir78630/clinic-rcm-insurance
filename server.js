@@ -150,6 +150,7 @@ export function createApp({ db, cfg, env = process.env, fetchImpl } = {}) {
     }],
     ["GET", /^\/api\/eclaimlink\/remote\/([\w.-]+)$/, (req, url, m) => ecl.view(eclCtx(req), m[1], { archive: url.searchParams.get("archive") === "1" })],
     ["POST", /^\/api\/eclaimlink\/report$/, async req => ecl.report(eclCtx(req), (await readJson(req)).files)],
+    ["POST", /^\/api\/eclaimlink\/rows$/, async req => ecl.rows(eclCtx(req), (await readJson(req)).files)],
     ["POST", /^\/api\/eclaimlink\/files\/(\d+)\/applied$/, (req, url, m) => ({ applied: ecl.markApplied(eclCtx(req), Number(m[1])) })],
     ["GET", /^\/api\/checks$/, (req, url) => {
       const limit = Math.min(500, Number(url.searchParams.get("limit")) || 50);

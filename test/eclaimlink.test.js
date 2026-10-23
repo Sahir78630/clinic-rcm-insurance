@@ -144,6 +144,10 @@ test("browse: search sent and received files, open one, build a report (test mod
   assert.equal(rep.submissionsByPayer.DAM.resubmissions, 1);
   assert.equal(rep.remittanceByPayer.DAM.claims, 2);
   assert.equal(rep.errors.length, 0);
+  const r = await ecl.rows(ctx, recvDone.files.map(f => ({ fileId: f.fileId, fileName: f.fileName })));
+  assert.equal(r.files.length, 2);
+  assert.ok(r.files.every(f => f.type === "Remittance.Advice" && f.rows.length === 1 && f.header.sender === "DAM"));
+  assert.deepEqual(Object.keys(r.files[0].rows[0]).sort(), ["denialCodes", "denied", "id", "net", "paid", "payerRef", "paymentRef", "settlement"]);
 });
 
 test("browse: date range limits follow the DHPO rules", async () => {

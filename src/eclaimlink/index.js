@@ -165,3 +165,16 @@ export async function report(ctx, files) {
   await Promise.all(Array.from({ length: Math.min(4, list.length) }, worker));
   return { ...buildReport(out), errors, truncated: files.length > list.length };
 }
+
+// Opens up to 200 files (four at a time) and returns each file's claim rows, for the Reports pages
+export async function rows(ctx, files) {
+  if (!Array.isArray(files) || !files.length) throw badRequest("Choose files");
+  const list = files.slice(0, 200), out = [], errors = [];
+  let next = 0;
+  const worker = async () => { while (next < list.length) { const f = list[next++];
+    try { const v = await view(ctx, f.fileId, { archive: f.archive });
+      out.push({ fileId: f.fileId, fileName: v.fileName || f.fileName || null, transactionDate: f.transactionDate || v.summary.header.date, type: v.summary.type, header: v.summary.header, rows: v.summary.rows });
+    } catch (e) { errors.push({ fileId: f.fileId, error: e.message }); } } };
+  await Promise.all(Array.from({ length: Math.min(4, list.length) }, worker));
+  return { files: out, errors, truncated: files.length > list.length };
+}
