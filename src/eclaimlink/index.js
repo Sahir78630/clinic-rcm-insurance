@@ -1,4 +1,4 @@
-import { settings, tag } from "./soap.js";
+import { settings, tag, EClaimLinkError } from "./soap.js";
 import { liveTransport, mockTransport } from "./transports.js";
 import { summarize, buildReport } from "./summary.js";
 
@@ -20,6 +20,24 @@ export function status(ctx) {
   const s = settings(ctx.env);
   const last = ctx.db.prepare("SELECT MAX(created_at) t FROM eclaimlink_files WHERE direction = 'in'").get().t;
   return { mode: mode(ctx.env), url: mode(ctx.env) === "live" ? s.url : null, loginSet: Boolean(s.login), lastDownload: last };
+}
+
+// Checks a staff member's own eClaimLink login with a small search of today's sent claims.
+// Returns true, or throws a 401 when eClaimLink rejects the login.
+export async function verifyLogin(ctx, login, pwd) {
+  if (!login || !pwd) throw Object.assign(new Error("Enter your eClaimLink username and password"), { code: 400 });
+  if (mode(ctx.env) === "off") throw Object.assign(new Error("The eClaimLink connection is switched off (ECLAIMLINK_MODE=off)"), { code: 409 });
+  const env = { ...ctx.env, ECLAIMLINK_LOGIN: login, ECLAIMLINK_PASSWORD: pwd };
+  const d = new Date().toISOString().slice(0, 10);
+  try {
+    await liveTransport({ env, fetchImpl: ctx.fetchImpl }).search({ direction: 1, type: TYPE_CODES["Claim.Submission"], status: 1,
+      callerLicense: ctx.env.FACILITY_LICENSE || null, from: dhpoDate(d) });
+    return true;
+  } catch (e) {
+    if (e instanceof EClaimLinkError && e.code === -1) throw Object.assign(new Error("eClaimLink did not accept this username and password"), { code: 401 });
+    if (e instanceof EClaimLinkError) throw Object.assign(new Error(`Could not sign in: ${e.eclaimMessage || e.message}`), { code: 502 });
+    throw Object.assign(new Error(`Could not reach eClaimLink: ${e.message}`), { code: 502 });
+  }
 }
 
 export const rootOf = xml => (String(xml).match(/<([A-Za-z][\w.]*)[\s>]/) || [])[1] || null;

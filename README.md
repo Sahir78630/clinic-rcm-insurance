@@ -82,11 +82,13 @@ The server connects to the eClaimLink (Dubai Health Post Office) web service wit
 | Prior approvals: **New request** | `Prior.Request` |
 | Remittance or Prior approvals: **Download from eClaimLink** | New `Remittance.Advice` files post payments and denial codes to claims. `Prior.Authorization` replies update approval requests. |
 
+**Signing in with your own eClaimLink login.** Each member of staff can sign in on the **eClaimLink files** page with their own eClaimLink (DHPO) username and password. The server checks the login with eClaimLink, then uses it for everything that browser does on eClaimLink: searching and opening files, reports, submitting claims and resubmissions, and downloading remittances. The password stays in the server's memory only (never on disk, never sent back to the browser) and is forgotten on sign-out, after 2 hours without use, after 12 hours, or when the server restarts. After five wrong passwords from one computer, sign-in pauses for 15 minutes so eClaimLink does not lock the account. With no one signed in, the server uses `ECLAIMLINK_LOGIN` and `ECLAIMLINK_PASSWORD` if they are set, otherwise test mode. Serve the app over HTTPS before staff sign in from other computers.
+
 **eClaimLink files page.** Search everything sent or received on eClaimLink by type (claim submissions, remittance advice, prior requests, prior authorizations), download status, date range (up to 100 days) and file name, including the archive (up to one month per search). Open any file to see its claims, payments, denial codes or approval decisions and the raw XML, add it to your records, or build a report across the results: remittances by payer with denial rate, denial codes by value, and claims submitted by payer. Opening a file there does not mark it as downloaded on eClaimLink.
 
 Every file sent or received is kept in the `eclaimlink_files` table with its result code, transaction ID and any error report. Downloaded files are only marked as downloaded on eClaimLink after they are safely stored.
 
-**Modes.** `ECLAIMLINK_MODE=mock` (the default without credentials) simulates eClaimLink inside the local database. Each uploaded claim comes back as a remittance on the next download (about one in five has an activity denied with MNEC-004), and each prior request comes back approved. Use it to train staff. Set `ECLAIMLINK_LOGIN` and `ECLAIMLINK_PASSWORD` to switch to `live`.
+**Modes.** `ECLAIMLINK_MODE=mock` (the default without credentials) simulates eClaimLink inside the local database. Each uploaded claim comes back as a remittance on the next download (about one in five has an activity denied with MNEC-004), and each prior request comes back approved. Use it to train staff. Set `ECLAIMLINK_LOGIN` and `ECLAIMLINK_PASSWORD` to switch to `live` for everyone, or let each person sign in with their own login.
 
 **Going live checklist**
 
@@ -112,7 +114,9 @@ The claims, remittance and denial pages keep their records in the browser in thi
 | POST | `/api/appointments/:id/verify` | Re-check one appointment |
 | POST | `/api/members` | Add or update a member record (mock provider) |
 | GET | `/api/checks?limit=` | Verification log |
-| GET | `/api/eclaimlink/status` | Mode, endpoint, last download |
+| GET | `/api/eclaimlink/status` | Mode, endpoint, last download, who is signed in |
+| POST | `/api/eclaimlink/login` | `{ login, pwd }` → check with eClaimLink and start a session (cookie) |
+| POST | `/api/eclaimlink/logout` | End the eClaimLink session |
 | POST | `/api/eclaimlink/upload` | `{ xml, fileName? }` → upload a Claim.Submission or Prior.Request |
 | POST | `/api/eclaimlink/sync` | Download and store all new files |
 | GET | `/api/eclaimlink/files?direction=&type=&unapplied=1` | File log (with XML when `unapplied=1`) |

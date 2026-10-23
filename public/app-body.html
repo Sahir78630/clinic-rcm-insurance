@@ -112,7 +112,7 @@ tfoot td{font-weight:600;background:var(--sunk);border-top:1px solid var(--line)
 .filters{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .field{display:flex;flex-direction:column;gap:4px;min-width:0}
 .field label{font-size:12px;font-weight:600;color:var(--muted)}
-input[type=text],input[type=number],input[type=date],select,textarea{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:7px 9px;min-width:0;max-width:100%}
+input[type=text],input[type=password],input[type=number],input[type=date],select,textarea{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:7px 9px;min-width:0;max-width:100%}
 textarea{width:100%;font-family:var(--mono);font-size:12px;min-height:150px;resize:vertical}
 .form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px;align-items:end}
 .chips{display:flex;gap:6px;flex-wrap:wrap}
@@ -1019,7 +1019,7 @@ function bindView(){
 
 /* ---------- live backend (active only when served by the clinic server) ---------- */
 const API_BASE = (document.querySelector('meta[name="rcm-api"]') || {}).content || null;
-const LIVE = {on:false, provider:null, appts:[], log:[], ecl:null, eclFiles:[], eclLast:null};
+const LIVE = {on:false, provider:null, appts:[], log:[], ecl:null, eclFiles:[], eclLast:null, eclUser:null, eclServerLogin:false, eclCanSignIn:false};
 const ECL = () => LIVE.on && LIVE.ecl && LIVE.ecl !== "off";
 const eclLabel = () => LIVE.ecl === "live" ? "eClaimLink" : "eClaimLink (test mode)";
 const refreshEcl = () => ECL() ? api("/eclaimlink/files?limit=15").then(f=>{ LIVE.eclFiles=f; if (["remittance"].includes(current)) render(); }).catch(()=>{}) : Promise.resolve();
@@ -1050,7 +1050,7 @@ async function eclSync(btn){
 }
 function eclPanel(){
   const f = LIVE.eclFiles;
-  return `<section class="panel"><div class="panel-head"><div><h2>${eclLabel()}</h2><p>Claims, resubmissions and approval requests are sent from their pages. Download collects remittances and approval replies and posts them automatically.${LIVE.ecl==="mock"?" Test mode simulates the payer: each uploaded claim comes back as a remittance.":""}</p></div>
+  return `<section class="panel"><div class="panel-head"><div><h2>${eclLabel()}</h2><p>Claims, resubmissions and approval requests are sent from their pages. Download collects remittances and approval replies and posts them automatically.${LIVE.ecl==="mock"?" Test mode simulates the payer: each uploaded claim comes back as a remittance.":""}${eclNeedsSignIn()?` <button class="btn sm" data-go="eclaimlink" type="button">Sign in to eClaimLink</button> to work with your real files.`:LIVE.eclUser?` Signed in as <b>${esc(LIVE.eclUser)}</b>.`:""}</p></div>
     <button class="btn primary" data-eclsync type="button">Download from eClaimLink</button></div>
     <div class="table-wrap"><table><thead><tr><th>Time</th><th></th><th>File</th><th>Type</th><th>From / to</th><th class="num">Records</th><th>Result</th></tr></thead><tbody>
     ${f.map(x=>`<tr class="click" data-eclfile="${x.id}" tabindex="0"><td class="mono muted">${esc((x.created_at||"").slice(5,16))}</td><td>${x.direction==="out"?"Sent":"Received"}</td><td class="mono">${esc(x.file_name||"")}</td><td><span class="code">${esc(x.type||"")}</span></td><td>${esc(x.direction==="out"?x.receiver:x.sender)}</td><td class="num">${x.record_count??"–"}</td><td>${x.direction==="out"?(x.result_code>=0?pill(x.result_code>0?"Accepted with warnings":"Accepted"):`<span class="pill p-bad">Rejected</span>`):pill(x.applied_at?"Posted":"Waiting")}${x.transaction_id?` <span class="muted mono">${esc(x.transaction_id)}</span>`:""}</td></tr>`).join("") || `<tr><td colspan="7" class="empty">Nothing sent or received yet.</td></tr>`}
@@ -1065,6 +1065,7 @@ async function eclFileDlg(id){
 async function api(path, body){
   const r = await fetch(API_BASE + path, body === undefined ? {credentials:"same-origin"} : {method:"POST",credentials:"same-origin",headers:{"content-type":"application/json"},body:JSON.stringify(body)});
   const j = await r.json().catch(()=>({}));
+  if (r.status === 401 && j.signIn) { LIVE.eclUser = null; refreshEclStatus().then(render); }
   if (!r.ok) throw new Error(j.error || `Server returned ${r.status}`);
   return j;
 }
@@ -1103,12 +1104,40 @@ function bindLive(v){
   $("#lVerifyForm").onsubmit = e => { e.preventDefault(); const q=$("#vCard").value.trim(); const isEid=/^784\d{12}$/.test(norm(q));
     api("/eligibility",{emiratesId:isEid?q:null,cardNo:isEid?null:q,payer:$("#vPayer").value||null,department:$("#vDept").value}).then(r=>{ UI.verifyResult=fromApi(r); refreshLog(); render(); }).catch(err=>toast(err.message)); };
 }
+// eClaimLink sign-in: the server checks the login with eClaimLink and keeps it for this browser session only
+const refreshEclStatus = () => api("/eclaimlink/status").then(st => Object.assign(LIVE, {ecl:st.mode, eclUser:st.signedInAs, eclServerLogin:st.serverLogin, eclCanSignIn:st.canSignIn})).catch(()=>{});
+const eclNeedsSignIn = () => LIVE.on && LIVE.eclCanSignIn && !LIVE.eclUser && !LIVE.eclServerLogin;
+function eclSignInHtml(){
+  return `<section class="panel" style="max-width:520px"><div class="panel-head"><div><h2>Sign in to eClaimLink</h2><p>Use your own eClaimLink (DHPO) username and password to see your facility's files here.</p></div></div>
+    <form id="eclLogin" class="form-grid" style="grid-template-columns:1fr" autocomplete="on">
+      <div class="field"><label for="eclUser">eClaimLink username</label><input id="eclUser" type="text" autocomplete="username" required></div>
+      <div class="field"><label for="eclPwd">Password</label><input id="eclPwd" type="password" autocomplete="current-password" required></div>
+      <div class="field"><button class="btn primary" type="submit" ${UI.eclBusy?"disabled":""}>${UI.eclBusy?"Checking with eClaimLink…":"Sign in"}</button></div>
+      ${UI.eclErr?`<div class="result bad">${esc(UI.eclErr)}</div>`:""}
+    </form>
+    <p class="muted" style="font-size:12.5px;margin:10px 0 0">Your password goes only to the clinic server, which passes it to eClaimLink with each request. The server keeps it in memory only, never on disk, and forgets it when you sign out, after 2 hours without use, or after 12 hours.${LIVE.ecl==="mock"?` <a href="#" id="eclTestMode">Continue in test mode instead</a>.`:""}</p>
+  </section>`;
+}
+const eclUserBar = () => LIVE.eclUser ? `<div class="muted" style="font-size:12.5px;margin:-4px 0 12px">Signed in to eClaimLink as <b>${esc(LIVE.eclUser)}</b> · <a href="#" id="eclSignOut">Sign out</a></div>` : "";
+function bindEclAccount(){
+  const f = $("#eclLogin");
+  if (f) f.onsubmit = async e => { e.preventDefault(); UI.eclErr = ""; UI.eclBusy = true;
+    const login = $("#eclUser").value.trim(), pwd = $("#eclPwd").value; render();
+    try { const st = await api("/eclaimlink/login", {login, pwd}); Object.assign(LIVE, {ecl:st.mode, eclUser:st.signedInAs}); UI.ecl.results = null; UI.ecl.report = null; toast("Signed in to eClaimLink as " + st.signedInAs); refreshEcl(); }
+    catch(err){ UI.eclErr = err.message; }
+    UI.eclBusy = false; render(); };
+  const t = $("#eclTestMode"); if (t) t.onclick = e => { e.preventDefault(); UI.eclTest = true; render(); };
+  const o = $("#eclSignOut"); if (o) o.onclick = async e => { e.preventDefault();
+    try { await api("/eclaimlink/logout", {}); } catch(err){}
+    LIVE.eclUser = null; UI.eclTest = false; UI.ecl.results = null; UI.ecl.report = null; await refreshEclStatus(); refreshEcl(); render(); toast("Signed out of eClaimLink"); };
+}
 async function bootLive(){
   try {
     const [h, appts, log, cfg] = await Promise.all([api("/health"), api("/appointments"), api("/checks?limit=30"), api("/config").catch(()=>null)]);
     LIVE.cfg = cfg;
     if (h.facility && !S.facility.licence){ S.facility.licence = h.facility; save(); }
     Object.assign(LIVE, {on:true, provider:h.provider, appts, log, ecl:h.eclaimlink||"off"});
+    await refreshEclStatus();
     await refreshEcl();
     UI.verifyResult = null; render();
   } catch(e) { toast("Clinic server not reachable: " + e.message); }
@@ -1269,12 +1298,16 @@ const isoAgo = n => addDays(TODAY,-n);
 UI.ecl = {direction:"received", type:"all", status:"all", from:isoAgo(30), to:TODAY, name:"", archive:false, results:null, notes:[], report:null, busy:""};
 const fileKey = f => (f.archive ? "A" : "") + f.fileId;
 R.eclaimlink = () => {
-  if (!ECL()) return head("eClaimLink files","Browse every claim, remittance and prior authorization file on DHA eClaimLink, open any of them, and build reports.") +
-    `<section class="panel"><div class="empty" style="text-align:left">This page works when the website is opened from your clinic server with your eClaimLink web service login set (<span class="code">ECLAIMLINK_LOGIN</span> and <span class="code">ECLAIMLINK_PASSWORD</span>). The setup steps are in the README.</div></section>`;
+  if (!LIVE.on) return head("eClaimLink files","Browse every claim, remittance and prior authorization file on DHA eClaimLink, open any of them, and build reports.") +
+    `<section class="panel"><div class="empty" style="text-align:left">Sign-in to eClaimLink works when this website is opened from your clinic server (run <span class="code">npm start</span> on a clinic computer and open the address it prints). This copy cannot reach eClaimLink. The setup steps are in the README.</div></section>`;
+  if (eclNeedsSignIn() && !UI.eclTest) return head("eClaimLink files","Browse every claim, remittance and prior authorization file on DHA eClaimLink, open any of them, and build reports.") + eclSignInHtml();
+  if (!ECL()) return head("eClaimLink files","Browse every claim, remittance and prior authorization file on DHA eClaimLink.") +
+    `<section class="panel"><div class="empty" style="text-align:left">The eClaimLink connection is switched off on the clinic server (<span class="code">ECLAIMLINK_MODE=off</span>).</div></section>`;
   const u = UI.ecl, res = u.results;
   const TYPES = [["all","All types"],["Claim.Submission","Claim submissions"],["Remittance.Advice","Remittance advice"],["Prior.Request","Prior requests"],["Prior.Authorization","Prior authorizations"]];
   const inRecords = res ? res.filter(f => S.posted[fileKey(f)]).length : 0;
-  return head("eClaimLink files",`Search everything sent or received on ${eclLabel()}. Searches cover up to 100 days, or one month in the archive (claims older than 24 months, authorizations older than 6).`) +
+  return head("eClaimLink files",`Search everything sent or received on ${eclLabel()}. Searches cover up to 100 days, or one month in the archive (claims older than 24 months, authorizations older than 6).`,
+    LIVE.eclUser || !eclNeedsSignIn() ? "" : `<button class="btn" id="eclBackToSignIn" type="button">Sign in to eClaimLink</button>`) + eclUserBar() +
   `<section class="panel"><form id="eclForm" class="form-grid">
     <div class="field"><label for="eDir">Files</label><select id="eDir"><option value="received" ${u.direction==="received"?"selected":""}>Received from payers</option><option value="sent" ${u.direction==="sent"?"selected":""}>Sent by this facility</option></select></div>
     <div class="field"><label for="eType">Type</label><select id="eType">${TYPES.map(t=>`<option value="${t[0]}" ${u.type===t[0]?"selected":""}>${t[1]}</option>`).join("")}</select></div>
@@ -1347,6 +1380,8 @@ async function eclViewDlg(i){
   if (b) b.onclick = () => { const r = applyEclFile(key, s.type, v.xml, v.fileName||f.fileName); toast(r.msg.charAt(0).toUpperCase()+r.msg.slice(1)); render(); eclViewDlg(i); };
 }
 function bindEcl(v){
+  bindEclAccount();
+  const back = $("#eclBackToSignIn"); if (back) back.onclick = () => { UI.eclTest = false; render(); };
   const u = UI.ecl;
   const f = $("#eclForm"); if (!f) return;
   f.onsubmit = async e => { e.preventDefault();
