@@ -115,7 +115,7 @@ ${acts.map((a, i) => {
       <Start>${tag(a, "Start") || tag(tag(c, "Encounter") || "", "Start") || dt(new Date())}</Start>
       <Code>${tag(a, "Code")}</Code>
       <Quantity>${tag(a, "Quantity") || 1}</Quantity>
-      <Net>${net.toFixed(2)}</Net>
+      <Net>${net.toFixed(2)}</Net>${tag(a, "Clinician") ? `\n      <Clinician>${tag(a, "Clinician")}</Clinician>` : ""}
       <PaymentAmount>${deny ? "0.00" : net.toFixed(2)}</PaymentAmount>${deny ? "\n      <DenialCode>MNEC-004</DenialCode>" : ""}
     </Activity>`; }).join("\n")}
   </Claim>`; }).join("\n");
