@@ -14,6 +14,10 @@ The website covers eligibility and access, prior approvals, claims, remittance a
 
 ## Run it
 
+On Windows, install Node.js (LTS) and double-click `start-windows.bat`. The website opens at http://127.0.0.1:3000; keep the black window open while you use it.
+
+From a terminal:
+
 Requires Node.js 22.5 or newer. There are no npm dependencies.
 
 ```bash
