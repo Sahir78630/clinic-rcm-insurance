@@ -357,7 +357,8 @@ const VIEWS = [
   ["Front office", [["eligibility","Eligibility & access"],["approvals","Prior approvals"]]],
   ["Billing", [["claims","Claims"],["remittance","Remittance & reconciliation"],["denials","Denials"],["resubmissions","Resubmissions"],["eclaimlink","eClaimLink files"]]],
   ["Finance", [["receivables","Insurance receivables"]]],
-  ["Reports", [["rep-remit","Remittance summary"],["rep-rejections","Rejections"],["rep-reasons","Rejection reasons"],["rep-submissions","Submissions"],["rep-recon","Reconciliation"],["rep-unprocessed","Unprocessed claims"]]]
+  ["Reports", [["rep-remit","Remittance summary"],["rep-rejections","Rejections"],["rep-reasons","Rejection reasons"],["rep-submissions","Submissions"],["rep-recon","Reconciliation"],["rep-unprocessed","Unprocessed claims"]]],
+  ["Price list", [["prices","Payer price lists"]]]
 ];
 let current = (location.hash||"").slice(1);
 if (!VIEWS.some(g => g[1].some(v => v[0] === current))) current = "overview";
@@ -933,6 +934,7 @@ function checkClaim(c){
     if (a.gross < 0) err("",`${tag}: gross amount is negative.`);
     if (a.ps > a.gross) err("",`${tag}: patient share is more than the gross amount.`);
   });
+  priceIssues(c).forEach(i => out.push(i));
   // Lab tests (CPT 80000–89999) carry their result as an <Observation> in the claim file.
   // Results are required for the tests in RESULT_REQUIRED; for other lab tests a missing result is a warning.
   c.acts.filter(a => Array.isArray(a.obs) && /^8\d{4}$/.test(a.code || "")).forEach(a => {
@@ -1290,6 +1292,7 @@ function bindView(){
   }
   if (current==="eclaimlink") bindEcl(v);
   if (REP_PAGES[current]) bindReports();
+  if (current === "prices") bindPrices();
   v.querySelectorAll("[data-facility]").forEach(b=>b.onclick=facilityDlg);
   if (current==="resubmissions"){ v.querySelectorAll("[data-rsfilter]").forEach(b=>b.onclick=()=>{ UI.rsFilter=b.dataset.rsfilter; render(); }); }
   if (current==="receivables"){
@@ -1614,6 +1617,160 @@ function applyEclFile(key, type, xml, name){
   else return {done:false, msg:`${type} files are view only`};
   S.posted[key] = TODAY; save();
   return {done:true, msg};
+}
+
+/* ---------- payer price lists ---------- */
+// Each payer's contracted prices, uploaded as CSV or Excel. Kept in this browser under their own key, so a large
+// list does not slow down saving claims. The claim check compares every activity with the payer's list.
+const PRICE_KEY = "rcm-prices";
+let PRICES;
+try { PRICES = JSON.parse(localStorage.getItem(PRICE_KEY)) || {lists:{}}; } catch(e) { PRICES = {lists:{}}; }
+let priceIdx = null; // payer key -> Map(code -> [price, desc])
+function savePrices(){
+  priceIdx = null;
+  try { localStorage.setItem(PRICE_KEY, JSON.stringify(PRICES)); return true; }
+  catch(e) { toast("The price lists are too large for this browser's storage. Remove an old list or upload fewer columns."); return false; }
+}
+const normCode = v => String(v ?? "").trim().toUpperCase();
+function priceIndex(){
+  if (priceIdx) return priceIdx;
+  priceIdx = {};
+  for (const [k, l] of Object.entries(PRICES.lists)) priceIdx[k] = new Map(l.items.map(([code, price, desc]) => [normCode(code), [price, desc]]));
+  return priceIdx;
+}
+// The list for a claim's payer: the payer's own list (matched by code or by the payer it maps to), else the facility list "*"
+function priceListFor(payerId){
+  const keys = Object.keys(PRICES.lists);
+  const k = keys.find(k => k !== "*" && (k === payerId || payerFrom(k) === payerId || k === payerFrom(payerId))) || (PRICES.lists["*"] ? "*" : null);
+  return k ? {key:k, list:PRICES.lists[k], idx:priceIndex()[k]} : null;
+}
+const priceListName = k => k === "*" ? "facility price list" : `${PRICES.lists[k] && PRICES.lists[k].name ? `${k} · ${PRICES.lists[k].name}` : payerText(k)} price list`;
+// Billed amounts are compared per unit. Gross is compared with the list price, net with the price after the payer's discount;
+// a match on either is fine. Above both is a price rejection risk (error); below is lost revenue (warning).
+function priceIssues(c){
+  const pl = priceListFor(c.payer); if (!pl) return [];
+  const out = [], disc = Number(pl.list.disc) || 0, name = priceListName(pl.key);
+  for (const a of c.acts){
+    const code = normCode(a.code); if (!code || !(a.gross > 0)) continue;
+    const hit = pl.idx.get(code), qty = a.qty || 1;
+    if (!hit){ if (!isServiceCode(a)) out.push({level:"warn", code:"PRICE", price:true, msg:`Activity ${a.code} is not on the ${name}.`}); continue; }
+    const price = hit[0], exNet = r2(price * (1 - disc/100)), g = r2(a.gross/qty), n = r2((a.net + (a.ps||0))/qty), n2 = r2(a.net/qty);
+    if ([g, n, n2].some(v => Math.abs(v - price) <= 0.01 || Math.abs(v - exNet) <= 0.01)) continue;
+    const over = Math.min(g, n2) > Math.max(price, exNet) + 0.01;
+    out.push({level: over ? "error" : "warn", code:"PRICE", price:true,
+      msg:`Activity ${a.code}${hit[1] ? ` (${hit[1]})` : ""}: billed AED ${aed(g)} per unit, the ${name} has AED ${aed(price)}${disc ? ` (AED ${aed(exNet)} after ${disc}% discount)` : ""}. ${over ? "Billed above the contract price: likely price rejection." : "Billed below the contract price."}`});
+  }
+  return out;
+}
+
+// Reading the uploaded file: CSV directly; Excel through SheetJS, loaded only when an Excel file is chosen
+let xlsxLib = null;
+function loadXlsx(){
+  if (window.XLSX) return Promise.resolve(window.XLSX);
+  return xlsxLib ||= new Promise((ok, bad) => { const s = document.createElement("script"); s.src = "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
+    s.onload = () => ok(window.XLSX); s.onerror = () => { xlsxLib = null; bad(new Error("Could not load the Excel reader. Save the file as CSV and upload that.")); }; document.head.appendChild(s); });
+}
+async function readSheet(file){
+  if (/\.xlsx?$/i.test(file.name)){ const X = await loadXlsx(); const wb = X.read(await file.arrayBuffer(), {type:"array"});
+    return X.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], {header:1, raw:false, defval:""}).map(r => r.map(v => String(v))).filter(r => r.some(c => c.trim())); }
+  return parseCsv((await file.text()).replace(/^﻿/, ""));
+}
+// Finds the code, price and description columns by their headings
+function parsePriceRows(rows){
+  const isHead = r => r.some(c => /code|cpt|service/i.test(c)) && r.some(c => /price|tariff|rate|amount|net|gross|aed/i.test(c));
+  const h = rows.findIndex(isHead);
+  let ci = 0, pi = 1, di = -1, start = 0;
+  if (h >= 0){ const head = rows[h].map(c => c.trim().toLowerCase()); start = h + 1;
+    ci = head.findIndex(c => /^(activity |service |cpt |item )?code$|^cpt|code/.test(c));
+    pi = head.findIndex(c => /price|tariff|rate/.test(c)); if (pi < 0) pi = head.findIndex(c => /gross|amount|net|aed/.test(c));
+    di = head.findIndex(c => /desc|name|service$/.test(c) && !/code/.test(c)); }
+  const items = [], bad = [];
+  for (const r of rows.slice(start)){
+    const code = normCode(r[ci]), price = Number(String(r[pi] ?? "").replace(/[^\d.-]/g, ""));
+    if (!code) continue;
+    if (!isFinite(price) || String(r[pi] ?? "").trim() === "") { bad.push(code); continue; }
+    items.push([code, r2(price), di >= 0 ? String(r[di] || "").trim().slice(0, 80) : ""]);
+  }
+  return {items, bad, cols:{code:ci, price:pi, desc:di}};
+}
+
+UI.price = {key:"", name:"", disc:"", q:"", view:"", preview:null, file:""};
+function knownPayerCodes(){
+  const s = new Set([...PAYERS.map(p => p.id), ...Object.keys(S.payerNames||{}), ...Object.keys(PRICES.lists).filter(k => k !== "*"), ...S.claims.map(c => c.payer)]);
+  [UI.rep.sub, UI.rep.ra].forEach(l => (l||[]).forEach(r => s.add(r.payer)));
+  return [...s].filter(Boolean).sort();
+}
+function priceProblems(){
+  const out = [];
+  for (const c of S.claims) for (const i of priceIssues(c)) out.push({c, i});
+  return out;
+}
+R.prices = () => {
+  const u = UI.price, lists = Object.entries(PRICES.lists).sort((a,b) => a[0] === "*" ? -1 : b[0] === "*" ? 1 : a[0].localeCompare(b[0]));
+  const probs = priceProblems(), errs = probs.filter(p => p.i.level === "error"), q = normCode(u.q);
+  const hits = q ? lists.map(([k,l]) => ({k, l, it: l.items.filter(([code, , desc]) => code.includes(q) || (desc && desc.toUpperCase().includes(q))).slice(0, 50)})).filter(x => x.it.length) : [];
+  const v = u.view && PRICES.lists[u.view];
+  return head("Payer price lists", "Upload each payer's contracted prices. Every claim is checked against its payer's list, so prices above the contract (price rejections) and codes missing from the contract are caught before submission.",
+    `<button class="btn" id="prTpl" type="button">Download template</button>`) +
+  `<section class="panel"><div class="panel-head"><div><h2>Upload a price list</h2><p>CSV or Excel. Columns: code, description (optional), price. Uploading again for the same payer replaces its list.</p></div></div>
+    <form id="prForm" class="form-grid">
+      <div class="field"><label for="prKey">Payer code</label><input type="text" id="prKey" list="prPayers" placeholder="e.g. INS008, or * for all payers" value="${esc(u.key)}" required><datalist id="prPayers"><option value="*">Facility price list (all payers)</option>${knownPayerCodes().map(k => `<option value="${esc(k)}">${esc(payerName(k)||"")}</option>`).join("")}</datalist></div>
+      <div class="field"><label for="prName">Payer name</label><input type="text" id="prName" placeholder="optional" value="${esc(u.name)}"></div>
+      <div class="field"><label for="prDisc">Discount %</label><input id="prDisc" type="number" min="0" max="100" step="0.01" placeholder="0" value="${esc(u.disc)}"></div>
+      <div class="field"><label>File</label><label class="btn" for="prFile">${u.file ? esc(u.file) : "Choose CSV or Excel file"}</label><input type="file" id="prFile" accept=".csv,.txt,.xlsx,.xls,text/csv" hidden></div>
+    </form>
+    ${u.preview ? `<div class="result ${u.preview.items.length ? "ok" : "warn"}" style="margin-top:10px">${u.preview.items.length} prices read${u.preview.bad.length ? `, ${u.preview.bad.length} rows skipped with no price (${esc(u.preview.bad.slice(0,5).join(", "))}${u.preview.bad.length>5?"…":""})` : ""}.
+      ${u.preview.items.length ? `First rows: ${u.preview.items.slice(0,3).map(([c,p,d]) => `<span class="code">${esc(c)}</span> AED ${aed(p)}${d?" "+esc(d):""}`).join(" · ")}` : "Check that the file has a code column and a price column."}</div>
+      ${u.preview.items.length ? `<div style="margin-top:10px"><button class="btn primary" id="prSave" type="button">Save price list for ${esc(u.key === "*" ? "all payers" : u.key || "…")}</button> <button class="btn" id="prCancel" type="button">Cancel</button></div>` : ""}` : ""}
+  </section>
+  <div class="kpis">
+    <div class="kpi"><span class="eyebrow">Price lists</span><span class="v">${lists.length}</span><span class="s">${lists.reduce((a,[,l]) => a + l.items.length, 0).toLocaleString()} prices</span></div>
+    <div class="kpi ${errs.length?"alert":""}"><span class="eyebrow">Billed above contract</span><span class="v">${new Set(errs.map(p=>p.c.id)).size}</span><span class="s">claims, ${errs.length} activities</span></div>
+    <div class="kpi"><span class="eyebrow">Other price warnings</span><span class="v">${new Set(probs.filter(p=>p.i.level!=="error").map(p=>p.c.id)).size}</span><span class="s">claims: below contract or code not on the list</span></div>
+  </div>
+  <section class="panel"><div class="panel-head"><div><h2>Price lists</h2></div></div>${lists.length ? `<div class="table-wrap"><table><thead><tr><th>Payer code</th><th>Payer name</th><th class="num">Prices</th><th class="num">Discount</th><th>File</th><th>Uploaded</th><th></th></tr></thead><tbody>
+    ${lists.map(([k,l]) => `<tr><td class="mono">${esc(k)}</td><td>${esc(k === "*" ? "Facility price list (all payers)" : l.name || payerName(k) || "–")}</td><td class="num">${l.items.length.toLocaleString()}</td><td class="num">${l.disc ? l.disc + "%" : "–"}</td><td class="mono muted">${esc(l.file||"")}</td><td class="muted">${fmtD(l.uploaded)}</td>
+      <td><button class="btn sm" data-prview="${esc(k)}" type="button">View</button> <button class="btn sm" data-prdl="${esc(k)}" type="button">Download</button> <button class="btn sm" data-prdel="${esc(k)}" type="button">Delete</button></td></tr>`).join("")}
+    </tbody></table></div>` : `<div class="empty">No price lists yet. Upload one above, starting with your busiest payer.</div>`}</section>
+  ${v ? `<section class="panel"><div class="panel-head"><div><h2>${esc(priceListName(u.view).replace(/^./, c => c.toUpperCase()))}</h2><p>${v.items.length.toLocaleString()} prices${v.items.length > 500 ? ", first 500 shown" : ""}</p></div><div class="actions"><button class="btn sm" id="prClose" type="button">Close</button></div></div>
+    <div class="table-wrap"><table><thead><tr><th>Code</th><th>Description</th><th class="num">Price AED</th>${v.disc ? `<th class="num">After ${v.disc}% discount</th>` : ""}</tr></thead><tbody>
+    ${v.items.slice(0,500).map(([c,p,d]) => `<tr><td class="mono">${esc(c)}</td><td>${esc(d||"–")}</td><td class="num">${aed(p)}</td>${v.disc ? `<td class="num">${aed(r2(p*(1-v.disc/100)))}</td>` : ""}</tr>`).join("")}</tbody></table></div></section>` : ""}
+  <section class="panel"><div class="panel-head"><div><h2>Look up a price</h2><p>Search a code or description across every payer's list</p></div></div>
+    <div class="filters" style="margin:0 0 10px"><input type="text" id="prQ" placeholder="e.g. 99213 or lipid" value="${esc(u.q)}" style="flex:1 1 220px"></div>
+    ${q ? (hits.length ? `<div class="table-wrap"><table><thead><tr><th>Price list</th><th>Code</th><th>Description</th><th class="num">Price AED</th><th class="num">After discount</th></tr></thead><tbody>
+      ${hits.flatMap(({k,l,it}) => it.map(([c,p,d]) => `<tr><td>${esc(priceListName(k))}</td><td class="mono">${esc(c)}</td><td>${esc(d||"–")}</td><td class="num">${aed(p)}</td><td class="num">${l.disc ? aed(r2(p*(1-l.disc/100))) : "–"}</td></tr>`)).join("")}</tbody></table></div>` : `<div class="empty">No price list has this code.</div>`) : ""}
+  </section>
+  <section class="panel"><div class="panel-head"><div><h2>Claims with price problems</h2><p>Claims in this browser checked against their payer's price list</p></div>${probs.length ? `<div class="actions"><button class="btn sm" id="prProbDl" type="button">Download Excel (CSV)</button></div>` : ""}</div>
+    ${probs.length ? `<div class="table-wrap"><table><thead><tr><th>Claim</th><th>Payer</th><th>Visit</th><th>Status</th><th>Problem</th></tr></thead><tbody>
+      ${probs.slice(0,500).map(({c,i}) => `<tr class="click" data-claim="${esc(c.id)}"><td class="mono">${esc(c.id)}</td><td>${esc(payerText(c.payer))}</td><td class="muted">${fmtD(c.enc)}</td><td>${pill(status(c))}</td><td class="wrap-cell"><span style="color:var(${i.level==="error"?"--bad":"--warn"});font-weight:600">${i.level==="error"?"Error":"Warning"}</span> ${esc(i.msg)}</td></tr>`).join("")}</tbody></table></div>`
+      : `<div class="empty">${lists.length ? "Every claim matches its price list." : "Upload a price list to check claims."}</div>`}</section>`;
+};
+function bindPrices(){
+  const u = UI.price, keep = () => { u.key = $("#prKey").value.trim().toUpperCase().replace(/^\*$/, "*"); u.name = $("#prName").value.trim(); u.disc = $("#prDisc").value; };
+  ["#prKey","#prName","#prDisc"].forEach(id => $(id).onchange = keep);
+  $("#prFile").onchange = async e => { keep(); const f = e.target.files[0]; if (!f) return;
+    try { const p = parsePriceRows(await readSheet(f)); u.preview = p; u.file = f.name;
+      if (!u.key){ const m = f.name.match(/INS\d{3}|TPA\d{3}|[A-Z]\d{3}/i); if (m) u.key = m[0].toUpperCase(); } }
+    catch(err){ toast(err.message); }
+    render(); };
+  const sv = $("#prSave"); if (sv) sv.onclick = () => { keep();
+    if (!u.key) { toast("Enter the payer code first, or * for the facility price list"); return; }
+    const prev = PRICES.lists[u.key];
+    PRICES.lists[u.key] = {name:u.name || (prev && prev.name) || "", disc:Number(u.disc) || 0, file:u.file, uploaded:TODAY, items:u.preview.items};
+    if (!savePrices()) { if (prev) PRICES.lists[u.key] = prev; else delete PRICES.lists[u.key]; savePrices(); return; }
+    toast(`${u.preview.items.length} prices saved for ${u.key === "*" ? "all payers" : u.key}`);
+    UI.price = {key:"", name:"", disc:"", q:u.q, view:"", preview:null, file:""}; render(); };
+  const cn = $("#prCancel"); if (cn) cn.onclick = () => { u.preview = null; u.file = ""; render(); };
+  $("#prTpl").onclick = () => downloadFile("price_list_template.csv", [csvRow(["Code","Description","Price"]), csvRow(["99213","Consultation, established patient","250"]), csvRow(["80061","Lipid profile","120"])].join("\n"));
+  document.querySelectorAll("[data-prview]").forEach(b => b.onclick = () => { u.view = b.dataset.prview; render(); });
+  document.querySelectorAll("[data-prdl]").forEach(b => b.onclick = () => { const k = b.dataset.prdl, l = PRICES.lists[k];
+    downloadFile(`price_list_${k === "*" ? "facility" : k}.csv`, [csvRow(["Code","Description","Price"]), ...l.items.map(([c,p,d]) => csvRow([c,d,p]))].join("\n")); });
+  document.querySelectorAll("[data-prdel]").forEach(b => b.onclick = () => { const k = b.dataset.prdel;
+    if (!confirm(`Delete the price list for ${k === "*" ? "all payers" : k}?`)) return; delete PRICES.lists[k]; savePrices(); if (u.view === k) u.view = ""; render(); });
+  const cl = $("#prClose"); if (cl) cl.onclick = () => { u.view = ""; render(); };
+  const q = $("#prQ"); q.oninput = () => { u.q = q.value; const pos = q.selectionStart; render(); const n = $("#prQ"); n.focus(); n.setSelectionRange(pos,pos); };
+  const pd = $("#prProbDl"); if (pd) pd.onclick = () => downloadFile(`price_problems_${TODAY}.csv`, [csvRow(["Claim","Payer code","Payer name","Visit","Status","Level","Problem"]),
+    ...priceProblems().map(({c,i}) => csvRow([c.id, c.payer, payerName(c.payer), c.enc, status(c), i.level === "error" ? "Error" : "Warning", i.msg]))].join("\n"));
 }
 
 /* ---------- reports ---------- */
