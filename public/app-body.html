@@ -964,8 +964,12 @@ function bindDlg(){
     if (a==="writeoff"){ const c=claimById(dlg.dataset.claim); const t=totals(c); c.writeOff=r2((c.writeOff||0)+t.outstanding); c.woReason=$("#woReason").value; c.events.push({d:TODAY,t:`Balance AED ${aed(t.outstanding)} written off: ${c.woReason}`}); done("Balance written off"); claimDlg(c.id); }
     if (a==="reconcile"){ const r=S.ras.find(x=>x.id===dlg.dataset.ra); const amt=parseFloat($("#bankAmt").value); if (isNaN(amt)) return toast("Enter the bank amount first"); const note=$("#bankNote").value; if (Math.abs(amt-r.amount)>0.009 && note==="No variance") return toast("Bank amount differs from the remittance. Pick a variance reason."); r.bank=r2(amt); r.status="Reconciled"; r.recOn=TODAY; r.note=note; done("Remittance reconciled"); raDlg(r.id); }
     if (a==="facSave"){ S.facility = {name:$("#fName").value.trim(), licence:$("#fLic").value.trim().toUpperCase()}; closeDlg(); done("Facility details saved"); return; }
-    if (a==="ciImport"){ const t=$("#ciCsv").value.trim(); if(!t){ $("#ciMsg").textContent="Paste or choose a CSV first."; return; } const r=importClaimsCsv(t); if (r.error){ $("#ciMsg").textContent=r.error; return; }
-      closeDlg(); current="claims"; const bad=S.claims.filter(c=>c.status==="Draft"&&checkState(c)==="Errors").length; done(`Imported ${r.added} claims`+(r.updated?`, updated ${r.updated} drafts`:"")+(r.existing?`, ${r.existing} already submitted`:"")+(bad?`. Claim check: ${bad} drafts have errors`:"")+(r.skipped.length?`. Skipped ${r.skipped.length}: ${r.skipped.slice(0,3).join("; ")}`:"")); return; }
+    if (a==="ciImport"){ const t=$("#ciCsv").value.trim(); const list = ciFiles.length ? ciFiles : t ? [{name:"pasted text", text:t}] : [];
+      if(!list.length){ $("#ciMsg").textContent="Paste or choose a file first."; return; }
+      const r=importClaimFiles(list, $("#ciDraft").checked); ciFiles=[];
+      if (!r.added && !r.updated && !r.existing && !r.posted.length){ $("#ciMsg").textContent = r.skipped.slice(0,3).join("; ") || "Nothing to import."; return; }
+      closeDlg(); current="claims"; const bad=S.claims.filter(c=>c.status==="Draft"&&checkState(c)==="Errors").length;
+      done(`Imported ${r.added} claims`+(r.updated?`, updated ${r.updated}`:"")+(r.existing?`, ${r.existing} already here`:"")+(r.posted.length?`. ${r.posted.join("; ")}`:"")+(bad?`. Claim check: ${bad} drafts have errors`:"")+(r.skipped.length?`. Skipped ${r.skipped.length}: ${r.skipped.slice(0,3).join("; ")}`:"")); return; }
     if (a==="apImport" && LIVE.on){ const t=$("#apCsv").value.trim(); if(!t){ $("#apMsg").textContent="Paste or choose a CSV first."; return; } b.disabled=true; $("#apMsg").textContent="Importing and checking with the payer…";
       api("/appointments/import",{csv:t,replace:$("#apReplace").checked}).then(r=>{ LIVE.appts=r.appointments; closeDlg(); refreshLog(); toast(`Imported ${r.imported}, checked ${r.checked}`+(r.skipped.length?`. Skipped ${r.skipped.length}: `+r.skipped.slice(0,3).map(x=>"line "+x.line+" "+x.reason).join("; "):"")); render(); })
         .catch(e=>{ b.disabled=false; $("#apMsg").textContent=e.message; }); return; }
@@ -1273,16 +1277,45 @@ function findOrAddPatient({name, eid, card, payerId}){
   } else if (name && /^Member |^Unnamed/.test(p.name)) p.name = name;
   return p;
 }
+let ciFiles = [];
 function claimsImportDlg(){
-  openDlg(dlgHead("Import claims","Paste or choose a CSV export from your clinic system. One row per service line; rows with the same claim_id form one claim.") +
+  ciFiles = [];
+  openDlg(dlgHead("Import claims","Choose CSV or XML files from your clinic system or eClaimLink, or paste one below.") +
   `<div class="dlg-body">
-    <div class="muted" style="font-size:12.5px">Columns: <span class="code">${CLAIM_COLS}</span>. Dates as 2026-10-23 or 23/10/2026. Status is Draft unless the row says Submitted. Claims that already exist are skipped.</div>
-    <div class="actions"><button class="btn sm" id="ciHead" type="button">Insert column headings</button><label class="btn sm" for="ciFile">Choose CSV file</label><input type="file" id="ciFile" accept=".csv,text/csv" hidden></div>
-    <textarea id="ciCsv" spellcheck="false" placeholder="${CLAIM_COLS}"></textarea>
-    <div class="actions"><button class="btn primary" data-act="ciImport" type="button">Import claims</button><span class="muted" id="ciMsg"></span></div>
+    <div class="muted" style="font-size:12.5px"><b>XML:</b> eClaimLink <span class="code">Claim.Submission</span> files (several at once is fine). <span class="code">Remittance.Advice</span> and prior authorization files are accepted too and post to your records.<br>
+    <b>CSV:</b> one row per service line with the columns <span class="code">${CLAIM_COLS}</span>. Dates as 2026-10-23 or 23/10/2026. Status is Draft unless the row says Submitted.<br>
+    Importing a draft claim again replaces it; submitted claims are left as they are.</div>
+    <div class="actions"><label class="btn sm" for="ciFile">Choose CSV or XML files</label><input type="file" id="ciFile" accept=".csv,.xml,text/csv,text/xml,application/xml" multiple hidden><button class="btn sm" id="ciHead" type="button">Insert CSV column headings</button></div>
+    <label style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" id="ciDraft" checked> Claim XML files have not been sent yet: import them as drafts so they can be checked</label>
+    <textarea id="ciCsv" spellcheck="false" placeholder="Paste CSV rows or a &lt;Claim.Submission&gt; XML file"></textarea>
+    <div class="actions"><button class="btn primary" data-act="ciImport" type="button">Import</button><span class="muted" id="ciMsg"></span></div>
   </div>`);
   $("#ciHead").onclick = () => { const t = $("#ciCsv"); if (!t.value.startsWith(CLAIM_COLS)) t.value = CLAIM_COLS + "\n" + t.value; };
-  $("#ciFile").onchange = e => { const f = e.target.files[0]; if (!f) return; const rd = new FileReader(); rd.onload = () => { $("#ciCsv").value = rd.result; }; rd.readAsText(f); };
+  $("#ciFile").onchange = async e => {
+    const files = [...e.target.files]; if (!files.length) return;
+    ciFiles = await Promise.all(files.map(f => f.text().then(text => ({name:f.name, text}))));
+    if (ciFiles.length === 1) { $("#ciCsv").value = ciFiles[0].text; ciFiles = []; }
+    else { $("#ciCsv").value = ""; $("#ciCsv").placeholder = `${files.length} files chosen: ${files.map(f=>f.name).slice(0,6).join(", ")}${files.length>6?"…":""}`; }
+    $("#ciMsg").textContent = `${files.length} file${files.length===1?"":"s"} ready to import`;
+  };
+}
+// Imports a mix of CSV and XML texts; returns one summary line
+function importClaimFiles(list, draft){
+  const tally = {added:0, updated:0, existing:0, posted:[], skipped:[]};
+  for (const f of list){
+    const t = f.text.replace(/^\uFEFF/, "").trim();
+    if (!t) continue;
+    if (!t.startsWith("<")){ const r = importClaimsCsv(t); if (r.error){ tally.skipped.push(`${f.name}: ${r.error}`); continue; }
+      tally.added += r.added; tally.updated += r.updated; tally.existing += r.existing; tally.skipped.push(...r.skipped); continue; }
+    const doc = new DOMParser().parseFromString(t, "application/xml");
+    if (doc.getElementsByTagName("parsererror").length){ tally.skipped.push(`${f.name}: not valid XML`); continue; }
+    const type = doc.documentElement.tagName;
+    if (type === "Claim.Submission"){ const r = addClaimsFromXml(t, {draft}); tally.added += r.added; tally.updated += r.updated; tally.existing += r.skipped; }
+    else if (["Remittance.Advice","Prior.Request","Prior.Authorization"].includes(type)){ const r = applyEclFile("F:"+f.name+":"+t.length, type, t, f.name); tally.posted.push(`${f.name}: ${r.msg}`); }
+    else tally.skipped.push(`${f.name}: ${type} files are not supported`);
+  }
+  save();
+  return tally;
 }
 function importClaimsCsv(txt){
   const rows = parseCsv(txt); if (!rows.length) return {error:"The file is empty."};
@@ -1315,7 +1348,8 @@ function importClaimsCsv(txt){
 }
 const dhpoToIso = v => { const m = String(v||"").match(/^(\d{2})\/(\d{2})\/(\d{4})/); return m ? `${m[3]}-${m[2]}-${m[1]}` : null; };
 // Claim.Submission files you sent through eClaimLink become claims here, so remittances can match them
-function addClaimsFromXml(xml){
+// draft: the file has not been sent yet (an export from the clinic system), so the claims start as drafts to check
+function addClaimsFromXml(xml, {draft = false} = {}){
   const doc = new DOMParser().parseFromString(xml,"application/xml");
   const own = (el,t) => { const x = [...el.children].find(c => c.tagName === t); return x ? x.textContent.trim() : ""; };
   const header = doc.getElementsByTagName("Header")[0];
@@ -1325,7 +1359,7 @@ function addClaimsFromXml(xml){
     const id = own(ce,"ID"); if (!id) return;
     const resub = ce.getElementsByTagName("Resubmission")[0];
     const ex = claimById(id);
-    if (ex){
+    if (ex && !(draft && ex.status === "Draft")){
       if (resub && !ex.resubs.some(x => x.d === sent)){ const note = resub.getElementsByTagName("Comment")[0];
         ex.resubs.push({d:sent,type:(resub.getElementsByTagName("Type")[0]||{}).textContent||"correction",note:note?note.textContent:"",amount:totals(ex).outstanding,codes:[...new Set(ex.acts.map(a=>a.denial).filter(Boolean))],outcome:null});
         ex.status = "Resubmitted"; ex.events.push({d:sent,t:"Resubmission found on eClaimLink"}); updated++; }
@@ -1341,11 +1375,12 @@ function addClaimsFromXml(xml){
     const acts = actEls.map((a,k) => { const net = num(own(a,"Net")), ps = claimNet ? r2(claimPs*net/claimNet) : 0;
       return {aid:own(a,"ID")||`${id}-${k+1}`, code:own(a,"Code"), desc:"", qty:num(own(a,"Quantity"))||1, gross:r2(net+ps), ps, net:r2(net), paid:0, denial:null}; });
     const dx = [...ce.getElementsByTagName("Diagnosis")].map(d => [own(d,"Code"), ""]);
-    S.claims.push({id, patient:pt.id, payer:pid, card:own(ce,"MemberID"), dept:"–", doctor:actEls[0]?own(actEls[0],"Clinician"):"", enc:encDate,
-      dx:dx.length?dx:[["",""]], acts, status:resub?"Resubmitted":"Submitted", submitted:sent, events:[{d:encDate,t:"Encounter"},{d:sent,t:"Claim file found on eClaimLink"}],
-      remits:[], resubs:resub?[{d:sent,type:(resub.getElementsByTagName("Type")[0]||{}).textContent||"correction",note:"",amount:r2(claimNet),codes:[],outcome:null}]:[], writeOff:0, woReason:null,
-      pa:actEls.map(a=>own(a,"PriorAuthorizationID")).find(Boolean)||null});
-    added++;
+    const c = {id, patient:pt.id, payer:pid, card:own(ce,"MemberID"), dept:"–", doctor:actEls[0]?own(actEls[0],"Clinician"):"", enc:encDate,
+      dx:dx.length?dx:[["",""]], acts, status:draft?"Draft":resub?"Resubmitted":"Submitted", submitted:draft?null:sent,
+      events:draft?[{d:encDate,t:"Encounter"},{d:TODAY,t:"Imported from XML file"}]:[{d:encDate,t:"Encounter"},{d:sent,t:"Claim file found on eClaimLink"}],
+      remits:[], resubs:resub&&!draft?[{d:sent,type:(resub.getElementsByTagName("Type")[0]||{}).textContent||"correction",note:"",amount:r2(claimNet),codes:[],outcome:null}]:[], writeOff:0, woReason:null,
+      pa:actEls.map(a=>own(a,"PriorAuthorizationID")).find(Boolean)||null};
+    if (ex){ S.claims[S.claims.indexOf(ex)] = c; updated++; } else { S.claims.push(c); added++; }
   });
   return {added, updated, skipped};
 }
