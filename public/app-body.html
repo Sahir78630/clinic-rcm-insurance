@@ -8,7 +8,7 @@
 :root{
   --bg:#F3F6F5; --surface:#FFFFFF; --sunk:#EAF0EE; --ink:#13201E; --muted:#5A6B67; --line:#D8E1DE;
   --accent:#0D6B61; --accent-ink:#FFFFFF; --accent-soft:#DDEFEA;
-  --ok:#1D7A45; --ok-soft:#DFF2E6; --warn:#9A5B00; --warn-soft:#FBEED6; --bad:#B0281F; --bad-soft:#FBE3E0; --info:#2B5BA6; --info-soft:#E1EAF8;
+  --ok:#1D7A45; --ok-soft:#DFF2E6; --warn:#9A5B00; --warn-soft:#FBEED6; --bad:#B0281F; --bad-soft:#FBE3E0; --info:#2B5BA6; --info-soft:#E1EAF8; --dx:#6D3FB5; --dx-soft:#EEE6FA;
   --b1:#8FCDBF; --b2:#E6C267; --b3:#E39549; --b4:#CC5B33; --b5:#8E2620;
   --display:"Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
   --body:"Instrument Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
@@ -18,14 +18,14 @@
 @media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
   --bg:#0E1413; --surface:#151D1B; --sunk:#111917; --ink:#E3ECE9; --muted:#93A4A0; --line:#27332F;
   --accent:#4CC2AE; --accent-ink:#04201B; --accent-soft:#143530;
-  --ok:#5ACB89; --ok-soft:#173326; --warn:#E6AA46; --warn-soft:#3A2C12; --bad:#F27D70; --bad-soft:#3E1D1A; --info:#82A8EC; --info-soft:#1A2740;
+  --ok:#5ACB89; --ok-soft:#173326; --warn:#E6AA46; --warn-soft:#3A2C12; --bad:#F27D70; --bad-soft:#3E1D1A; --info:#82A8EC; --info-soft:#1A2740; --dx:#B99AF2; --dx-soft:#2A1F40;
   --b1:#5FAE9E; --b2:#D7B154; --b3:#DE8B45; --b4:#D8643F; --b5:#B8433A;
   color-scheme:dark;
 }}
 :root[data-theme="dark"]{
   --bg:#0E1413; --surface:#151D1B; --sunk:#111917; --ink:#E3ECE9; --muted:#93A4A0; --line:#27332F;
   --accent:#4CC2AE; --accent-ink:#04201B; --accent-soft:#143530;
-  --ok:#5ACB89; --ok-soft:#173326; --warn:#E6AA46; --warn-soft:#3A2C12; --bad:#F27D70; --bad-soft:#3E1D1A; --info:#82A8EC; --info-soft:#1A2740;
+  --ok:#5ACB89; --ok-soft:#173326; --warn:#E6AA46; --warn-soft:#3A2C12; --bad:#F27D70; --bad-soft:#3E1D1A; --info:#82A8EC; --info-soft:#1A2740; --dx:#B99AF2; --dx-soft:#2A1F40;
   --b1:#5FAE9E; --b2:#D7B154; --b3:#DE8B45; --b4:#D8643F; --b5:#B8433A;
   color-scheme:dark;
 }
@@ -97,6 +97,7 @@ tfoot td{font-weight:600;background:var(--sunk);border-top:1px solid var(--line)
 .p-warn{background:var(--warn-soft);color:var(--warn)}
 .p-bad{background:var(--bad-soft);color:var(--bad)}
 .p-info{background:var(--info-soft);color:var(--info)}
+.p-dx{background:var(--dx-soft);color:var(--dx)}
 .p-mute{background:var(--sunk);color:var(--muted)}
 .code{font-family:var(--mono);font-size:11.5px;background:var(--sunk);border-radius:4px;padding:1px 6px}
 
@@ -276,7 +277,7 @@ function status(c){
 }
 const STATUS_PILL = {"Draft":"p-mute","Submitted":"p-info","Resubmitted":"p-info","Paid":"p-ok","Closed":"p-mute","Partially paid":"p-warn","Rejected":"p-bad",
   "Eligible":"p-ok","Not eligible":"p-bad","Inactive":"p-bad","Not found":"p-bad","Not verified":"p-mute","Check failed":"p-bad","Approval needed":"p-warn",
-  "Pending":"p-info","New":"p-info","Downloaded":"p-mute","Accepted":"p-ok","Accepted with warnings":"p-warn","Posted":"p-ok","Waiting":"p-info","Awaiting payer":"p-info","Recovered":"p-ok","Partially recovered":"p-warn","Denied again":"p-bad","Approved":"p-ok","Partially approved":"p-warn","Reconciled":"p-ok","Unreconciled":"p-warn","Variance":"p-bad","Awaiting deposit":"p-info","Ready":"p-ok","Warnings":"p-warn","Errors":"p-bad","Report missing":"p-info"};
+  "Pending":"p-info","New":"p-info","Downloaded":"p-mute","Accepted":"p-ok","Accepted with warnings":"p-warn","Posted":"p-ok","Waiting":"p-info","Awaiting payer":"p-info","Recovered":"p-ok","Partially recovered":"p-warn","Denied again":"p-bad","Approved":"p-ok","Partially approved":"p-warn","Reconciled":"p-ok","Unreconciled":"p-warn","Variance":"p-bad","Awaiting deposit":"p-info","Ready":"p-ok","Warnings":"p-warn","Errors":"p-bad","Report missing":"p-info","Dx mismatch":"p-dx"};
 const pill = s => `<span class="pill ${STATUS_PILL[s]||"p-mute"}">${esc(s)}</span>`;
 const ageBasis = c => c.status === "Resubmitted" && c.resubs.length ? c.resubs[c.resubs.length-1].d : c.submitted;
 const ageOf = (c, basis) => diff(basis === "enc" ? c.enc : (c.submitted || c.enc), TODAY);
@@ -733,6 +734,52 @@ const RESULT_REQUIRED = {
   "84460":["ALT (SGPT)",1,""], "84450":["AST (SGOT)",1,""], "82247":["Total bilirubin",1,""], "82248":["Direct bilirubin",1,""],
   "84075":["Alkaline phosphatase",1,""], "82040":["Albumin",1,""], "84155":["Total protein",1,""],
 };
+// Which diagnoses support each CPT (medical necessity). ICD-10 prefixes without the dot; a CPT is flagged when
+// none of the claim's diagnoses starts with one of them. A common outpatient selection: extend it for your payers.
+const DX_GROUPS = {
+  diabetes:["E08","E09","E10","E11","E13","R73","O24","Z131","Z794","Z7984","Z8632","E282","E66","E8881","R35","R631","R632","E16"],
+  lipids:["E78","E08","E09","E10","E11","E13","I10","I11","I12","I13","I15","I16","I20","I21","I22","I23","I24","I25","I63","I65","I70","E66","E8881","Z13220","Z824","Z8249","Z000","E03","N18","E282"],
+  liver:["K70","K71","K72","K73","K74","K75","K76","K77","B15","B16","B17","B18","B19","R17","R74","R10","K80","K81","K82","K83","R16","R11","E66","E78","Z79","Z000","K29"],
+  thyroid:["E00","E01","E02","E03","E04","E05","E06","E07","R53","R634","R635","E66","R00","I48","N91","N92","N93","E282","Z1329","F32","F41","L65","Z000","O"],
+  urine:["N","R30","R31","R32","R33","R34","R35","R36","R39","R10","R50","O","Z34","E08","E09","E10","E11","E13","I10","Z000","Z014"],
+  chest:["J","R05","R06","R07","R09","R50","I","A15","Z111","Z02","Z0181","C34","S2","Z000"],
+  abdomen:["R10","R11","R12","R13","R14","R15","R16","R17","R18","R19","K","N","R74","C","E66","D"],
+  pregnancy:["Z3","O"],
+  cervix:["Z014","Z124","N8","N9","R87"],
+  rehab:["M","S","G","I69","Z96","Z47","R26","R29","T"],
+  joint:["M","S"],
+  nose:["J01","J30","J31","J32","J33","J34","J35","R04","R09","J06"],
+  ear:["H6","H7","H9","J06","J30","J32"],
+  vaccine:["Z23"],
+  wellChild:["Z00"],
+  wart:["B07","L82","L85","L91","B08","D23"],
+  skinBiopsy:["L","D22","D23","D48","C43","C44","R22","D18","B07"],
+  dental:["K00","K01","K02","K03","K04","K05","K06","K07","K08","K09","K10","K11","K12","K13","K14","S025","Z012","Z293"],
+};
+const DX_FOR_CPT = {
+  "83036":"diabetes","82947":"diabetes","82948":"diabetes","82950":"diabetes","82951":"diabetes",
+  "80061":"lipids","82465":"lipids","84478":"lipids","83718":"lipids","83721":"lipids",
+  "80076":"liver","84460":"liver","84450":"liver","82247":"liver","82248":"liver",
+  "84443":"thyroid","84439":"thyroid","84436":"thyroid","84481":"thyroid",
+  "81000":"urine","81001":"urine","81002":"urine","81003":"urine","87086":"urine",
+  "71045":"chest","71046":"chest","76700":"abdomen","76705":"abdomen","76805":"pregnancy","76801":"pregnancy","76815":"pregnancy",
+  "88175":"cervix","88142":"cervix","97110":"rehab","97140":"rehab","97014":"rehab","97112":"rehab","97530":"rehab",
+  "20610":"joint","73562":"joint","31231":"nose","92567":"ear","90707":"vaccine","99392":"wellChild","99393":"wellChild","17110":"wart","11102":"skinBiopsy",
+};
+const DX_GROUP_NAME = {diabetes:"diabetes or abnormal glucose",lipids:"lipid, diabetes or cardiovascular",liver:"liver, biliary or abdominal",thyroid:"thyroid or related symptoms",
+  urine:"urinary, kidney, abdominal or pregnancy",chest:"respiratory, cardiac or screening",abdomen:"abdominal, digestive or kidney",pregnancy:"pregnancy",cervix:"cervical screening or gynaecological",
+  rehab:"musculoskeletal, injury or neurological",joint:"musculoskeletal or injury",nose:"nasal or sinus",ear:"ear or hearing",vaccine:"vaccination (Z23)",wellChild:"routine child examination",
+  wart:"wart or benign skin lesion",skinBiopsy:"skin lesion",dental:"dental (K00–K14)"};
+function dxMismatch(acts, dxList){
+  const k = d => d.toUpperCase().replace(/\./g,""), dx = dxList.map(k), out = [];
+  for (const a of acts){
+    const code = (a.code||"").toUpperCase(), g = DX_FOR_CPT[code] || (/^D\d{4}$/.test(code) ? "dental" : null);
+    if (!g || !dx.length) continue;
+    if (!dx.some(d => DX_GROUPS[g].some(p => d.startsWith(p))))
+      out.push(`${code}${a.desc?" "+a.desc:""} is not supported by the diagnoses on the claim (${dxList.join(", ")}). Expected a ${DX_GROUP_NAME[g]} diagnosis.`);
+  }
+  return out;
+}
 // ICD-10-CM Excludes1 pairs: the two conditions cannot be coded together on one claim.
 // Prefix match without the dot ("R10" covers R10.0, R10.30 …). A common outpatient selection, not the full list.
 const EXCLUDES1 = [
@@ -762,7 +809,6 @@ function excludes1(dxList){
   return found;
 }
 const isServiceCode = a => ["5","8","9","10"].includes(String(a.type||"")) || OTHER_CODE.test(a.code||"");
-const DENTAL_DX = /^(K0[0-9]|K1[0-4]|S02\.5|Z01\.2)/i;
 function paDepartments(){
   const fromServer = LIVE.cfg && LIVE.cfg.approvalDepartments;
   return fromServer && fromServer.length ? fromServer : Object.keys(DEPTS).filter(d => DEPTS[d].pa);
@@ -783,6 +829,7 @@ function checkClaim(c){
   if (!dx.length) err("CODE-010","No diagnosis code.");
   dx.filter(d => !ICD10.test(d)).forEach(d => err("CODE-010",`Diagnosis ${d} is not a valid ICD-10 code.`));
   excludes1(dx).forEach(m => err("CODE-010", m));
+  dxMismatch(c.acts, dx).forEach(m => out.push({level:"error", code:"MNEC-004", msg:m, dx:true}));
   if (!c.acts.length) err("","The claim has no activities.");
   c.acts.forEach(a => {
     const tag = `Activity ${a.code || a.aid}`;
@@ -791,7 +838,6 @@ function checkClaim(c){
     if (!(a.qty >= 1)) err("",`${tag}: quantity must be at least 1.`);
     if (a.gross < 0) err("",`${tag}: gross amount is negative.`);
     if (a.ps > a.gross) err("",`${tag}: patient share is more than the gross amount.`);
-    if (/^D\d{4}$/i.test(a.code || "") && dx.length && !dx.some(d => DENTAL_DX.test(d))) warn("CODE-010",`${tag} is a dental code but no dental diagnosis (K00–K14) is on the claim.`);
   });
   // Lab tests (CPT 80000–89999) carry their result as an <Observation> in the claim file.
   // Results are required for the tests in RESULT_REQUIRED; for other lab tests a missing result is a warning.
@@ -814,10 +860,12 @@ function checkClaim(c){
   return out;
 }
 // "Report missing" (blue) when the only blocking problem is a missing lab result
+// Colour groups: red errors, violet diagnosis–CPT mismatches, blue missing lab reports
 const checkState = c => { const r = checkClaim(c), e = r.filter(x => x.level === "error");
-  return e.some(x => !x.lab) ? "Errors" : e.length ? "Report missing" : r.length ? "Warnings" : "Ready"; };
-const blocked = c => ["Errors","Report missing"].includes(checkState(c));
-const issueHtml = x => x.lab ? `<div style="color:var(--info);font-weight:600">${x.level==="error"?"✕":"!"} ${esc(x.msg)}</div>`
+  return e.some(x => !x.lab && !x.dx) ? "Errors" : e.some(x => x.dx) ? "Dx mismatch" : e.length ? "Report missing" : r.length ? "Warnings" : "Ready"; };
+const blocked = c => ["Errors","Dx mismatch","Report missing"].includes(checkState(c));
+const issueHtml = x => x.dx ? `<div style="color:var(--dx);font-weight:600">✕ ${esc(x.msg)} <span class="code" title="${esc(DENIALS[x.code]||"")}">${x.code}</span></div>`
+  : x.lab ? `<div style="color:var(--info);font-weight:600">${x.level==="error"?"✕":"!"} ${esc(x.msg)}</div>`
   : `<div>${x.level === "error" ? "<b>✕</b>" : "!"} ${esc(x.msg)}${x.code ? ` <span class="code" title="${esc(DENIALS[x.code]||"")}">${x.code}</span>` : ""}</div>`;
 function checkHtml(c){
   const r = checkClaim(c);
@@ -831,9 +879,9 @@ function checkHtml(c){
 function checkAllDlg(){
   const rows = S.claims.map(c => ({c, r: checkClaim(c)})).filter(x => x.r.length)
     .sort((a,b) => b.r.filter(x=>x.level==="error").length - a.r.filter(x=>x.level==="error").length || a.c.id.localeCompare(b.c.id));
-  const errs = rows.filter(x => x.r.some(y => y.level === "error")).length, labs = rows.filter(x => x.r.some(y => y.lab)).length;
+  const errs = rows.filter(x => x.r.some(y => y.level === "error")).length, labs = rows.filter(x => x.r.some(y => y.lab)).length, dxs = rows.filter(x => x.r.some(y => y.dx)).length;
   const csv = ["claim_id,patient,payer,status,level,code,problem", ...rows.flatMap(({c,r}) => r.map(x => [c.id, patient(c.patient).name, payer(c.payer).name, status(c), x.level, x.code, x.msg].map(v => `"${String(v).replace(/"/g,'""')}"`).join(",")))].join("\n");
-  openDlg(dlgHead("Claim check", `${S.claims.length} claims checked · ${S.claims.length - rows.length} clean · ${errs} with errors · ${rows.length - errs} with warnings only · <span style="color:var(--info);font-weight:600">${labs} with lab reports missing</span>`,
+  openDlg(dlgHead("Claim check", `${S.claims.length} claims checked · ${S.claims.length - rows.length} clean · ${errs} with errors · ${rows.length - errs} with warnings only · <span style="color:var(--dx);font-weight:600">${dxs} with diagnosis–CPT mismatch</span> · <span style="color:var(--info);font-weight:600">${labs} with lab reports missing</span>`,
     rows.length ? `<button class="btn sm" data-act="copyXml" type="button">Copy as CSV</button>` : "") +
   `<div class="dlg-body">${rows.length ? `<div class="table-wrap"><table><thead><tr><th>Claim</th><th>Patient</th><th>Payer</th><th>Status</th><th>Problems</th></tr></thead><tbody>
     ${rows.map(({c,r}) => `<tr class="click" data-claim="${c.id}"><td class="mono">${c.id}</td><td>${esc(patient(c.patient).name)}</td><td>${esc(payer(c.payer).name)}</td><td>${pill(status(c))}</td><td class="wrap-cell">${r.map(issueHtml).join("")}</td></tr>`).join("")}
