@@ -750,7 +750,7 @@ function checkClaim(c){
     if (!a.code) err("CODE-010",`${a.aid}: activity code is missing.`);
     else if (!ACT_CODE.test(a.code) && !isServiceCode(a)) warn("CODE-010",`${tag}: code format is not CPT, HCPCS, dental, drug or Dubai service code.`);
     if (!(a.qty >= 1)) err("",`${tag}: quantity must be at least 1.`);
-    if (!(a.gross > 0) && !isServiceCode(a)) err("",`${tag}: gross amount is zero.`);
+    if (a.gross < 0) err("",`${tag}: gross amount is negative.`);
     if (a.ps > a.gross) err("",`${tag}: patient share is more than the gross amount.`);
     if (/^D\d{4}$/i.test(a.code || "") && dx.length && !dx.some(d => DENTAL_DX.test(d))) warn("CODE-010",`${tag} is a dental code but no dental diagnosis (K00–K14) is on the claim.`);
   });
