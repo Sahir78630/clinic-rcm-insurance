@@ -214,7 +214,10 @@ const toISO = d => d.getFullYear()+"-"+z(d.getMonth()+1)+"-"+z(d.getDate());
 const addDays = (iso,n) => { const d = new Date(iso+"T00:00:00"); d.setDate(d.getDate()+n); return toISO(d); };
 const diff = (a,b) => Math.round((new Date(b+"T00:00:00") - new Date(a+"T00:00:00"))/864e5);
 const TODAY = toISO(new Date());
-const fmtD = iso => iso ? new Date(iso+"T00:00:00").toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"}) : "–";
+// Dates are shown as dd/mm/yy everywhere
+const fmtD = iso => { const m = String(iso||"").match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? `${m[3]}/${m[2]}/${m[1].slice(2)}` : (iso ? String(iso) : "–"); };
+// eClaimLink's dd/MM/yyyy HH:mm, shown as dd/mm/yy HH:mm
+const fmtDhpo = v => String(v||"").replace(/^(\d{2})\/(\d{2})\/\d{2}(\d{2})/, "$1/$2/$3");
 const nowTime = () => { const d = new Date(); return z(d.getHours())+":"+z(d.getMinutes()); };
 
 /* ---------- reference data ---------- */
@@ -1474,7 +1477,7 @@ function gettingStarted(){
 
 /* ---------- loading real records ---------- */
 const CLAIM_COLS = "claim_id,patient_name,emirates_id,payer,card_no,encounter_date,department,doctor,icd10,cpt,description,quantity,gross,patient_share,prior_auth,status,submitted_date";
-const isoDate = v => { v = String(v||"").trim(); if (/^\d{4}-\d{2}-\d{2}/.test(v)) return v.slice(0,10); const m = v.match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})/); return m ? `${m[3]}-${m[2].padStart(2,"0")}-${m[1].padStart(2,"0")}` : null; };
+const isoDate = v => { v = String(v||"").trim(); if (/^\d{4}-\d{2}-\d{2}/.test(v)) return v.slice(0,10); const m = v.match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4}|\d{2})(?!\d)/); if (m && m[3].length === 2) m[3] = "20" + m[3]; return m ? `${m[3]}-${m[2].padStart(2,"0")}-${m[1].padStart(2,"0")}` : null; };
 const num = v => parseFloat(String(v||"").replace(/,/g,"")) || 0;
 function payerFrom(v){
   const k = norm(v); if (!k) return null;
@@ -1500,7 +1503,7 @@ function claimsImportDlg(){
   openDlg(dlgHead("Import claims","Choose CSV or XML files from your clinic system or eClaimLink, or paste one below.") +
   `<div class="dlg-body">
     <div class="muted" style="font-size:12.5px"><b>XML:</b> eClaimLink <span class="code">Claim.Submission</span> files (several at once is fine). <span class="code">Remittance.Advice</span> and prior authorization files are accepted too and post to your records.<br>
-    <b>CSV:</b> one row per service line with the columns <span class="code">${CLAIM_COLS}</span>. Dates as 2026-10-23 or 23/10/2026. Status is Draft unless the row says Submitted.<br>
+    <b>CSV:</b> one row per service line with the columns <span class="code">${CLAIM_COLS}</span>. Dates as 23/10/26, 23/10/2026 or 2026-10-23. Status is Draft unless the row says Submitted.<br>
     Importing a draft claim again replaces it; submitted claims are left as they are.</div>
     <div class="actions"><label class="btn sm" for="ciFile">Choose CSV, Excel, PDF or XML files</label><input type="file" id="ciFile" accept="${UPLOAD_ACCEPT},.xml,text/xml,application/xml" multiple hidden><button class="btn sm" id="ciHead" type="button">Insert CSV column headings</button></div>
     <label style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" id="ciDraft" checked> Claim XML files have not been sent yet: import them as drafts so they can be checked</label>
@@ -1813,7 +1816,7 @@ async function pdfRows(file){
 async function readSheet(file){
   if (/\.xlsx?$/i.test(file.name)){ const X = await loadXlsx(); const wb = X.read(await file.arrayBuffer(), {type:"array"});
     const ws = wb.SheetNames.map(n => wb.Sheets[n]).find(w => w["!ref"]) || wb.Sheets[wb.SheetNames[0]];
-    return X.utils.sheet_to_json(ws, {header:1, raw:false, defval:""}).map(r => r.map(v => String(v))).filter(r => r.some(c => c.trim())); }
+    return X.utils.sheet_to_json(ws, {header:1, raw:false, defval:"", dateNF:"yyyy-mm-dd"}).map(r => r.map(v => String(v))).filter(r => r.some(c => c.trim())); }
   if (/\.pdf$/i.test(file.name)) return pdfRows(file);
   return parseCsv((await file.text()).replace(/^﻿/, ""));
 }
@@ -2353,7 +2356,7 @@ R.eclaimlink = () => {
   ${res ? `<section class="panel"><div class="panel-head"><div><h2>${res.length} file${res.length===1?"":"s"}</h2><p>${inRecords} already in your records${u.notes.length?" · "+esc(u.notes.join("; ")):""}${res.length>=500?" · eClaimLink returns at most 500 per search, narrow the dates":""}</p></div>
     <div class="actions"><button class="btn" id="eListDl" type="button" ${!res.length?"disabled":""}>Download list</button><button class="btn" id="eReport" type="button" ${!res.length||u.busy?"disabled":""}>${u.busy==="report"?"Building report…":"Build report"}</button><button class="btn primary" id="eLoadAll" type="button" ${!res.length||u.busy||inRecords===res.length?"disabled":""}>${u.busy==="load"?"Loading…":"Add all to my records"}</button></div></div>
     <div class="table-wrap"><table><thead><tr><th>Date</th><th>File</th><th>Type</th><th>${u.direction==="sent"?"To":"From"}</th><th class="num">Records</th><th>eClaimLink</th><th>My records</th></tr></thead><tbody>
-    ${res.map((f,i)=>`<tr class="click" data-eview="${i}" tabindex="0"><td class="mono muted">${esc(f.transactionDate||"")}</td><td class="mono">${esc(f.fileName||f.fileId)}</td><td><span class="code">${esc(f.type)}</span></td><td>${esc(payerLabel(u.direction==="sent"?f.receiver:f.sender))}</td><td class="num">${f.recordCount??"–"}</td><td>${pill(f.isDownloaded?"Downloaded":"New")}</td><td>${S.posted[fileKey(f)]?pill("Posted"):"–"}</td></tr>`).join("") || `<tr><td colspan="7" class="empty">No files match this search.</td></tr>`}
+    ${res.map((f,i)=>`<tr class="click" data-eview="${i}" tabindex="0"><td class="mono muted">${esc(fmtDhpo(f.transactionDate))}</td><td class="mono">${esc(f.fileName||f.fileId)}</td><td><span class="code">${esc(f.type)}</span></td><td>${esc(payerLabel(u.direction==="sent"?f.receiver:f.sender))}</td><td class="num">${f.recordCount??"–"}</td><td>${pill(f.isDownloaded?"Downloaded":"New")}</td><td>${S.posted[fileKey(f)]?pill("Posted"):"–"}</td></tr>`).join("") || `<tr><td colspan="7" class="empty">No files match this search.</td></tr>`}
     </tbody></table></div></section>` : `<div class="muted" style="font-size:12.5px">Choose what to look for and search. Opening a file here does not mark it as downloaded, so the Download from eClaimLink button still collects it.</div>`}
   ${u.report ? reportHtml(u.report) : ""}`;
 };
@@ -2383,7 +2386,7 @@ function downloadFile(name, text, type = "text/csv"){
   document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
   toast("Downloaded " + name);
 }
-const csvRow = vals => vals.map(v => `"${String(v ?? "").replace(/"/g,'""')}"`).join(",");
+const csvRow = vals => vals.map(v => `"${String(/^\d{4}-\d{2}-\d{2}$/.test(String(v ?? "")) ? fmtD(v) : v ?? "").replace(/"/g,'""')}"`).join(",");
 function filesCsv(list, direction){
   return [csvRow(["Date","File","Type",direction==="sent"?"To":"From","Records","eClaimLink status","In my records"]),
     ...list.map(f => csvRow([f.transactionDate, f.fileName||f.fileId, f.type, payerLabel(direction==="sent"?f.receiver:f.sender), f.recordCount??"", f.isDownloaded?"Downloaded":"New", S.posted[fileKey(f)]?"Posted":""]))].join("\n");
@@ -2408,12 +2411,12 @@ async function eclViewDlg(i){
     : s.type==="Prior.Authorization" ? [["Replies",t.authorizations],["Approved",t.approved],["Rejected",t.rejected],["Approved amount",money(t.approvedAmount)]]
     : s.type==="Prior.Request" ? [["Requests",t.requests],["Requested",money(t.net)]] : [];
   const rows = s.rows.slice(0,300);
-  const table = s.type==="Remittance.Advice" ? `<thead><tr><th>Claim</th><th>Payer ref.</th><th>Settled</th><th class="num">Claimed</th><th class="num">Paid</th><th class="num">Denied</th><th>Codes</th><th>In my records</th></tr></thead><tbody>${rows.map(r=>`<tr><td class="mono">${esc(r.id)}</td><td class="mono muted">${esc(r.payerRef)}</td><td class="muted">${esc(r.settlement)}</td><td class="num">${aed(r.net)}</td><td class="num">${aed(r.paid)}</td><td class="num">${r.denied?aed(r.denied):"–"}</td><td>${r.denialCodes.map(k=>`<span class="code" title="${esc(DENIALS[k]||"")}">${esc(k)}</span>`).join(" ")}</td><td>${claimById(r.id)?"Yes":"No"}</td></tr>`).join("")}</tbody>`
+  const table = s.type==="Remittance.Advice" ? `<thead><tr><th>Claim</th><th>Payer ref.</th><th>Settled</th><th class="num">Claimed</th><th class="num">Paid</th><th class="num">Denied</th><th>Codes</th><th>In my records</th></tr></thead><tbody>${rows.map(r=>`<tr><td class="mono">${esc(r.id)}</td><td class="mono muted">${esc(r.payerRef)}</td><td class="muted">${esc(fmtDhpo(r.settlement))}</td><td class="num">${aed(r.net)}</td><td class="num">${aed(r.paid)}</td><td class="num">${r.denied?aed(r.denied):"–"}</td><td>${r.denialCodes.map(k=>`<span class="code" title="${esc(DENIALS[k]||"")}">${esc(k)}</span>`).join(" ")}</td><td>${claimById(r.id)?"Yes":"No"}</td></tr>`).join("")}</tbody>`
     : s.type==="Claim.Submission" ? `<thead><tr><th>Claim</th><th>Member</th><th>Payer</th><th class="num">Activities</th><th class="num">Gross</th><th class="num">Net</th><th>Resubmission</th><th>In my records</th></tr></thead><tbody>${rows.map(r=>`<tr><td class="mono">${esc(r.id)}</td><td class="mono">${esc(r.member)}</td><td>${esc(payerLabel(r.payer))}</td><td class="num">${r.activities}</td><td class="num">${aed(r.gross)}</td><td class="num">${aed(r.net)}</td><td>${esc(r.resubmission||"–")}</td><td>${claimById(r.id)?"Yes":"No"}</td></tr>`).join("")}</tbody>`
-    : s.type==="Prior.Authorization" ? `<thead><tr><th>Request</th><th>Result</th><th>Payer ref.</th><th class="num">Approved AED</th><th>Valid</th><th>Comments</th></tr></thead><tbody>${rows.map(r=>`<tr><td class="mono">${esc(r.id)}</td><td>${pill(/^y/i.test(r.result)?"Approved":"Rejected")}</td><td class="mono muted">${esc(r.payerRef)}</td><td class="num">${aed(r.approved)}</td><td class="muted">${esc(r.start)} – ${esc(r.end)}</td><td class="wrap-cell">${esc([r.denialCode,r.comments].filter(Boolean).join(": "))}</td></tr>`).join("")}</tbody>`
+    : s.type==="Prior.Authorization" ? `<thead><tr><th>Request</th><th>Result</th><th>Payer ref.</th><th class="num">Approved AED</th><th>Valid</th><th>Comments</th></tr></thead><tbody>${rows.map(r=>`<tr><td class="mono">${esc(r.id)}</td><td>${pill(/^y/i.test(r.result)?"Approved":"Rejected")}</td><td class="mono muted">${esc(r.payerRef)}</td><td class="num">${aed(r.approved)}</td><td class="muted">${esc(fmtDhpo(r.start))} – ${esc(fmtDhpo(r.end))}</td><td class="wrap-cell">${esc([r.denialCode,r.comments].filter(Boolean).join(": "))}</td></tr>`).join("")}</tbody>`
     : s.type==="Prior.Request" ? `<thead><tr><th>Request</th><th>Member</th><th>Payer</th><th class="num">Activities</th><th class="num">Requested AED</th></tr></thead><tbody>${rows.map(r=>`<tr><td class="mono">${esc(r.id)}</td><td class="mono">${esc(r.member)}</td><td>${esc(payerLabel(r.payer))}</td><td class="num">${r.activities}</td><td class="num">${aed(r.net)}</td></tr>`).join("")}</tbody>` : "";
   const applyLabel = {"Claim.Submission":"Add these claims to my records","Remittance.Advice":"Post these payments to my claims","Prior.Request":"Add these approval requests","Prior.Authorization":"Record these approval replies"}[s.type];
-  openDlg(dlgHead(`<span class="mono" style="font-size:14px">${esc(v.fileName||f.fileName||f.fileId)}</span>`, `${esc(s.type||"Unknown type")} · ${esc(payerLabel(s.header.sender))} → ${esc(payerLabel(s.header.receiver))} · ${esc(s.header.date)}${s.header.disposition?" · "+esc(s.header.disposition):""}`,
+  openDlg(dlgHead(`<span class="mono" style="font-size:14px">${esc(v.fileName||f.fileName||f.fileId)}</span>`, `${esc(s.type||"Unknown type")} · ${esc(payerLabel(s.header.sender))} → ${esc(payerLabel(s.header.receiver))} · ${esc(fmtDhpo(s.header.date))}${s.header.disposition?" · "+esc(s.header.disposition):""}`,
     `<button class="btn sm" data-act="copyXml" type="button">Copy XML</button>`) +
   `<div class="dlg-body">
     ${facts.length?`<dl class="kv">${facts.map(([k,val])=>`<div><dt>${k}</dt><dd>${esc(val)}</dd></div>`).join("")}</dl>`:""}
