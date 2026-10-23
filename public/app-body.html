@@ -276,7 +276,7 @@ function status(c){
 }
 const STATUS_PILL = {"Draft":"p-mute","Submitted":"p-info","Resubmitted":"p-info","Paid":"p-ok","Closed":"p-mute","Partially paid":"p-warn","Rejected":"p-bad",
   "Eligible":"p-ok","Not eligible":"p-bad","Inactive":"p-bad","Not found":"p-bad","Not verified":"p-mute","Check failed":"p-bad","Approval needed":"p-warn",
-  "Pending":"p-info","New":"p-info","Downloaded":"p-mute","Accepted":"p-ok","Accepted with warnings":"p-warn","Posted":"p-ok","Waiting":"p-info","Awaiting payer":"p-info","Recovered":"p-ok","Partially recovered":"p-warn","Denied again":"p-bad","Approved":"p-ok","Partially approved":"p-warn","Reconciled":"p-ok","Unreconciled":"p-warn","Variance":"p-bad","Awaiting deposit":"p-info","Ready":"p-ok","Warnings":"p-warn","Errors":"p-bad"};
+  "Pending":"p-info","New":"p-info","Downloaded":"p-mute","Accepted":"p-ok","Accepted with warnings":"p-warn","Posted":"p-ok","Waiting":"p-info","Awaiting payer":"p-info","Recovered":"p-ok","Partially recovered":"p-warn","Denied again":"p-bad","Approved":"p-ok","Partially approved":"p-warn","Reconciled":"p-ok","Unreconciled":"p-warn","Variance":"p-bad","Awaiting deposit":"p-info","Ready":"p-ok","Warnings":"p-warn","Errors":"p-bad","Report missing":"p-info"};
 const pill = s => `<span class="pill ${STATUS_PILL[s]||"p-mute"}">${esc(s)}</span>`;
 const ageBasis = c => c.status === "Resubmitted" && c.resubs.length ? c.resubs[c.resubs.length-1].d : c.submitted;
 const ageOf = (c, basis) => diff(basis === "enc" ? c.enc : (c.submitted || c.enc), TODAY);
@@ -469,11 +469,11 @@ R.claims = () => {
   }).sort((a,b)=>b.enc.localeCompare(a.enc));
   const sum = list.reduce((s,c)=>{const t=totals(c);s.net+=t.net;s.paid+=t.paid;s.out+=t.outstanding;return s;},{net:0,paid:0,out:0});
   const drafts = S.claims.filter(c=>c.status==="Draft");
-  const ready = drafts.filter(c=>checkState(c)!=="Errors"), blocked = drafts.length - ready.length;
+  const ready = drafts.filter(c=>!blocked(c)), nBlocked = drafts.length - ready.length;
   const STS = ["Draft","Submitted","Resubmitted","Paid","Partially paid","Rejected","Closed"];
   return head("Claims","Every insurance claim from encounter to settlement. Open a claim to see activities, payer decisions and history.",
     `<button class="btn" id="importClaims" type="button">Import claims</button><button class="btn" id="checkAll" type="button" ${S.claims.length?"":"disabled"}>Check all claims</button><button class="btn primary" id="submitDrafts" type="button" ${ready.length?"":"disabled"}>Submit ${ready.length} checked claim${ready.length===1?"":"s"}</button>`) +
-  (drafts.length ? `<div class="result ${blocked?"warn":"ok"}" style="margin-bottom:12px"><div><b>Claim check:</b> ${ready.length} of ${drafts.length} draft claims are ready to submit${blocked?`. ${blocked} ha${blocked===1?"s":"ve"} errors and will not be sent until fixed. <button class="btn sm" id="showBlocked" type="button">Show them</button>`:"."}</div></div>` : "") +
+  (drafts.length ? `<div class="result ${nBlocked?"warn":"ok"}" style="margin-bottom:12px"><div><b>Claim check:</b> ${ready.length} of ${drafts.length} draft claims are ready to submit${nBlocked?`. ${nBlocked} ha${nBlocked===1?"s":"ve"} errors and will not be sent until fixed. <button class="btn sm" id="showBlocked" type="button">Show them</button>`:"."}</div></div>` : "") +
   `<div class="filters">
     <input type="text" id="fq" placeholder="Search claim, patient or card" value="${esc(UI.claimQ)}" style="flex:1 1 220px">
     <select id="fpayer"><option value="">All payers</option>${PAYERS.map(p=>`<option value="${p.id}" ${UI.claimPayer===p.id?"selected":""}>${esc(p.name)}</option>`).join("")}</select>
@@ -768,7 +768,7 @@ function paDepartments(){
   return fromServer && fromServer.length ? fromServer : Object.keys(DEPTS).filter(d => DEPTS[d].pa);
 }
 function checkClaim(c){
-  const out = [], err = (code, msg) => out.push({level:"error", code, msg}), warn = (code, msg) => out.push({level:"warn", code, msg});
+  const out = [], err = (code, msg, lab) => out.push({level:"error", code, msg, lab}), warn = (code, msg, lab) => out.push({level:"warn", code, msg, lab});
   const p = patient(c.patient), pol = p.policy || {};
   if (!c.card) err("ELIG-001","Member card number is missing.");
   if (!p.eid) warn("ELIG-001","Emirates ID is missing.");
@@ -797,8 +797,8 @@ function checkClaim(c){
   // Results are required for the tests in RESULT_REQUIRED; for other lab tests a missing result is a warning.
   c.acts.filter(a => Array.isArray(a.obs) && /^8\d{4}$/.test(a.code || "")).forEach(a => {
     const req = RESULT_REQUIRED[a.code], n = a.obs.filter(o => o.value).length;
-    if (!n) (req ? err : warn)("",`${req ? req[0] : "Lab test " + a.code} (${a.code}): no result entered in the claim file.`);
-    else if (req && n < req[1]) warn("",`${req[0]} (${a.code}): ${n} result${n===1?"":"s"} entered, ${req[1]} expected (${req[2]}).`);
+    if (!n) (req ? err : warn)("",`Report missing: ${req ? `${req[0]} (${a.code})` : "lab test " + a.code} has no result in the claim file.`, true);
+    else if (req && n < req[1]) warn("",`Report incomplete: ${req[0]} (${a.code}) has ${n} result${n===1?"":"s"}, ${req[1]} expected (${req[2]}).`, true);
   });
   const codes = new Set(c.acts.map(a => a.code).filter(Boolean));
   if (c.acts.length !== codes.size) warn("DUPL-002","The same activity code appears more than once. Use quantity instead if it is the same service.");
@@ -813,25 +813,30 @@ function checkClaim(c){
   }
   return out;
 }
-const checkState = c => { const r = checkClaim(c); return r.some(x => x.level === "error") ? "Errors" : r.length ? "Warnings" : "Ready"; };
+// "Report missing" (blue) when the only blocking problem is a missing lab result
+const checkState = c => { const r = checkClaim(c), e = r.filter(x => x.level === "error");
+  return e.some(x => !x.lab) ? "Errors" : e.length ? "Report missing" : r.length ? "Warnings" : "Ready"; };
+const blocked = c => ["Errors","Report missing"].includes(checkState(c));
+const issueHtml = x => x.lab ? `<div style="color:var(--info);font-weight:600">${x.level==="error"?"✕":"!"} ${esc(x.msg)}</div>`
+  : `<div>${x.level === "error" ? "<b>✕</b>" : "!"} ${esc(x.msg)}${x.code ? ` <span class="code" title="${esc(DENIALS[x.code]||"")}">${x.code}</span>` : ""}</div>`;
 function checkHtml(c){
   const r = checkClaim(c);
   if (!r.length) return `<div class="result ok"><b>Claim check passed.</b> No problems found.</div>`;
   const e = r.filter(x => x.level === "error"), w = r.filter(x => x.level === "warn");
   return `<div class="result ${e.length ? "bad" : "warn"}"><b>Claim check: ${e.length} error${e.length===1?"":"s"}, ${w.length} warning${w.length===1?"":"s"}</b>
-    ${r.map(x => `<div>${x.level === "error" ? "✕" : "!"} ${esc(x.msg)}${x.code ? ` <span class="code" title="${esc(DENIALS[x.code]||"")}">${x.code}</span>` : ""}</div>`).join("")}</div>`;
+    ${r.map(issueHtml).join("")}</div>`;
 }
 
 // One list of every claim with problems, for working through a batch
 function checkAllDlg(){
   const rows = S.claims.map(c => ({c, r: checkClaim(c)})).filter(x => x.r.length)
     .sort((a,b) => b.r.filter(x=>x.level==="error").length - a.r.filter(x=>x.level==="error").length || a.c.id.localeCompare(b.c.id));
-  const errs = rows.filter(x => x.r.some(y => y.level === "error")).length;
+  const errs = rows.filter(x => x.r.some(y => y.level === "error")).length, labs = rows.filter(x => x.r.some(y => y.lab)).length;
   const csv = ["claim_id,patient,payer,status,level,code,problem", ...rows.flatMap(({c,r}) => r.map(x => [c.id, patient(c.patient).name, payer(c.payer).name, status(c), x.level, x.code, x.msg].map(v => `"${String(v).replace(/"/g,'""')}"`).join(",")))].join("\n");
-  openDlg(dlgHead("Claim check", `${S.claims.length} claims checked · ${S.claims.length - rows.length} clean · ${errs} with errors · ${rows.length - errs} with warnings only`,
+  openDlg(dlgHead("Claim check", `${S.claims.length} claims checked · ${S.claims.length - rows.length} clean · ${errs} with errors · ${rows.length - errs} with warnings only · <span style="color:var(--info);font-weight:600">${labs} with lab reports missing</span>`,
     rows.length ? `<button class="btn sm" data-act="copyXml" type="button">Copy as CSV</button>` : "") +
   `<div class="dlg-body">${rows.length ? `<div class="table-wrap"><table><thead><tr><th>Claim</th><th>Patient</th><th>Payer</th><th>Status</th><th>Problems</th></tr></thead><tbody>
-    ${rows.map(({c,r}) => `<tr class="click" data-claim="${c.id}"><td class="mono">${c.id}</td><td>${esc(patient(c.patient).name)}</td><td>${esc(payer(c.payer).name)}</td><td>${pill(status(c))}</td><td class="wrap-cell">${r.map(x => `<div>${x.level==="error"?"<b>✕</b>":"!"} ${esc(x.msg)}${x.code?` <span class="code">${x.code}</span>`:""}</div>`).join("")}</td></tr>`).join("")}
+    ${rows.map(({c,r}) => `<tr class="click" data-claim="${c.id}"><td class="mono">${c.id}</td><td>${esc(patient(c.patient).name)}</td><td>${esc(payer(c.payer).name)}</td><td>${pill(status(c))}</td><td class="wrap-cell">${r.map(issueHtml).join("")}</td></tr>`).join("")}
     </tbody></table></div>` : `<div class="result ok">Every claim passed the check.</div>`}
     <textarea id="xmlOut" readonly hidden>${esc(csv)}</textarea>
     <p class="muted" style="font-size:12.5px">Click a claim to open it. Fix the data in your clinic system and import the claims again, or correct and resubmit rejected claims.</p></div>`);
@@ -842,7 +847,7 @@ function claimDlg(id){
   const p = patient(c.patient), t = totals(c), st = status(c);
   let act = "";
   const chk = c.status === "Draft" ? checkState(c) : null;
-  if (c.status === "Draft") act = chk === "Errors"
+  if (c.status === "Draft") act = blocked(c)
     ? `<span class="muted">Fix the errors in the claim check first.</span> <button class="btn sm" data-act="submit" type="button">Submit anyway</button>`
     : `<button class="btn primary" data-act="submit" type="button">${ECL()?"Submit to "+eclLabel():"Submit to payer"}</button>`;
   if (st === "Rejected" || st === "Partially paid") act = `
@@ -1018,7 +1023,7 @@ function bindDlg(){
       if(!list.length){ $("#ciMsg").textContent="Paste or choose a file first."; return; }
       const r=importClaimFiles(list, $("#ciDraft").checked); ciFiles=[];
       if (!r.added && !r.updated && !r.existing && !r.posted.length){ $("#ciMsg").textContent = r.skipped.slice(0,3).join("; ") || "Nothing to import."; return; }
-      closeDlg(); current="claims"; const bad=S.claims.filter(c=>c.status==="Draft"&&checkState(c)==="Errors").length;
+      closeDlg(); current="claims"; const bad=S.claims.filter(c=>c.status==="Draft"&&blocked(c)).length;
       done(`Imported ${r.added} claims`+(r.updated?`, updated ${r.updated}`:"")+(r.existing?`, ${r.existing} already here`:"")+(r.posted.length?`. ${r.posted.join("; ")}`:"")+(bad?`. Claim check: ${bad} drafts have errors`:"")+(r.skipped.length?`. Skipped ${r.skipped.length}: ${r.skipped.slice(0,3).join("; ")}`:"")); return; }
     if (a==="apImport" && LIVE.on){ const t=$("#apCsv").value.trim(); if(!t){ $("#apMsg").textContent="Paste or choose a CSV first."; return; } b.disabled=true; $("#apMsg").textContent="Importing and checking with the payer…";
       api("/appointments/import",{csv:t,replace:$("#apReplace").checked}).then(r=>{ LIVE.appts=r.appointments; closeDlg(); refreshLog(); toast(`Imported ${r.imported}, checked ${r.checked}`+(r.skipped.length?`. Skipped ${r.skipped.length}: `+r.skipped.slice(0,3).map(x=>"line "+x.line+" "+x.reason).join("; "):"")); render(); })
@@ -1121,7 +1126,7 @@ function bindView(){
     $("#importClaims").onclick=claimsImportDlg;
     $("#checkAll").onclick=checkAllDlg;
     const sb=$("#showBlocked"); if (sb) sb.onclick=()=>{ UI.claimStatus="Draft"; UI.claimPayer=""; UI.claimQ=""; UI.claimDept=""; render(); };
-    $("#submitDrafts").onclick=async e=>{ const d=S.claims.filter(c=>c.status==="Draft"&&checkState(c)!=="Errors");
+    $("#submitDrafts").onclick=async e=>{ const d=S.claims.filter(c=>c.status==="Draft"&&!blocked(c));
       if (!ECL()){ d.forEach(submitClaim); return done(`Submitted ${d.length} claims to payers`); }
       e.target.disabled=true; e.target.textContent="Sending to eClaimLink…";
       const byPayer = {}; d.forEach(c=>(byPayer[c.payer]=byPayer[c.payer]||[]).push(c));
