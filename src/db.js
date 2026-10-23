@@ -38,6 +38,33 @@ CREATE TABLE IF NOT EXISTS appointments (
 );
 CREATE INDEX IF NOT EXISTS appointments_date ON appointments(date);
 
+-- every file sent to or received from eClaimLink, kept for audit
+CREATE TABLE IF NOT EXISTS eclaimlink_files (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  created_at TEXT DEFAULT (datetime('now')),
+  direction TEXT NOT NULL,            -- 'out' (uploaded) or 'in' (downloaded)
+  file_id TEXT,                       -- eClaimLink FileID for downloads
+  file_name TEXT,
+  type TEXT,                          -- root element: Claim.Submission, Remittance.Advice, ...
+  sender TEXT,
+  receiver TEXT,
+  record_count INTEGER,
+  result_code INTEGER,
+  transaction_id TEXT,
+  error_message TEXT,
+  error_report TEXT,
+  xml TEXT,
+  applied_at TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS eclaimlink_in_file ON eclaimlink_files(direction, file_id);
+
+-- test-mode stand-in for the eClaimLink inbox
+CREATE TABLE IF NOT EXISTS eclaimlink_mock_inbox (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  file_name TEXT, sender TEXT, receiver TEXT, record_count INTEGER, created_at TEXT DEFAULT (datetime('now')),
+  xml TEXT NOT NULL, downloaded INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS eligibility_checks (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   created_at TEXT DEFAULT (datetime('now')),

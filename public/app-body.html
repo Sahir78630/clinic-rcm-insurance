@@ -415,7 +415,7 @@ function status(c){
 }
 const STATUS_PILL = {"Draft":"p-mute","Submitted":"p-info","Resubmitted":"p-info","Paid":"p-ok","Closed":"p-mute","Partially paid":"p-warn","Rejected":"p-bad",
   "Eligible":"p-ok","Not eligible":"p-bad","Inactive":"p-bad","Not found":"p-bad","Not verified":"p-mute","Check failed":"p-bad","Approval needed":"p-warn",
-  "Pending":"p-info","Awaiting payer":"p-info","Recovered":"p-ok","Partially recovered":"p-warn","Denied again":"p-bad","Approved":"p-ok","Partially approved":"p-warn","Reconciled":"p-ok","Unreconciled":"p-warn","Variance":"p-bad","Awaiting deposit":"p-info"};
+  "Pending":"p-info","Accepted":"p-ok","Accepted with warnings":"p-warn","Posted":"p-ok","Waiting":"p-info","Awaiting payer":"p-info","Recovered":"p-ok","Partially recovered":"p-warn","Denied again":"p-bad","Approved":"p-ok","Partially approved":"p-warn","Reconciled":"p-ok","Unreconciled":"p-warn","Variance":"p-bad","Awaiting deposit":"p-info"};
 const pill = s => `<span class="pill ${STATUS_PILL[s]||"p-mute"}">${esc(s)}</span>`;
 const ageBasis = c => c.status === "Resubmitted" && c.resubs.length ? c.resubs[c.resubs.length-1].d : c.submitted;
 const ageOf = (c, basis) => diff(basis === "enc" ? c.enc : (c.submitted || c.enc), TODAY);
@@ -586,7 +586,7 @@ R.approvals = () => {
   const list = S.auths.filter(a => f==="All" || a.status===f);
   const sts = ["All","Pending","Approved","Partially approved","Rejected"];
   const pend = S.auths.filter(a=>a.status==="Pending");
-  return head("Prior approvals","Requests sent to payers for services that need approval before treatment, with the payer's decision and validity window.",`<button class="btn primary" id="newPaBtn" type="button">New request</button>`) +
+  return head("Prior approvals","Requests sent to payers for services that need approval before treatment, with the payer's decision and validity window.",`${ECL()?`<button class="btn" data-eclsync type="button">Download from eClaimLink</button>`:""}<button class="btn primary" id="newPaBtn" type="button">New request</button>`) +
   `<div class="kpis">
     <div class="kpi"><span class="eyebrow">Awaiting payer</span><span class="v">${pend.length}</span><span class="s">AED ${aed(pend.reduce((s,a)=>s+a.requested,0))} requested</span></div>
     <div class="kpi"><span class="eyebrow">Approved, last 30 days</span><span class="v">${S.auths.filter(a=>a.status.includes("pproved")&&a.respOn&&diff(a.respOn,TODAY)<=30).length}</span><span class="s">including partial approvals</span></div>
@@ -633,6 +633,7 @@ R.remittance = () => {
     <div class="kpi"><span class="eyebrow">Awaiting bank deposit</span><span class="v">${S.ras.filter(r=>r.bank==null).length}</span><span class="s">AED ${aed(S.ras.filter(r=>r.bank==null).reduce((s,r)=>s+r.amount,0))}</span></div>
     <div class="kpi ${variance<0?"alert":""}"><span class="eyebrow">Bank vs remittance variance</span><span class="v">${aed(variance)}<small>AED</small></span><span class="s">${S.ras.filter(r=>raState(r)==="Variance").length} remittances differ</span></div>
   </div>
+  ${ECL()?eclPanel():""}
   <section class="panel"><div class="panel-head"><div><h2>Import remittance advice</h2><p>Paste a <span class="code">Remittance.Advice</span> XML file as downloaded from the payer or DHA eClaimLink. Payments and denial codes post to matching claim activities.</p></div>
     <div class="actions"><button class="btn" id="sampleRa" type="button">Load a sample file</button><label class="btn" for="raFile">Choose file</label><input type="file" id="raFile" accept=".xml,text/xml" hidden></div></div>
     <textarea id="raXml" spellcheck="false" placeholder="&lt;Remittance.Advice&gt; … &lt;/Remittance.Advice&gt;"></textarea>
@@ -673,19 +674,10 @@ function resubState(x){
   if (x.outcome.paid <= 0.009) return "Denied again";
   return x.outcome.denied > 0.009 ? "Partially recovered" : "Recovered";
 }
-function resubXml(c){
-  const p = patient(c.patient), t = totals(c), x = c.resubs[c.resubs.length-1] || {type:"correction",note:""};
-  const dt = iso => iso.split("-").reverse().join("/");
-  return `<?xml version="1.0" encoding="utf-8"?>
-<Claim.Submission>
-  <Header>
-    <SenderID>DHA-F-0000000</SenderID>
-    <ReceiverID>${c.payer}</ReceiverID>
-    <TransactionDate>${dt(TODAY)} ${nowTime()}</TransactionDate>
-    <RecordCount>1</RecordCount>
-    <DispositionFlag>PRODUCTION</DispositionFlag>
-  </Header>
-  <Claim>
+const dtX = iso => iso.split("-").reverse().join("/");
+function claimBlock(c, resub){
+  const p = patient(c.patient), t = totals(c), x = c.resubs[c.resubs.length-1] || {type:"correction",note:""}, dt = dtX;
+  return `  <Claim>
     <ID>${c.id}</ID>
     <MemberID>${esc(c.card)}</MemberID>
     <PayerID>${c.payer}</PayerID>
@@ -710,16 +702,81 @@ ${c.acts.map(a=>`    <Activity>
       <Type>${/^D\d/.test(a.code)?6:3}</Type>
       <Code>${a.code}</Code>
       <Quantity>${a.qty}</Quantity>
-      <Net>${a.net.toFixed(2)}</Net>
+      <Net>${(resub ? r2(a.net-a.paid) : a.net).toFixed(2)}</Net>
       <Clinician>${esc(c.doctor)}</Clinician>${c.pa?`
       <PriorAuthorizationID>${c.pa}</PriorAuthorizationID>`:""}
-    </Activity>`).join("\n")}
+    </Activity>`).join("\n")}${resub?`
     <Resubmission>
       <Type>${esc(x.type)}</Type>
       <Comment>${esc(x.note)}</Comment>
-    </Resubmission>
-  </Claim>
+    </Resubmission>`:""}
+  </Claim>`;
+}
+const xmlHeader = (receiver, count) => `  <Header>
+    <SenderID>DHA-F-0000000</SenderID>
+    <ReceiverID>${receiver}</ReceiverID>
+    <TransactionDate>${dtX(TODAY)} ${nowTime()}</TransactionDate>
+    <RecordCount>${count}</RecordCount>
+    <DispositionFlag>PRODUCTION</DispositionFlag>
+  </Header>`;
+// one file per payer, as eClaimLink routes each file to the receiver in its header
+function claimsXml(list, resub){
+  return `<?xml version="1.0" encoding="utf-8"?>
+<Claim.Submission>
+${xmlHeader(list[0].payer, list.length)}
+${list.map(c=>claimBlock(c,resub)).join("\n")}
 </Claim.Submission>`;
+}
+const resubXml = c => claimsXml([c], true);
+function priorRequestXml(a){
+  const p = patient(a.patient), qty = parseInt((a.desc.match(/× (\d+)/)||[])[1]) || 1;
+  return `<?xml version="1.0" encoding="utf-8"?>
+<Prior.Request>
+${xmlHeader(a.payer, 1)}
+  <Authorization>
+    <Type>Authorization</Type>
+    <ID>${a.id}</ID>
+    <MemberID>${esc(p.policy.card)}</MemberID>
+    <PayerID>${a.payer}</PayerID>
+    <EmiratesIDNumber>${esc(p.eid)}</EmiratesIDNumber>
+    <DateOrdered>${dtX(TODAY)}</DateOrdered>
+    <Encounter>
+      <FacilityID>DHA-F-0000000</FacilityID>
+      <Type>1</Type>
+    </Encounter>
+    <Diagnosis>
+      <Type>Principal</Type>
+      <Code>${esc(a.dx)}</Code>
+    </Diagnosis>
+    <Activity>
+      <ID>${a.id}-1</ID>
+      <Start>${dtX(TODAY)} 09:00</Start>
+      <Type>${/^D\d/.test(a.code)?6:3}</Type>
+      <Code>${esc(a.code)}</Code>
+      <Quantity>${qty}</Quantity>
+      <Net>${a.requested.toFixed(2)}</Net>
+      <Clinician>${esc((DEPTS[a.dept]||{dr:[""]}).dr[0])}</Clinician>
+    </Activity>
+  </Authorization>
+</Prior.Request>`;
+}
+function applyPriorAuth(xml){
+  const doc = new DOMParser().parseFromString(xml,"application/xml");
+  const txt = (el,t) => { const x = el.getElementsByTagName(t)[0]; return x ? x.textContent.trim() : ""; };
+  let n = 0;
+  [...doc.getElementsByTagName("Authorization")].forEach(au => {
+    const a = S.auths.find(x => x.id === txt(au,"ID")); if (!a) return;
+    const yes = /^y/i.test(txt(au,"Result"));
+    const paid = [...au.getElementsByTagName("Activity")].reduce((s,x)=>s+(parseFloat(txt(x,"PaymentAmount"))||0),0);
+    a.status = !yes ? "Rejected" : paid > 0 && paid < a.requested - 0.009 ? "Partially approved" : "Approved";
+    a.approved = yes ? r2(paid || a.requested) : 0;
+    a.respOn = TODAY;
+    const end = txt(au,"End").slice(0,10).split("/");
+    a.validTo = !yes ? null : end.length === 3 ? `${end[2]}-${end[1]}-${end[0]}` : addDays(TODAY,30);
+    a.note = [txt(au,"DenialCode"), txt(au,"Comments")].filter(Boolean).join(": ") + (txt(au,"IDPayer") ? ` (payer ref. ${txt(au,"IDPayer")})` : "");
+    n++;
+  });
+  return n;
 }
 R.resubmissions = () => {
   const rows = [];
@@ -801,7 +858,7 @@ function claimDlg(id){
   const c = claimById(id); if (!c) return;
   const p = patient(c.patient), t = totals(c), st = status(c);
   let act = "";
-  if (c.status === "Draft") act = `<button class="btn primary" data-act="submit" type="button">Submit to payer</button>`;
+  if (c.status === "Draft") act = `<button class="btn primary" data-act="submit" type="button">${ECL()?"Submit to "+eclLabel():"Submit to payer"}</button>`;
   if (st === "Rejected" || st === "Partially paid") act = `
     <div class="form-grid" style="width:100%">
       <div class="field"><label for="rsType">Resubmission type</label><select id="rsType"><option value="correction">Correction</option><option value="internal complaint">Internal complaint (appeal)</option></select></div>
@@ -960,11 +1017,20 @@ function bindDlg(){
   $("#dlgInner").querySelectorAll("[data-newpa]").forEach(b=>b.onclick=()=>newPaDlg(b.dataset.newpa,b.dataset.dept));
   $("#dlgInner").querySelectorAll("[data-act]").forEach(b=>b.onclick=()=>{
     const a = b.dataset.act;
+    if (a==="submit" && ECL()){ const c=claimById(dlg.dataset.claim); b.disabled=true; b.textContent="Sending to eClaimLink…";
+      eclUpload(claimsXml([c],false)).then(r=>{ submitClaim(c); c.events.push({d:TODAY,t:`eClaimLink transaction ${r.transactionId||"–"}`+(r.warnings?` (accepted with warnings)`:"")}); c.eclTx=r.transactionId; done("Claim sent to eClaimLink"); claimDlg(c.id); })
+        .catch(e=>{ toast(e.message); claimDlg(c.id); }); return; }
     if (a==="submit"){ submitClaim(claimById(dlg.dataset.claim)); done("Claim submitted"); claimDlg(dlg.dataset.claim); }
     if (a==="resubXml"){ const c=claimById(dlg.dataset.claim); const x=resubXml(c);
       openDlg(dlgHead(`Resubmission file · <span class="mono">${c.id}</span>`,"eClaimLink-style Claim.Submission with a Resubmission block. Copy it into your submission tool.",`<button class="btn sm" data-act="copyXml" type="button">Copy</button>`)+`<div class="dlg-body"><textarea id="xmlOut" readonly style="min-height:360px">${esc(x)}</textarea><div class="actions"><button class="btn sm" data-claim="${c.id}" type="button">Back to claim</button></div></div>`); return; }
     if (a==="copyXml"){ const t=$("#xmlOut"); try { navigator.clipboard.writeText(t.value).then(()=>toast("Copied"),()=>{t.select();}); } catch(e){ t.select(); } return; }
-    if (a==="resubmit"){ const c=claimById(dlg.dataset.claim); const type=$("#rsType").value, note=$("#rsNote").value.trim(); if (!note) return toast("Describe what was corrected before resubmitting"); c.status="Resubmitted"; c.resubs.push({d:TODAY,type,note,amount:totals(c).outstanding,codes:[...new Set(c.acts.filter(a=>a.denial&&a.net>a.paid).map(a=>a.denial))],outcome:null}); c.events.push({d:TODAY,t:`Resubmitted (${type})${note?": "+note:""}`}); done("Claim resubmitted"); claimDlg(c.id); }
+    if (a==="resubmit"){ const c=claimById(dlg.dataset.claim); const type=$("#rsType").value, note=$("#rsNote").value.trim(); if (!note) return toast("Describe what was corrected before resubmitting");
+      const entry={d:TODAY,type,note,amount:totals(c).outstanding,codes:[...new Set(c.acts.filter(a=>a.denial&&a.net>a.paid).map(a=>a.denial))],outcome:null};
+      const record = r => { c.status="Resubmitted"; c.resubs.push(entry); c.events.push({d:TODAY,t:`Resubmitted (${type})${note?": "+note:""}`+(r?`, eClaimLink transaction ${r.transactionId||"–"}`:"")}); done(r?"Resubmission sent to eClaimLink":"Claim resubmitted"); claimDlg(c.id); };
+      if (!ECL()) return record(null);
+      b.disabled=true; b.textContent="Sending to eClaimLink…";
+      c.resubs.push(entry); const xml=resubXml(c); c.resubs.pop();
+      eclUpload(xml).then(record).catch(e=>{ toast(e.message); claimDlg(c.id); }); return; }
     if (a==="writeoff"){ const c=claimById(dlg.dataset.claim); const t=totals(c); c.writeOff=r2((c.writeOff||0)+t.outstanding); c.woReason=$("#woReason").value; c.events.push({d:TODAY,t:`Balance AED ${aed(t.outstanding)} written off: ${c.woReason}`}); done("Balance written off"); claimDlg(c.id); }
     if (a==="reconcile"){ const r=S.ras.find(x=>x.id===dlg.dataset.ra); const amt=parseFloat($("#bankAmt").value); if (isNaN(amt)) return toast("Enter the bank amount first"); const note=$("#bankNote").value; if (Math.abs(amt-r.amount)>0.009 && note==="No variance") return toast("Bank amount differs from the remittance. Pick a variance reason."); r.bank=r2(amt); r.status="Reconciled"; r.recOn=TODAY; r.note=note; done("Remittance reconciled"); raDlg(r.id); }
     if (a==="apImport" && LIVE.on){ const t=$("#apCsv").value.trim(); if(!t){ $("#apMsg").textContent="Paste or choose a CSV first."; return; } b.disabled=true; $("#apMsg").textContent="Importing and checking with the payer…";
@@ -985,8 +1051,11 @@ function bindDlg(){
     if (a==="paSave"){ const x=S.auths.find(y=>y.id===dlg.dataset.pa); x.status=$("#paDec").value; x.approved=x.status==="Rejected"?0:r2(parseFloat($("#paAmt").value)||0); x.note=$("#paNote").value.trim(); x.respOn=TODAY; x.validTo=x.status==="Rejected"?null:addDays(TODAY,30); done("Response saved"); closeDlg(); }
     if (a==="paCreate"){ const pt=patient($("#npPt").value), dd=$("#npDept").value, code=$("#npAct").value, all=[...DEPTS[dd].acts,...DEPTS[dd].extra], act=all.find(x=>x[0]===code), qty=Math.max(1,parseInt($("#npQty").value)||1);
       const id = "PA-"+(Math.max(...S.auths.map(x=>parseInt(x.id.slice(3))))+1);
-      S.auths.unshift({id,patient:pt.id,payer:pt.policy.payer,dept:dd,code,desc:act[1]+(qty>1?` × ${qty}`:""),dx:$("#npDx").value,requested:r2(act[2]*qty*(1-pt.policy.copay/100)),approved:0,status:"Pending",reqOn:TODAY,respOn:null,validTo:null,claim:null,note:""});
-      UI.paFilter="All"; closeDlg(); current="approvals"; done("Request "+id+" sent to "+payer(pt.policy.payer).name); }
+      const rec={id,patient:pt.id,payer:pt.policy.payer,dept:dd,code,desc:act[1]+(qty>1?` × ${qty}`:""),dx:$("#npDx").value,requested:r2(act[2]*qty*(1-pt.policy.copay/100)),approved:0,status:"Pending",reqOn:TODAY,respOn:null,validTo:null,claim:null,note:""};
+      const finish = r => { if (r) rec.note = `eClaimLink transaction ${r.transactionId||"–"}`; S.auths.unshift(rec); UI.paFilter="All"; closeDlg(); current="approvals"; done("Request "+id+" sent to "+payer(pt.policy.payer).name+(r?" via eClaimLink":"")); };
+      if (!ECL()) return finish(null);
+      b.disabled=true; b.textContent="Sending to eClaimLink…";
+      eclUpload(priorRequestXml(rec)).then(finish).catch(e=>{ b.disabled=false; b.textContent="Send request"; toast(e.message); }); return; }
   });
 }
 function done(msg){ save(); render(); toast(msg); }
@@ -1028,7 +1097,7 @@ ${c.acts.map((a,k)=>{ const due = resub ? r2(a.net-a.paid) : a.net; if (resub &&
 ${lines}
 </Remittance.Advice>`;
 }
-function importRa(xml){
+function importRa(xml, opts={}){
   let doc;
   try { doc = new DOMParser().parseFromString(xml,"application/xml"); } catch(e) { return "Could not read the file."; }
   if (doc.querySelector("parsererror") || !doc.querySelector("Remittance\\.Advice, Claim")) return "This does not look like a Remittance.Advice XML file.";
@@ -1062,8 +1131,9 @@ function importRa(xml){
     lines.push({claim:c.id,paid,denied});
   });
   if (!lines.length) return `None of the ${claimsEl.length} claims in the file match claims in this system.`;
-  const ra = {id:`RA-${pid}-${TODAY.replace(/-/g,"")}-${S.raSeq}`,payer:pid,date:TODAY,payRef:ref||"—",lines,amount:r2(total),bank:null,status:"Unreconciled",recOn:null,source:"Imported file"};
+  const ra = {id:`RA-${pid}-${TODAY.replace(/-/g,"")}-${S.raSeq}`,payer:pid,date:TODAY,payRef:ref||"—",lines,amount:r2(total),bank:null,status:"Unreconciled",recOn:null,source:opts.source||"Imported file"};
   S.ras.unshift(ra); S.raSeq++;
+  if (opts.quiet){ save(); return {total, count:lines.length, unknown}; }
   save(); render(); raDlg(ra.id);
   toast(`Posted AED ${aed(total)} to ${lines.length} claims`+(unknown.length?`. ${unknown.length} unmatched: ${unknown.join(", ")}`:""));
   return null;
@@ -1076,6 +1146,8 @@ function bindView(){
   v.querySelectorAll("[data-claim]").forEach(el=>{ el.onclick=()=>claimDlg(el.dataset.claim); el.onkeydown=e=>{ if(e.key==="Enter") claimDlg(el.dataset.claim); }; });
   v.querySelectorAll("[data-ra]").forEach(el=>{ el.onclick=()=>raDlg(el.dataset.ra); el.onkeydown=e=>{ if(e.key==="Enter") raDlg(el.dataset.ra); }; });
   v.querySelectorAll("[data-newpa]").forEach(b=>b.onclick=()=>newPaDlg(b.dataset.newpa,b.dataset.dept));
+  v.querySelectorAll("[data-eclsync]").forEach(b=>b.onclick=()=>eclSync(b));
+  v.querySelectorAll("[data-eclfile]").forEach(el=>el.onclick=()=>eclFileDlg(el.dataset.eclfile));
   v.querySelectorAll("[data-regmember]").forEach(b=>b.onclick=()=>memberDlg(b.dataset.regmember,b.dataset.payer));
   if (current==="eligibility" && LIVE.on){ bindLive(v); }
   else if (current==="eligibility"){
@@ -1096,7 +1168,16 @@ function bindView(){
     $("#fpayer").onchange=e=>{UI.claimPayer=e.target.value;render();};
     $("#fstatus").onchange=e=>{UI.claimStatus=e.target.value;render();};
     $("#fdept").onchange=e=>{UI.claimDept=e.target.value;render();};
-    $("#submitDrafts").onclick=()=>{ const d=S.claims.filter(c=>c.status==="Draft"); d.forEach(submitClaim); done(`Submitted ${d.length} claims to payers`); };
+    $("#submitDrafts").onclick=async e=>{ const d=S.claims.filter(c=>c.status==="Draft");
+      if (!ECL()){ d.forEach(submitClaim); return done(`Submitted ${d.length} claims to payers`); }
+      e.target.disabled=true; e.target.textContent="Sending to eClaimLink…";
+      const byPayer = {}; d.forEach(c=>(byPayer[c.payer]=byPayer[c.payer]||[]).push(c));
+      let sent=0; const fails=[];
+      for (const [pid,list] of Object.entries(byPayer)){
+        try { const r = await eclUpload(claimsXml(list,false)); list.forEach(c=>{ submitClaim(c); c.eclTx=r.transactionId; c.events.push({d:TODAY,t:`eClaimLink transaction ${r.transactionId||"–"}`}); }); sent+=list.length; }
+        catch(err){ fails.push(`${payer(pid).name}: ${err.message}`); }
+      }
+      done(`Sent ${sent} claims to eClaimLink in ${Object.keys(byPayer).length-fails.length} files`+(fails.length?`. Failed: ${fails.join("; ")}`:"")); };
   }
   if (current==="remittance"){
     $("#sampleRa").onclick=()=>{ const x=sampleRaXml(); if(!x) return toast("No submitted claims are waiting for payment"); $("#raXml").value=x; $("#raMsg").textContent="Sample file loaded. Review it, then import."; };
@@ -1118,7 +1199,47 @@ function bindView(){
 
 /* ---------- live backend (active only when served by the clinic server) ---------- */
 const API_BASE = (document.querySelector('meta[name="rcm-api"]') || {}).content || null;
-const LIVE = {on:false, provider:null, appts:[], log:[]};
+const LIVE = {on:false, provider:null, appts:[], log:[], ecl:null, eclFiles:[], eclLast:null};
+const ECL = () => LIVE.on && LIVE.ecl && LIVE.ecl !== "off";
+const eclLabel = () => LIVE.ecl === "live" ? "eClaimLink" : "eClaimLink (test mode)";
+const refreshEcl = () => ECL() ? api("/eclaimlink/files?limit=15").then(f=>{ LIVE.eclFiles=f; if (["remittance"].includes(current)) render(); }).catch(()=>{}) : Promise.resolve();
+async function eclUpload(xml){
+  const r = await api("/eclaimlink/upload",{xml});
+  refreshEcl();
+  if (!r.ok) throw new Error(`eClaimLink did not accept the file (code ${r.resultCode}): ${r.errorMessage||"no message"}`);
+  return r;
+}
+async function eclSync(btn){
+  if (btn){ btn.disabled = true; btn.textContent = "Downloading…"; }
+  try {
+    const s = await api("/eclaimlink/sync",{});
+    const files = await api("/eclaimlink/files?unapplied=1&limit=200");
+    let ras=0, paid=0, claims=0, pas=0; const unknown=[], other=[];
+    for (const f of files.slice().reverse()){
+      if (f.type === "Remittance.Advice"){ const r = importRa(f.xml,{quiet:true,source:"eClaimLink "+f.file_name}); if (r && typeof r === "object"){ ras++; paid+=r.total; claims+=r.count; unknown.push(...r.unknown); } else if (r) unknown.push(f.file_name+": "+r); }
+      else if (f.type === "Prior.Authorization"){ pas += applyPriorAuth(f.xml); }
+      else other.push(f.type);
+      await api(`/eclaimlink/files/${f.id}/applied`,{});
+    }
+    save(); LIVE.eclLast = new Date().toISOString(); await refreshEcl(); render();
+    toast(files.length ? `Downloaded ${s.downloaded} new files. ${ras} remittances posted AED ${aed(paid)} to ${claims} claims`+(pas?`, ${pas} approval replies recorded`:"")+(unknown.length?`. Not matched: ${unknown.slice(0,4).join(", ")}${unknown.length>4?"…":""}`:"")+(s.errors.length?`. ${s.errors.length} files failed`:"")
+      : "No new files on eClaimLink");
+  } catch(e){ toast("eClaimLink download failed: " + e.message); render(); }
+}
+function eclPanel(){
+  const f = LIVE.eclFiles;
+  return `<section class="panel"><div class="panel-head"><div><h2>${eclLabel()}</h2><p>Claims, resubmissions and approval requests are sent from their pages. Download collects remittances and approval replies and posts them automatically.${LIVE.ecl==="mock"?" Test mode simulates the payer: each uploaded claim comes back as a remittance.":""}</p></div>
+    <button class="btn primary" data-eclsync type="button">Download from eClaimLink</button></div>
+    <div class="table-wrap"><table><thead><tr><th>Time</th><th></th><th>File</th><th>Type</th><th>From / to</th><th class="num">Records</th><th>Result</th></tr></thead><tbody>
+    ${f.map(x=>`<tr class="click" data-eclfile="${x.id}" tabindex="0"><td class="mono muted">${esc((x.created_at||"").slice(5,16))}</td><td>${x.direction==="out"?"Sent":"Received"}</td><td class="mono">${esc(x.file_name||"")}</td><td><span class="code">${esc(x.type||"")}</span></td><td>${esc(x.direction==="out"?x.receiver:x.sender)}</td><td class="num">${x.record_count??"–"}</td><td>${x.direction==="out"?(x.result_code>=0?pill(x.result_code>0?"Accepted with warnings":"Accepted"):`<span class="pill p-bad">Rejected</span>`):pill(x.applied_at?"Posted":"Waiting")}${x.transaction_id?` <span class="muted mono">${esc(x.transaction_id)}</span>`:""}</td></tr>`).join("") || `<tr><td colspan="7" class="empty">Nothing sent or received yet.</td></tr>`}
+    </tbody></table></div></section>`;
+}
+async function eclFileDlg(id){
+  try { const f = await api(`/eclaimlink/files/${id}`);
+    openDlg(dlgHead(`<span class="mono" style="font-size:14px">${esc(f.file_name||"")}</span>`, `${f.direction==="out"?"Sent":"Received"} ${esc(f.created_at||"")} · ${esc(f.type||"")}${f.transaction_id?" · transaction "+esc(f.transaction_id):""}`) +
+      `<div class="dlg-body">${f.error_message?`<div class="result ${f.result_code<0?"bad":"warn"}">${esc(f.error_message)}${f.error_report?`<pre style="white-space:pre-wrap;margin:6px 0 0" class="mono">${esc(f.error_report)}</pre>`:""}</div>`:""}<textarea readonly style="min-height:340px">${esc(f.xml||"")}</textarea></div>`);
+  } catch(e){ toast(e.message); }
+}
 async function api(path, body){
   const r = await fetch(API_BASE + path, body === undefined ? {credentials:"same-origin"} : {method:"POST",credentials:"same-origin",headers:{"content-type":"application/json"},body:JSON.stringify(body)});
   const j = await r.json().catch(()=>({}));
@@ -1163,7 +1284,8 @@ function bindLive(v){
 async function bootLive(){
   try {
     const [h, appts, log] = await Promise.all([api("/health"), api("/appointments"), api("/checks?limit=30")]);
-    Object.assign(LIVE, {on:true, provider:h.provider, appts, log});
+    Object.assign(LIVE, {on:true, provider:h.provider, appts, log, ecl:h.eclaimlink||"off"});
+    await refreshEcl();
     UI.verifyResult = null; render();
   } catch(e) { toast("Clinic server not reachable: " + e.message); }
 }

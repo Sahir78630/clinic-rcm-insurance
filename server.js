@@ -5,6 +5,7 @@ import { openDb, upsertMember } from "./src/db.js";
 import { checkEligibility, defaultProvider } from "./src/eligibility.js";
 import { importCsv, listAppointments, verifyAll, verifyAppointment, CSV_COLUMNS } from "./src/appointments.js";
 import { loadConfig, today, findPayer, formatEid } from "./src/util.js";
+import * as ecl from "./src/eclaimlink/index.js";
 
 const MAX_BODY = 5 * 1024 * 1024;
 
@@ -38,7 +39,7 @@ export function createApp({ db, cfg, env = process.env, fetchImpl } = {}) {
   });
 
   const routes = [
-    ["GET", /^\/api\/health$/, () => ({ ok: true, provider: defaultProvider(env), facility: env.FACILITY_LICENSE || null, today: today() })],
+    ["GET", /^\/api\/health$/, () => ({ ok: true, provider: defaultProvider(env), eclaimlink: ecl.mode(env), facility: env.FACILITY_LICENSE || null, today: today() })],
     ["GET", /^\/api\/config$/, () => ({ payers: cfg.payers.map(({ code, name, kind, terms }) => ({ code, name, kind, terms })), approvalDepartments: cfg.approvalDepartments, csvColumns: CSV_COLUMNS, provider: defaultProvider(env) })],
     ["POST", /^\/api\/eligibility$/, async req => {
       const b = await readJson(req);
@@ -70,6 +71,22 @@ export function createApp({ db, cfg, env = process.env, fetchImpl } = {}) {
       if (b.emiratesId && !formatEid(b.emiratesId)) throw Object.assign(new Error("Emirates ID must be 15 digits starting with 784"), { code: 400 });
       return { id: upsertMember(db, { ...b, payer: payer.code }) };
     }],
+    ["GET", /^\/api\/eclaimlink\/status$/, () => ecl.status(ctx)],
+    ["POST", /^\/api\/eclaimlink\/upload$/, async req => {
+      const b = await readJson(req);
+      if (typeof b.xml !== "string" || !b.xml.trim()) throw Object.assign(new Error("Send the XML in the 'xml' field"), { code: 400 });
+      return ecl.upload(ctx, { xml: b.xml, fileName: b.fileName });
+    }],
+    ["POST", /^\/api\/eclaimlink\/sync$/, () => ecl.sync(ctx)],
+    ["GET", /^\/api\/eclaimlink\/files$/, (req, url) => ecl.listFiles(ctx, {
+      direction: url.searchParams.get("direction"), type: url.searchParams.get("type"),
+      unapplied: url.searchParams.get("unapplied") === "1", limit: Math.min(200, Number(url.searchParams.get("limit")) || 50) })],
+    ["GET", /^\/api\/eclaimlink\/files\/(\d+)$/, (req, url, m) => {
+      const f = ecl.getFile(ctx, Number(m[1]));
+      if (!f) throw Object.assign(new Error("File not found"), { code: 404 });
+      return f;
+    }],
+    ["POST", /^\/api\/eclaimlink\/files\/(\d+)\/applied$/, (req, url, m) => ({ applied: ecl.markApplied(ctx, Number(m[1])) })],
     ["GET", /^\/api\/checks$/, (req, url) => {
       const limit = Math.min(500, Number(url.searchParams.get("limit")) || 50);
       return db.prepare("SELECT id, created_at, source, provider, payer, emirates_id, card_no, department, status, result_json FROM eligibility_checks ORDER BY id DESC LIMIT ?")
@@ -106,5 +123,5 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const host = env.HOST || "127.0.0.1";
   if (!env.APP_USERNAME || !env.APP_PASSWORD) console.warn("APP_USERNAME / APP_PASSWORD are not set: anyone who can reach this server can use it. Set them before exposing it beyond this computer.");
   createServer(createApp({ db, cfg, env })).listen(port, host, () =>
-    console.log(`Clinic RCM running at http://${host}:${port} (eligibility provider: ${defaultProvider(env)})`));
+    console.log(`Clinic RCM running at http://${host}:${port} (eligibility provider: ${defaultProvider(env)}, eClaimLink: ${ecl.mode(env)})`));
 }

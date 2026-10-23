@@ -1,14 +1,14 @@
 {
-  "_comment": "Payers the clinic bills. 'provider' picks the eligibility connector for each payer: 'default' uses ELIGIBILITY_PROVIDER, or name one from src/providers (mock, http). 'aliases' are other spellings seen in clinic exports.",
+  "_comment": "Payers the clinic bills. 'provider' picks the eligibility connector for each payer: 'default' uses ELIGIBILITY_PROVIDER, or name one from src/providers (mock, http). 'aliases' are other spellings seen in clinic exports. 'eclaimlinkId' is the payer's receiver ID on eClaimLink, swapped in for the short code when files are uploaded.",
   "payers": [
-    { "code": "DAM", "name": "Daman", "kind": "Insurer", "terms": 45, "provider": "default", "aliases": ["daman", "national health insurance"] },
-    { "code": "NAS", "name": "NAS Administration", "kind": "TPA", "terms": 45, "provider": "default", "aliases": ["nas"] },
-    { "code": "NXT", "name": "Nextcare", "kind": "TPA", "terms": 60, "provider": "default", "aliases": ["next care"] },
-    { "code": "MDN", "name": "MedNet", "kind": "TPA", "terms": 45, "provider": "default", "aliases": ["mednet uae"] },
-    { "code": "NEU", "name": "Neuron", "kind": "TPA", "terms": 60, "provider": "default", "aliases": [] },
-    { "code": "SUK", "name": "Sukoon", "kind": "Insurer", "terms": 45, "provider": "default", "aliases": ["oman insurance"] },
-    { "code": "GIG", "name": "GIG Gulf", "kind": "Insurer", "terms": 60, "provider": "default", "aliases": ["axa"] },
-    { "code": "ALM", "name": "Almadallah", "kind": "TPA", "terms": 45, "provider": "default", "aliases": [] }
+    { "code": "DAM", "name": "Daman", "kind": "Insurer", "terms": 45, "provider": "default", "eclaimlinkId": "", "aliases": ["daman", "national health insurance"] },
+    { "code": "NAS", "name": "NAS Administration", "kind": "TPA", "terms": 45, "provider": "default", "eclaimlinkId": "", "aliases": ["nas"] },
+    { "code": "NXT", "name": "Nextcare", "kind": "TPA", "terms": 60, "provider": "default", "eclaimlinkId": "", "aliases": ["next care"] },
+    { "code": "MDN", "name": "MedNet", "kind": "TPA", "terms": 45, "provider": "default", "eclaimlinkId": "", "aliases": ["mednet uae"] },
+    { "code": "NEU", "name": "Neuron", "kind": "TPA", "terms": 60, "provider": "default", "eclaimlinkId": "", "aliases": [] },
+    { "code": "SUK", "name": "Sukoon", "kind": "Insurer", "terms": 45, "provider": "default", "eclaimlinkId": "", "aliases": ["oman insurance"] },
+    { "code": "GIG", "name": "GIG Gulf", "kind": "Insurer", "terms": 60, "provider": "default", "eclaimlinkId": "", "aliases": ["axa"] },
+    { "code": "ALM", "name": "Almadallah", "kind": "TPA", "terms": 45, "provider": "default", "eclaimlinkId": "", "aliases": [] }
   ],
   "approvalDepartments": ["Dental", "Dermatology", "Orthopedics", "ENT", "Physiotherapy", "Radiology"]
 }

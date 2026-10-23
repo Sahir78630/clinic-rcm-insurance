@@ -2,7 +2,7 @@
 
 Insurance revenue cycle console for a Dubai polyclinic, plus a small server that runs eligibility checks for every patient on the day's appointment list.
 
-The website covers eligibility and access, prior approvals, claims, remittance and reconciliation, denials, resubmissions and insurance receivables aging by payer, in AED. When it is opened from this server, the **Eligibility & access** page uses the server for real checks. Every other page still runs on sample data stored in the browser.
+The website covers eligibility and access, prior approvals, claims, remittance and reconciliation, denials, resubmissions and insurance receivables aging by payer, in AED. When it is opened from this server, the **Eligibility & access** page uses the server for real checks, and claims, resubmissions, prior requests and remittances move through DHA eClaimLink. Every other page still runs on sample data stored in the browser.
 
 ## Run it
 
@@ -64,6 +64,32 @@ The expected response:
 
 Departments listed in `approvalDepartments` (in `config/payers.json`) turn an eligible result into **Approval needed**.
 
+## DHA eClaimLink
+
+The server connects to the eClaimLink (Dubai Health Post Office) web service with your facility's eClaimLink login:
+
+| From the website | What is sent or received |
+|---|---|
+| Claims: **Submit to eClaimLink** (one claim or all drafts) | `Claim.Submission`, one file per payer |
+| Claim dialog: **Resubmit claim** | `Claim.Submission` with a `<Resubmission>` block (correction or internal complaint) |
+| Prior approvals: **New request** | `Prior.Request` |
+| Remittance or Prior approvals: **Download from eClaimLink** | New `Remittance.Advice` files post payments and denial codes to claims. `Prior.Authorization` replies update approval requests. |
+
+Every file sent or received is kept in the `eclaimlink_files` table with its result code, transaction ID and any error report. Downloaded files are only marked as downloaded on eClaimLink after they are safely stored.
+
+**Modes.** `ECLAIMLINK_MODE=mock` (the default without credentials) simulates eClaimLink inside the local database. Each uploaded claim comes back as a remittance on the next download (about one in five has an activity denied with MNEC-004), and each prior request comes back approved. Use it to train staff. Set `ECLAIMLINK_LOGIN` and `ECLAIMLINK_PASSWORD` to switch to `live`.
+
+**Going live checklist**
+
+1. Get the facility's web service login from eClaimLink, and test on their QA environment first if they provide one (`ECLAIMLINK_URL`).
+2. From a computer on the clinic network, run `npm run eclaimlink:wsdl`. It prints the service namespace and operations. If the namespace differs from `ECLAIMLINK_NAMESPACE`, set it to the printed value.
+3. Fill in `FACILITY_LICENSE` and each payer's `eclaimlinkId` in `config/payers.json`. They replace the placeholder facility ID and short payer codes in outgoing files.
+4. Send one claim and check it on the eClaimLink portal before sending batches.
+
+The connector uses the post office operations `UploadTransaction`, `GetNewTransactions`, `DownloadTransactionFile` and `SetTransactionDownloaded`. eClaimLink handles claims, resubmissions and prior authorization. It is not an eligibility service, so eligibility still goes through the providers above.
+
+The claims, remittance and denial pages keep their records in the browser in this version, so use one workstation for eClaimLink billing until claims are moved into the server database.
+
 ## API
 
 | Method | Path | Purpose |
@@ -77,9 +103,15 @@ Departments listed in `approvalDepartments` (in `config/payers.json`) turn an el
 | POST | `/api/appointments/:id/verify` | Re-check one appointment |
 | POST | `/api/members` | Add or update a member record (mock provider) |
 | GET | `/api/checks?limit=` | Verification log |
+| GET | `/api/eclaimlink/status` | Mode, endpoint, last download |
+| POST | `/api/eclaimlink/upload` | `{ xml, fileName? }` → upload a Claim.Submission or Prior.Request |
+| POST | `/api/eclaimlink/sync` | Download and store all new files |
+| GET | `/api/eclaimlink/files?direction=&type=&unapplied=1` | File log (with XML when `unapplied=1`) |
+| GET | `/api/eclaimlink/files/:id` | One file with its XML and error report |
+| POST | `/api/eclaimlink/files/:id/applied` | Mark a downloaded file as posted |
 
 ## Before going live
 
 - Set `APP_USERNAME` and `APP_PASSWORD`, and serve the app only over HTTPS (for example behind a reverse proxy).
 - The database holds patient identifiers and insurance details. Host it where your facility's data-protection and UAE health-data rules allow, restrict access, and back it up.
-- Keep API keys in environment variables or a secrets manager, never in the repository.
+- Keep API keys and the eClaimLink password in environment variables or a secrets manager, never in the repository.
