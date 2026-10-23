@@ -723,6 +723,16 @@ const ACT_CODE = /^(\d{5}|\d{4}[A-Z]|[A-V]\d{4}|D\d{4})$/i;
 // Codes from other DHA code sets: Dubai service codes (9, 9.01, 10.02 …), drug codes (XXXX-XXXXXX-XXXX), DRGs.
 // Activity types in eClaimLink files: 3 CPT, 4 HCPCS, 5 drug, 6 dental, 8 service code, 9 IR-DRG.
 const OTHER_CODE = /^(\d{1,3}(\.\d{1,3})?|[A-Z0-9]{4}-[A-Z0-9]{6}-[A-Z0-9]{4}|\d{2}-\d{4,})$/i;
+// Lab tests whose results must be in the claim file: [name, results expected, what they are]
+const RESULT_REQUIRED = {
+  "80061":["Lipid profile",3,"total cholesterol, HDL, triglycerides"],
+  "82465":["Cholesterol",1,""], "84478":["Triglycerides",1,""], "83718":["HDL cholesterol",1,""], "83721":["LDL cholesterol",1,""],
+  "82947":["Blood sugar",1,""], "82948":["Blood sugar",1,""], "82950":["Blood sugar, post glucose dose",1,""], "82951":["Glucose tolerance test",3,"one per specimen"],
+  "83036":["HbA1c",1,""],
+  "80076":["Liver function profile",7,"albumin, total and direct bilirubin, alkaline phosphatase, total protein, ALT, AST"],
+  "84460":["ALT (SGPT)",1,""], "84450":["AST (SGOT)",1,""], "82247":["Total bilirubin",1,""], "82248":["Direct bilirubin",1,""],
+  "84075":["Alkaline phosphatase",1,""], "82040":["Albumin",1,""], "84155":["Total protein",1,""],
+};
 // ICD-10-CM Excludes1 pairs: the two conditions cannot be coded together on one claim.
 // Prefix match without the dot ("R10" covers R10.0, R10.30 …). A common outpatient selection, not the full list.
 const EXCLUDES1 = [
@@ -783,9 +793,13 @@ function checkClaim(c){
     if (a.ps > a.gross) err("",`${tag}: patient share is more than the gross amount.`);
     if (/^D\d{4}$/i.test(a.code || "") && dx.length && !dx.some(d => DENTAL_DX.test(d))) warn("CODE-010",`${tag} is a dental code but no dental diagnosis (K00–K14) is on the claim.`);
   });
-  // Lab tests (CPT 80000–89999) are expected to carry their result as an <Observation> in the claim file
-  c.acts.filter(a => Array.isArray(a.obs) && /^8\d{4}$/.test(a.code || "") && !a.obs.some(o => o.value))
-    .forEach(a => warn("",`Lab test ${a.code}: no result entered (no Observation value in the claim file).`));
+  // Lab tests (CPT 80000–89999) carry their result as an <Observation> in the claim file.
+  // Results are required for the tests in RESULT_REQUIRED; for other lab tests a missing result is a warning.
+  c.acts.filter(a => Array.isArray(a.obs) && /^8\d{4}$/.test(a.code || "")).forEach(a => {
+    const req = RESULT_REQUIRED[a.code], n = a.obs.filter(o => o.value).length;
+    if (!n) (req ? err : warn)("",`${req ? req[0] : "Lab test " + a.code} (${a.code}): no result entered in the claim file.`);
+    else if (req && n < req[1]) warn("",`${req[0]} (${a.code}): ${n} result${n===1?"":"s"} entered, ${req[1]} expected (${req[2]}).`);
+  });
   const codes = new Set(c.acts.map(a => a.code).filter(Boolean));
   if (c.acts.length !== codes.size) warn("DUPL-002","The same activity code appears more than once. Use quantity instead if it is the same service.");
   const dup = S.claims.find(o => o.id !== c.id && o.patient === c.patient && o.enc === c.enc && o.acts.some(a => codes.has(a.code)));
