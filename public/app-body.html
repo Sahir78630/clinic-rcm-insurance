@@ -8,7 +8,7 @@
 :root{
   --bg:#F3F6F5; --surface:#FFFFFF; --sunk:#EAF0EE; --ink:#13201E; --muted:#5A6B67; --line:#D8E1DE;
   --accent:#0D6B61; --accent-ink:#FFFFFF; --accent-soft:#DDEFEA;
-  --ok:#1D7A45; --ok-soft:#DFF2E6; --warn:#9A5B00; --warn-soft:#FBEED6; --bad:#B0281F; --bad-soft:#FBE3E0; --info:#2B5BA6; --info-soft:#E1EAF8; --dx:#6D3FB5; --dx-soft:#EEE6FA;
+  --ok:#1D7A45; --ok-soft:#DFF2E6; --warn:#9A5B00; --warn-soft:#FBEED6; --bad:#B0281F; --bad-soft:#FBE3E0; --info:#2B5BA6; --info-soft:#E1EAF8; --dx:#6D3FB5; --dx-soft:#EEE6FA; --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a; --s4:#eda100;
   --b1:#8FCDBF; --b2:#E6C267; --b3:#E39549; --b4:#CC5B33; --b5:#8E2620;
   --display:"Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
   --body:"Instrument Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
@@ -18,14 +18,14 @@
 @media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
   --bg:#0E1413; --surface:#151D1B; --sunk:#111917; --ink:#E3ECE9; --muted:#93A4A0; --line:#27332F;
   --accent:#4CC2AE; --accent-ink:#04201B; --accent-soft:#143530;
-  --ok:#5ACB89; --ok-soft:#173326; --warn:#E6AA46; --warn-soft:#3A2C12; --bad:#F27D70; --bad-soft:#3E1D1A; --info:#82A8EC; --info-soft:#1A2740; --dx:#B99AF2; --dx-soft:#2A1F40;
+  --ok:#5ACB89; --ok-soft:#173326; --warn:#E6AA46; --warn-soft:#3A2C12; --bad:#F27D70; --bad-soft:#3E1D1A; --info:#82A8EC; --info-soft:#1A2740; --dx:#B99AF2; --dx-soft:#2A1F40; --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500;
   --b1:#5FAE9E; --b2:#D7B154; --b3:#DE8B45; --b4:#D8643F; --b5:#B8433A;
   color-scheme:dark;
 }}
 :root[data-theme="dark"]{
   --bg:#0E1413; --surface:#151D1B; --sunk:#111917; --ink:#E3ECE9; --muted:#93A4A0; --line:#27332F;
   --accent:#4CC2AE; --accent-ink:#04201B; --accent-soft:#143530;
-  --ok:#5ACB89; --ok-soft:#173326; --warn:#E6AA46; --warn-soft:#3A2C12; --bad:#F27D70; --bad-soft:#3E1D1A; --info:#82A8EC; --info-soft:#1A2740; --dx:#B99AF2; --dx-soft:#2A1F40;
+  --ok:#5ACB89; --ok-soft:#173326; --warn:#E6AA46; --warn-soft:#3A2C12; --bad:#F27D70; --bad-soft:#3E1D1A; --info:#82A8EC; --info-soft:#1A2740; --dx:#B99AF2; --dx-soft:#2A1F40; --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500;
   --b1:#5FAE9E; --b2:#D7B154; --b3:#DE8B45; --b4:#D8643F; --b5:#B8433A;
   color-scheme:dark;
 }
@@ -314,16 +314,17 @@ function verify(ptId, payerId, card, dept, pts){
 /* ---------- charts ---------- */
 function vbars(items, opts={}){
   const W=opts.w||520,H=opts.h||210,pl=44,pr=8,pt=12,pb=36, iw=W-pl-pr, ih=H-pt-pb;
-  const max = Math.max(1,...items.map(i=>i.series ? Math.max(...i.series.map(s=>s.v)) : i.v));
+  const max = Math.max(opts.count ? 4 : 1,...items.map(i=>i.series ? Math.max(...i.series.map(s=>s.v)) : i.v));
   const nice = niceMax(max), ticks=4;
   let g = "";
-  for (let t=0;t<=ticks;t++){ const y = pt+ih - ih*t/ticks; g += `<line class="grid" x1="${pl}" x2="${W-pr}" y1="${y}" y2="${y}"/><text x="${pl-6}" y="${y+4}" text-anchor="end">${aedK(nice*t/ticks)}</text>`; }
+  const axis = opts.count ? (v => String(Math.round(v))) : aedK, val = opts.count ? (v => `${v} claim${v===1?"":"s"}`) : (v => "AED " + aed(v));
+  for (let t=0;t<=ticks;t++){ const y = pt+ih - ih*t/ticks; g += `<line class="grid" x1="${pl}" x2="${W-pr}" y1="${y}" y2="${y}"/><text x="${pl-6}" y="${y+4}" text-anchor="end">${axis(nice*t/ticks)}</text>`; }
   const bw = iw/items.length;
   items.forEach((it,i) => {
     const x0 = pl + bw*i;
     const ser = it.series || [{v:it.v,color:it.color}];
     const inner = Math.min(46, bw*0.7), sw = inner/ser.length;
-    ser.forEach((s,k) => { const h = ih*s.v/nice; g += `<rect x="${x0+(bw-inner)/2+sw*k}" y="${pt+ih-h}" width="${Math.max(1,sw-2)}" height="${h}" rx="2" fill="var(${s.color})"><title>${esc(it.label)}: AED ${aed(s.v)}</title></rect>`; });
+    ser.forEach((s,k) => { const h = ih*s.v/nice; g += `<rect x="${x0+(bw-inner)/2+sw*k}" y="${pt+ih-h}" width="${Math.max(1,sw-2)}" height="${h}" rx="2" fill="var(${s.color})"><title>${esc(it.label)}${s.name?" · "+esc(s.name):""}: ${val(s.v)}</title></rect>`; });
     if (!it.series) g += `<text class="lbl" x="${x0+bw/2}" y="${pt+ih-ih*it.v/nice-5}" text-anchor="middle">${aedK(it.v)}</text>`;
     g += `<text x="${x0+bw/2}" y="${H-14}" text-anchor="middle">${esc(it.label)}</text>`;
   });
@@ -369,6 +370,44 @@ function head(title, sub, right=""){ return `<div class="page-head"><div><h1>${t
 
 /* ---------- views ---------- */
 const R = {};
+// Claims activity per month: submitted, resubmitted, remitted and rejected, by count and by AED
+UI.actMonths = UI.actMonths || 6;
+const ACT_SERIES = [["sub","Submitted","--s1"],["resub","Resubmitted","--s2"],["rem","Remittance received","--s3"],["rej","Rejected","--s4"]];
+function claimsActivity(nMonths){
+  const months = [], d0 = new Date(TODAY+"T00:00:00");
+  for (let i=nMonths-1;i>=0;i--){ const d = new Date(d0.getFullYear(), d0.getMonth()-i, 1);
+    months.push({key:d.getFullYear()+"-"+z(d.getMonth()+1), label:d.toLocaleDateString("en-GB",{month:"short", year: nMonths>6 ? "2-digit" : undefined}),
+      n:{sub:0,resub:0,rem:0,rej:0}, v:{sub:0,resub:0,rem:0,rej:0}}); }
+  const at = d => d && months.find(m => d.startsWith(m.key));
+  const raDate = r => (S.ras.find(x => x.id === r.ra) || {}).date || r.d;
+  for (const c of S.claims){
+    const t = totals(c);
+    const ms = at(c.submitted); if (ms){ ms.n.sub++; ms.v.sub += t.net; }
+    for (const x of c.resubs){ const m = at(x.d); if (m){ m.n.resub++; m.v.resub += x.amount||0; } }
+    for (const r of c.remits){ const m = at(raDate(r)); if (!m) continue; m.n.rem++; m.v.rem += r.paid||0; if (r.denied > 0){ m.n.rej++; m.v.rej += r.denied; } }
+  }
+  return months;
+}
+function activityHtml(){
+  const n = UI.actMonths, months = claimsActivity(n);
+  const sum = k => months.reduce((a,m)=>({n:a.n+m.n[k], v:a.v+m.v[k]}),{n:0,v:0});
+  const legend = `<div class="legend">${ACT_SERIES.map(([,name,c])=>`<span><i style="background:var(${c})"></i>${name}</span>`).join("")}</div>`;
+  const items = f => months.map(m => ({label:m.label, series:ACT_SERIES.map(([k,name,c]) => ({v:f(m,k), color:c, name}))}));
+  return `<section class="panel"><div class="panel-head"><div><h2>Claims activity</h2><p>Claims submitted, resubmitted, remittances received and claims with rejections, per month</p></div>
+    <div class="actions"><select id="actMonths" aria-label="Period"><option value="3" ${n===3?"selected":""}>Last 3 months</option><option value="6" ${n===6?"selected":""}>Last 6 months</option><option value="12" ${n===12?"selected":""}>Last 12 months</option></select></div></div>
+    <div class="kpis">${ACT_SERIES.map(([k,name])=>{ const t = sum(k); return `<div class="kpi"><span class="eyebrow">${name}</span><span class="v">${t.n}<small>claims</small></span><span class="s">AED ${aed(t.v)}${k==="rem"?" paid":k==="rej"?" denied":""}</span></div>`; }).join("")}</div>
+    <div class="grid2">
+      <div><h3 style="margin:4px 0 6px">Number of claims</h3>${legend}${vbars(items((m,k)=>m.n[k]),{label:"Number of claims per month",w:620,h:240,count:true})}</div>
+      <div><h3 style="margin:4px 0 6px">Amount, AED</h3>${legend}${vbars(items((m,k)=>r2(m.v[k])),{label:"Claim amounts per month in AED",w:620,h:240})}</div>
+    </div>
+    <details style="margin-top:8px"><summary class="muted" style="cursor:pointer;font-size:12.5px">Show as table</summary>
+      <div class="table-wrap" style="margin-top:8px"><table><thead><tr><th>Month</th>${ACT_SERIES.map(([,name])=>`<th class="num">${name}</th><th class="num">AED</th>`).join("")}</tr></thead><tbody>
+      ${months.map(m=>`<tr><td>${esc(m.label)}</td>${ACT_SERIES.map(([k])=>`<td class="num">${m.n[k]}</td><td class="num">${aed(m.v[k])}</td>`).join("")}</tr>`).join("")}
+      </tbody></table></div></details>
+    <p class="muted" style="font-size:12px;margin:8px 0 0">Submitted counts claims by submission date at net value. Remittance received counts claims paid or denied in a remittance (amount paid); Rejected counts those with any denied amount (amount denied).</p>
+  </section>`;
+}
+
 R.overview = () => {
   const live = S.claims.filter(c => c.status !== "Draft");
   const ar = live.reduce((s,c)=>s+totals(c).outstanding,0);
@@ -403,6 +442,7 @@ R.overview = () => {
     <button class="queue" data-go="remittance" type="button"><b>${unrec.length}</b><span>Remittances to reconcile (AED ${aed(unrec.reduce((s,r)=>s+r.amount,0))})</span></button>
     <button class="queue" data-go="denials" type="button"><b>${n.denials}</b><span>Open denials to work</span></button>
   </div>
+  ${activityHtml()}
   <div class="grid2">
     <section class="panel"><div class="panel-head"><div><h2>Receivables aging</h2><p>Outstanding AED by days since submission</p></div><button class="btn sm" data-go="receivables" type="button">By payer</button></div>
       ${vbars(BUCKETS.map((b,i)=>({label:b[0]+" d",v:ab.tot[i],color:b[3]})),{label:"Receivables aging"})}</section>
@@ -1154,6 +1194,7 @@ function importRa(xml, opts={}){
 /* ---------- view bindings ---------- */
 function bindView(){
   const v = $("#view");
+  const am = $("#actMonths"); if (am) am.onchange = () => { UI.actMonths = Number(am.value); render(); };
   v.querySelectorAll("[data-go]").forEach(b=>b.onclick=()=>{ if (b.dataset.status){ UI.claimStatus=b.dataset.status; UI.claimPayer=""; UI.claimQ=""; UI.claimDept=""; } go(b.dataset.go); });
   v.querySelectorAll("[data-claim]").forEach(el=>{ el.onclick=()=>claimDlg(el.dataset.claim); el.onkeydown=e=>{ if(e.key==="Enter") claimDlg(el.dataset.claim); }; });
   v.querySelectorAll("[data-ra]").forEach(el=>{ el.onclick=()=>raDlg(el.dataset.ra); el.onkeydown=e=>{ if(e.key==="Enter") raDlg(el.dataset.ra); }; });
