@@ -561,12 +561,13 @@ R.claims = () => {
     if (UI.claimTo && c.enc > UI.claimTo) return false;
     return true;
   }).sort((a,b)=>b.enc.localeCompare(a.enc));
+  UI.claimList = list.map(c => c.id);
   const sum = list.reduce((s,c)=>{const t=totals(c);s.net+=t.net;s.paid+=t.paid;s.out+=t.outstanding;return s;},{net:0,paid:0,out:0});
   const drafts = S.claims.filter(c=>c.status==="Draft");
   const ready = drafts.filter(c=>!blocked(c)), nBlocked = drafts.length - ready.length;
   const STS = ["Draft","Submitted","Resubmitted","Paid","Partially paid","Rejected","Closed"];
   return head("Claims","Every insurance claim from encounter to settlement. Open a claim to see activities, payer decisions and history.",
-    `<button class="btn" id="importClaims" type="button">Import claims</button><button class="btn" id="checkAll" type="button" ${S.claims.length?"":"disabled"}>Check all claims</button><button class="btn primary" id="submitDrafts" type="button" ${ready.length?"":"disabled"}>Submit ${ready.length} checked claim${ready.length===1?"":"s"}</button>`) +
+    `<button class="btn" id="importClaims" type="button">Import claims</button><button class="btn" id="checkAll" type="button" ${S.claims.length?"":"disabled"}>Check all claims</button><button class="btn" id="claimsXml" type="button" ${list.length?"":"disabled"} title="The claims shown, as eClaimLink XML">Download XML (${list.length})</button><button class="btn primary" id="submitDrafts" type="button" ${ready.length?"":"disabled"}>Submit ${ready.length} checked claim${ready.length===1?"":"s"}</button>`) +
   (drafts.length ? `<div class="result ${nBlocked?"warn":"ok"}" style="margin-bottom:12px"><div><b>Claim check:</b> ${ready.length} of ${drafts.length} draft claims are ready to submit${nBlocked?`. ${nBlocked} ha${nBlocked===1?"s":"ve"} errors and will not be sent until fixed. <button class="btn sm" id="showBlocked" type="button">Show them</button>`:"."}</div></div>` : "") +
   `<div class="filters">
     <input type="text" id="fq" placeholder="Search claim, patient or card" value="${esc(UI.claimQ)}" style="flex:1 1 220px">
@@ -661,7 +662,13 @@ ${c.acts.map(a=>`    <Activity>
       <Quantity>${a.qty}</Quantity>
       <Net>${(resub ? r2(a.net-a.paid) : a.net).toFixed(2)}</Net>
       <Clinician>${esc(c.doctor)}</Clinician>${c.pa?`
-      <PriorAuthorizationID>${c.pa}</PriorAuthorizationID>`:""}
+      <PriorAuthorizationID>${c.pa}</PriorAuthorizationID>`:""}${(a.obs||[]).filter(o=>o.value).map(o=>`
+      <Observation>
+        <Type>${esc(o.type||"LOINC")}</Type>
+        <Code>${esc(o.code||"")}</Code>
+        <Value>${esc(o.value)}</Value>
+        <ValueType>${esc(o.unit||"")}</ValueType>
+      </Observation>`).join("")}
     </Activity>`).join("\n")}${resub?`
     <Resubmission>
       <Type>${esc(x.type)}</Type>
@@ -1020,6 +1027,7 @@ function claimDlg(id){
     ${c.acts.some(a=>a.denial)?`<div class="result bad">${[...new Set(c.acts.filter(a=>a.denial).map(a=>a.denial))].map(k=>`<div><span class="code">${k}</span> ${esc(DENIALS[k]||"")}</div>`).join("")}</div>`:""}
     ${resubHist}
     <div class="actions">${act}</div>
+    <div class="actions"><button class="btn sm" data-act="labs" type="button">Enter lab results</button><button class="btn sm" data-act="dlxml" type="button">Download claim XML</button></div>
     <div><span class="eyebrow">History</span><ul class="timeline" style="margin-top:8px">${c.events.slice().sort((a,b)=>a.d.localeCompare(b.d)).map(e=>`<li><span class="muted">${fmtD(e.d)}</span> · ${esc(e.t)}</li>`).join("")}</ul></div>
   </div>`);
   dlg.dataset.claim = id;
@@ -1151,6 +1159,8 @@ function bindDlg(){
       eclUpload(claimsXml([c],false)).then(r=>{ submitClaim(c); c.events.push({d:TODAY,t:`eClaimLink transaction ${r.transactionId||"–"}`+(r.warnings?` (accepted with warnings)`:"")}); c.eclTx=r.transactionId; done("Claim sent to eClaimLink"); claimDlg(c.id); })
         .catch(e=>{ toast(e.message); claimDlg(c.id); }); return; }
     if (a==="submit"){ submitClaim(claimById(dlg.dataset.claim)); done("Claim submitted"); claimDlg(dlg.dataset.claim); }
+    if (a==="labs"){ labDlg(dlg.dataset.claim); return; }
+    if (a==="dlxml"){ downloadClaimsXml([claimById(dlg.dataset.claim)]); return; }
     if (a==="resubXml"){ const c=claimById(dlg.dataset.claim); const x=resubXml(c);
       openDlg(dlgHead(`Resubmission file · <span class="mono">${c.id}</span>`,"eClaimLink-style Claim.Submission with a Resubmission block. Copy it into your submission tool.",`<button class="btn sm" data-act="copyXml" type="button">Copy</button>`)+`<div class="dlg-body"><textarea id="xmlOut" readonly style="min-height:360px">${esc(x)}</textarea><div class="actions"><button class="btn sm" data-claim="${c.id}" type="button">Back to claim</button></div></div>`); return; }
     if (a==="copyXml"){ const t=$("#xmlOut"); try { navigator.clipboard.writeText(t.value).then(()=>toast("Copied"),()=>{t.select();}); } catch(e){ t.select(); } return; }
@@ -1274,6 +1284,7 @@ function bindView(){
     const fdc=$("#fdclear"); if (fdc) fdc.onclick=()=>{UI.claimFrom="";UI.claimTo="";render();};
     $("#importClaims").onclick=claimsImportDlg;
     $("#checkAll").onclick=checkAllDlg;
+    $("#claimsXml").onclick=()=>downloadClaimsXml((UI.claimList||[]).map(claimById).filter(Boolean));
     const sb=$("#showBlocked"); if (sb) sb.onclick=()=>{ UI.claimStatus="Draft"; UI.claimPayer=""; UI.claimQ=""; UI.claimDept=""; UI.claimFrom=""; UI.claimTo=""; render(); };
     $("#submitDrafts").onclick=async e=>{ const d=S.claims.filter(c=>c.status==="Draft"&&!blocked(c));
       if (!ECL()){ d.forEach(submitClaim); return done(`Submitted ${d.length} claims to payers`); }
@@ -1516,7 +1527,7 @@ function importClaimFiles(list, draft){
     const doc = new DOMParser().parseFromString(t, "application/xml");
     if (doc.getElementsByTagName("parsererror").length){ tally.skipped.push(`${f.name}: not valid XML`); continue; }
     const type = doc.documentElement.tagName;
-    if (type === "Claim.Submission"){ const r = addClaimsFromXml(t, {draft}); tally.added += r.added; tally.updated += r.updated; tally.existing += r.skipped; }
+    if (type === "Claim.Submission"){ const r = addClaimsFromXml(t, {draft, file:f.name}); tally.added += r.added; tally.updated += r.updated; tally.existing += r.skipped; }
     else if (["Remittance.Advice","Prior.Request","Prior.Authorization"].includes(type)){ const r = applyEclFile("F:"+f.name+":"+t.length, type, t, f.name); tally.posted.push(`${f.name}: ${r.msg}`); }
     else tally.skipped.push(`${f.name}: ${type} files are not supported`);
   }
@@ -1555,11 +1566,13 @@ function importClaimsCsv(txt){
 const dhpoToIso = v => { const m = String(v||"").match(/^(\d{2})\/(\d{2})\/(\d{4})/); return m ? `${m[3]}-${m[2]}-${m[1]}` : null; };
 // Claim.Submission files you sent through eClaimLink become claims here, so remittances can match them
 // draft: the file has not been sent yet (an export from the clinic system), so the claims start as drafts to check
-function addClaimsFromXml(xml, {draft = false} = {}){
+function addClaimsFromXml(xml, {draft = false, file = ""} = {}){
   const doc = new DOMParser().parseFromString(xml,"application/xml");
   const own = (el,t) => { const x = [...el.children].find(c => c.tagName === t); return x ? x.textContent.trim() : ""; };
   const header = doc.getElementsByTagName("Header")[0];
   const sent = (header && dhpoToIso(own(header,"TransactionDate"))) || TODAY, receiver = header ? own(header,"ReceiverID") : "";
+  // Claims not sent yet keep their original XML, so the file can be downloaded again with lab results added
+  const ser = el => new XMLSerializer().serializeToString(el), headerXml = draft && header ? ser(header) : "";
   let added = 0, updated = 0, skipped = 0;
   [...doc.getElementsByTagName("Claim")].forEach(ce => {
     const id = own(ce,"ID"); if (!id) return;
@@ -1587,6 +1600,7 @@ function addClaimsFromXml(xml, {draft = false} = {}){
       events:draft?[{d:encDate,t:"Encounter"},{d:TODAY,t:"Imported from XML file"}]:[{d:encDate,t:"Encounter"},{d:sent,t:"Claim file found on eClaimLink"}],
       remits:[], resubs:resub&&!draft?[{d:sent,type:(resub.getElementsByTagName("Type")[0]||{}).textContent||"correction",note:"",amount:r2(claimNet),codes:[],outcome:null}]:[], writeOff:0, woReason:null,
       pa:actEls.map(a=>own(a,"PriorAuthorizationID")).find(Boolean)||null};
+    if (draft){ c.srcXml = ser(ce); c.srcHeader = headerXml; c.srcFile = file; }
     if (ex){ S.claims[S.claims.indexOf(ex)] = c; updated++; } else { S.claims.push(c); added++; }
   });
   return {added, updated, skipped};
@@ -1617,6 +1631,85 @@ function applyEclFile(key, type, xml, name){
   else return {done:false, msg:`${type} files are view only`};
   S.posted[key] = TODAY; save();
   return {done:true, msg};
+}
+
+/* ---------- lab results and claim XML ---------- */
+// Result fields offered for common lab tests: [label, LOINC code, unit]. Codes and units can be changed when entering.
+const LAB_FIELDS = {
+  "80061":[["Total cholesterol","2093-3","mg/dL"],["HDL cholesterol","2085-9","mg/dL"],["Triglycerides","2571-8","mg/dL"],["LDL cholesterol (calculated)","13457-7","mg/dL"]],
+  "82465":[["Total cholesterol","2093-3","mg/dL"]], "84478":[["Triglycerides","2571-8","mg/dL"]], "83718":[["HDL cholesterol","2085-9","mg/dL"]], "83721":[["LDL cholesterol","18262-6","mg/dL"]],
+  "82947":[["Glucose","2345-7","mg/dL"]], "82948":[["Glucose, blood","2339-0","mg/dL"]], "82950":[["Glucose after glucose dose","2345-7","mg/dL"]],
+  "82951":[["Glucose, specimen 1","2345-7","mg/dL"],["Glucose, specimen 2","2345-7","mg/dL"],["Glucose, specimen 3","2345-7","mg/dL"]],
+  "83036":[["HbA1c","4548-4","%"]],
+  "80076":[["Albumin","1751-7","g/dL"],["Total bilirubin","1975-2","mg/dL"],["Direct bilirubin","1968-7","mg/dL"],["Alkaline phosphatase","6768-6","U/L"],["Total protein","2885-2","g/dL"],["ALT (SGPT)","1742-6","U/L"],["AST (SGOT)","1920-8","U/L"]],
+  "84460":[["ALT (SGPT)","1742-6","U/L"]], "84450":[["AST (SGOT)","1920-8","U/L"]], "82247":[["Total bilirubin","1975-2","mg/dL"]], "82248":[["Direct bilirubin","1968-7","mg/dL"]],
+  "84075":[["Alkaline phosphatase","6768-6","U/L"]], "82040":[["Albumin","1751-7","g/dL"]], "84155":[["Total protein","2885-2","g/dL"]],
+};
+const OBS_TYPES = ["LOINC","Text","Result","File"];
+const isLab = a => /^8\d{4}$/.test(a.code || "");
+function labDlg(id){
+  const c = claimById(id); if (!c) return;
+  const acts = c.acts.filter(isLab).length ? c.acts.filter(isLab) : c.acts;
+  const rowsFor = a => (a.obs && a.obs.length) ? a.obs.map(o => ({...o, label:""}))
+    : (LAB_FIELDS[a.code] || [["Result","",""]]).map(([label, code, unit]) => ({type:"LOINC", code, value:"", unit, label}));
+  const obsRow = (k, o) => `<tr data-act="${esc(k)}"><td><select class="obT">${OBS_TYPES.map(t => `<option ${o.type===t?"selected":""}>${t}</option>`).join("")}</select></td>
+    <td><input type="text" class="obC" value="${esc(o.code||"")}" placeholder="LOINC code" style="width:110px"></td>
+    <td><input type="text" class="obV" value="${esc(o.value||"")}" placeholder="${esc(o.label||"Value")}" style="width:100%"></td>
+    <td><input type="text" class="obU" value="${esc(o.unit||"")}" placeholder="Unit" style="width:80px"></td></tr>`;
+  openDlg(dlgHead(`Lab results · <span class="mono" style="font-size:15px">${esc(c.id)}</span>`, "Enter each result as it appears on the lab report. Each one is sent as an Observation on its activity in the claim file.",
+    `<button class="btn sm primary" id="labSave" type="button">Save results</button>`) +
+  `<div class="dlg-body">${acts.map(a => `<div><div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><span class="eyebrow">Activity ${esc(a.aid)} · <span class="code">${esc(a.code)}</span> ${esc((RESULT_REQUIRED[a.code]||[])[0]||a.desc||"")}</span><button class="btn sm" data-addobs="${esc(a.aid)}" type="button">Add result</button></div>
+    <div class="table-wrap" style="margin-top:6px"><table><thead><tr><th>Type</th><th>Code</th><th>Value</th><th>Unit</th></tr></thead><tbody id="ob-${esc(a.aid).replace(/[^\w-]/g,"_")}">
+    ${rowsFor(a).map(o => obsRow(a.aid, o)).join("")}</tbody></table></div></div>`).join("")}
+    <p class="muted" style="font-size:12.5px">Rows left without a value are not saved. After saving, download the claim file from the claim to upload it to eClaimLink.</p></div>`);
+  $("#dlgInner").querySelectorAll("[data-addobs]").forEach(b => b.onclick = () => {
+    const tb = $("#ob-" + b.dataset.addobs.replace(/[^\w-]/g,"_")); tb.insertAdjacentHTML("beforeend", obsRow(b.dataset.addobs, {type:"LOINC"})); });
+  $("#labSave").onclick = () => {
+    let n = 0;
+    for (const a of acts){
+      const rows = [...$("#dlgInner").querySelectorAll(`tr[data-act="${CSS.escape(a.aid)}"]`)].map(tr => ({type:tr.querySelector(".obT").value, code:tr.querySelector(".obC").value.trim(),
+        value:tr.querySelector(".obV").value.trim(), unit:tr.querySelector(".obU").value.trim()})).filter(o => o.value);
+      a.obs = rows; n += rows.length;
+    }
+    c.events.push({d:TODAY, t:`Lab results entered (${n})`}); save(); toast(`${n} result${n===1?"":"s"} saved`); claimDlg(c.id); render();
+  };
+}
+// The claim file for download. Claims imported from a file are written back exactly as they came,
+// with only their observations replaced; other claims are built from the record.
+function obsXml(doc, o, ind){
+  const el = doc.createElement("Observation");
+  for (const [t, v] of [["Type", o.type||"LOINC"], ["Code", o.code||""], ["Value", o.value], ["ValueType", o.unit||""]]){
+    el.appendChild(doc.createTextNode("\n" + ind + "  ")); const x = doc.createElement(t); x.textContent = v; el.appendChild(x); }
+  el.appendChild(doc.createTextNode("\n" + ind)); return el;
+}
+function claimSrcXml(c){
+  const doc = new DOMParser().parseFromString(c.srcXml, "application/xml"), ce = doc.documentElement;
+  for (const ae of [...ce.getElementsByTagName("Activity")]){
+    const idEl = [...ae.children].find(x => x.tagName === "ID"), a = c.acts.find(x => x.aid === (idEl ? idEl.textContent.trim() : ""));
+    if (!a) continue;
+    [...ae.children].filter(x => x.tagName === "Observation").forEach(x => { const p = x.previousSibling; if (p && p.nodeType === 3 && !p.textContent.trim()) p.remove(); x.remove(); });
+    const last = ae.lastChild, ind = last && last.nodeType === 3 ? last.textContent.replace(/^[\s\S]*\n/, "") : "    ";
+    if (last && last.nodeType === 3) last.remove();
+    for (const o of (a.obs||[]).filter(o => o.value)){ ae.appendChild(doc.createTextNode("\n" + ind + "  ")); ae.appendChild(obsXml(doc, o, ind + "  ")); }
+    ae.appendChild(doc.createTextNode("\n" + ind));
+  }
+  return new XMLSerializer().serializeToString(ce).replace(/ xmlns(:\w+)?="[^"]*"/g, "");
+}
+function claimFileXml(list){
+  if (!list.every(c => c.srcXml)) return claimsXml(list);
+  let headerXml = list[0].srcHeader || xmlHeader(list[0].payer, list.length);
+  headerXml = headerXml.replace(/<RecordCount>\d*<\/RecordCount>/, `<RecordCount>${list.length}</RecordCount>`).replace(/ xmlns(:\w+)?="[^"]*"/g, "");
+  return `<?xml version="1.0" encoding="utf-8"?>\n<Claim.Submission xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">\n  ${headerXml.trim()}\n  ${list.map(claimSrcXml).join("\n  ")}\n</Claim.Submission>\n`;
+}
+// Download claims as XML: one file per original file (or per payer for claims entered here)
+function downloadClaimsXml(list){
+  if (!list.length) { toast("No claims to download"); return; }
+  const groups = {};
+  for (const c of list){ const k = c.srcFile && c.srcFile !== "pasted text" ? c.srcFile : "payer_" + c.payer; (groups[k] ||= []).push(c); }
+  Object.entries(groups).forEach(([k, l], i) => setTimeout(() => {
+    const name = l.length === 1 ? `${l[0].id}.xml` : (k.startsWith("payer_") ? `claims_${k.slice(6)}_${TODAY}.xml` : k.replace(/(\.xml)?$/i, "_updated.xml"));
+    downloadFile(name, claimFileXml(l), "application/xml"); }, i * 400));
+  if (Object.keys(groups).length > 1) toast(`${Object.keys(groups).length} XML files, one for each original file`);
 }
 
 /* ---------- payer price lists ---------- */
