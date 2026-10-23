@@ -4,6 +4,8 @@ import { call, tag, tags, xmlUnesc } from "./soap.js";
 // "mock" simulates it inside the clinic database so the whole workflow can be tried without credentials.
 
 export function liveTransport(opts) {
+  // The DHPO specification v4 spells the download parameter "fileID"; override if your WSDL differs
+  const fileParam = (opts.env || process.env).ECLAIMLINK_FILE_ID_PARAM || "fileID";
   return {
     name: "live",
     async upload(fileName, xml) {
@@ -12,16 +14,22 @@ export function liveTransport(opts) {
         ["errorMessage", "errorReport", "TransactionID"], opts);
       return { result, transactionId: out.TransactionID || null, errorMessage: out.errorMessage || null, errorReport: decodeReport(out.errorReport) };
     },
+    // Claims and remittances come from GetNewTransactions. DHA advises GetNewPriorAuthorizationTransactions
+    // for prior authorization replies, as it is faster; it returns 2 when there is nothing new.
     async listNew() {
       const { out } = await call("GetNewTransactions", {}, ["xmlTransactions", "errorMessage"], opts);
-      return parseFileList(out.xmlTransactions);
+      const files = parseFileList(out.xmlTransactions);
+      const pa = await call("GetNewPriorAuthorizationTransactions", {}, ["xmlTransaction", "xmlTransactions", "errorMessage"], opts);
+      const seen = new Set(files.map(f => f.fileId));
+      for (const f of parseFileList(pa.out.xmlTransaction || pa.out.xmlTransactions)) if (!seen.has(f.fileId)) files.push(f);
+      return files;
     },
     async download(fileId) {
-      const { out } = await call("DownloadTransactionFile", { fileId }, ["fileName", "file", "errorMessage"], opts);
-      return { fileName: out.fileName, xml: Buffer.from(out.file, "base64").toString("utf8") };
+      const { out } = await call("DownloadTransactionFile", { [fileParam]: fileId }, ["fileName", "file", "errorMessage"], opts);
+      return { fileName: out.fileName || null, xml: Buffer.from(out.file, "base64").toString("utf8") };
     },
     async markDownloaded(fileId) {
-      await call("SetTransactionDownloaded", { fileId }, ["errorMessage"], opts);
+      await call("SetTransactionDownloaded", { [fileParam]: fileId }, ["errorMessage"], opts);
     },
   };
 }
@@ -34,10 +42,10 @@ function decodeReport(b64) {
   return /^[\x09\x0a\x0d\x20-\x7e -￿]*$/.test(txt) ? txt : `(binary report, ${buf.length} bytes)`;
 }
 
-// GetNewTransactions returns a list like <Files><File FileID="…" FileName="…" SenderID="…" … /></Files>
+// GetNewTransactions returns a list like <Files><File FileID='…' FileName='…' SenderID='…' … /></Files>
 export function parseFileList(xml) {
   return [...String(xml || "").matchAll(/<File\b([^>]*?)\/?>/g)].map(m => {
-    const attrs = Object.fromEntries([...m[1].matchAll(/([\w:-]+)\s*=\s*"([^"]*)"/g)].map(a => [a[1].toLowerCase(), xmlUnesc(a[2])]));
+    const attrs = Object.fromEntries([...m[1].matchAll(/([\w:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g)].map(a => [a[1].toLowerCase(), xmlUnesc(a[2] ?? a[3])]));
     return { fileId: attrs.fileid, fileName: attrs.filename, sender: attrs.senderid, receiver: attrs.receiverid,
       transactionDate: attrs.transactiondate, recordCount: Number(attrs.recordcount) || null };
   }).filter(f => f.fileId);

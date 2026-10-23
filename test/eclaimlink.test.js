@@ -48,7 +48,7 @@ test("facility licence and payer IDs are swapped in before upload", () => {
 });
 
 test("parseFileList reads the GetNewTransactions list", () => {
-  const l = parseFileList(`<Files><File FileID="11" FileName="ra.xml" SenderID="A001" ReceiverID="DHA-F-1" TransactionDate="23/10/2026 09:00" RecordCount="3" IsDownloaded="False"/></Files>`);
+  const l = parseFileList(`<Files><File FileID='11' FileName='ra.xml' SenderID='A001' ReceiverID="DHA-F-1" TransactionDate='23/10/2026 09:00' RecordCount='3' IsDownloaded='False' /></Files>`);
   assert.deepEqual(l, [{ fileId: "11", fileName: "ra.xml", sender: "A001", receiver: "DHA-F-1", transactionDate: "23/10/2026 09:00", recordCount: 3 }]);
 });
 
@@ -67,6 +67,7 @@ function fakeDhpo() {
         GetNewTransactions: `<GetNewTransactionsResult>0</GetNewTransactionsResult><xmlTransactions>${'<Files><File FileID="55" FileName="RA_55.xml" SenderID="A001" ReceiverID="DHA-F-1" RecordCount="1"/></Files>'.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</xmlTransactions><errorMessage/>`,
         DownloadTransactionFile: `<DownloadTransactionFileResult>0</DownloadTransactionFileResult><fileName>RA_55.xml</fileName><file>${Buffer.from(raXml).toString("base64")}</file><errorMessage/>`,
         SetTransactionDownloaded: "<SetTransactionDownloadedResult>0</SetTransactionDownloadedResult><errorMessage/>",
+        GetNewPriorAuthorizationTransactions: "<GetNewPriorAuthorizationTransactionsResult>2</GetNewPriorAuthorizationTransactionsResult><xmlTransaction/><errorMessage>No new prior authorization transactions</errorMessage>",
       }[op];
       res.setHeader("content-type", "text/xml; charset=utf-8");
       res.end(`<?xml version="1.0" encoding="utf-8"?><soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"><soap:Body><${op}Response xmlns="https://www.shafafiya.org/v2/">${reply}</${op}Response></soap:Body></soap:Envelope>`);
@@ -93,8 +94,8 @@ test("live mode speaks SOAP to the post office: upload, list, download, mark dow
 
     const s = await ecl.sync(ctx);
     assert.deepEqual([s.listed, s.downloaded, s.errors.length], [1, 1, 0]);
-    assert.deepEqual(calls.slice(2).map(c => c.op), ["GetNewTransactions", "DownloadTransactionFile", "SetTransactionDownloaded"]);
-    assert.equal(tag(calls[4].body, "fileId"), "55");
+    assert.deepEqual(calls.slice(2).map(c => c.op), ["GetNewTransactions", "GetNewPriorAuthorizationTransactions", "DownloadTransactionFile", "SetTransactionDownloaded"]);
+    assert.equal(tag(calls[4].body, "fileID"), "55", "parameter spelled as in the DHPO v4 specification");
     const [f] = ecl.listFiles(ctx, { unapplied: true });
     assert.deepEqual([f.type, f.file_id, f.sender], ["Remittance.Advice", "55", "A001"]);
   } finally { srv.close(); }

@@ -86,7 +86,7 @@ Every file sent or received is kept in the `eclaimlink_files` table with its res
 3. Fill in `FACILITY_LICENSE` and each payer's `eclaimlinkId` in `config/payers.json`. They replace the placeholder facility ID and short payer codes in outgoing files.
 4. Send one claim and check it on the eClaimLink portal before sending batches.
 
-The connector uses the post office operations `UploadTransaction`, `GetNewTransactions`, `DownloadTransactionFile` and `SetTransactionDownloaded`. eClaimLink handles claims, resubmissions and prior authorization. It is not an eligibility service, so eligibility still goes through the providers above.
+The connector follows the DHPO Web Service Specification v4.0 (March 2026): `UploadTransaction`, `GetNewTransactions`, `GetNewPriorAuthorizationTransactions` (DHA's recommended way to collect prior authorization replies), `DownloadTransactionFile` and `SetTransactionDownloaded`, with the shared result codes (1 = accepted with warnings, 2 = nothing new, negative = error). The specification has no eligibility operation, so eligibility still goes through the providers above. Files older than the archiving period (24 months for claims, 6 for authorizations) move to DHA's separate archive service, which this connector does not call.
 
 The claims, remittance and denial pages keep their records in the browser in this version, so use one workstation for eClaimLink billing until claims are moved into the server database.
 

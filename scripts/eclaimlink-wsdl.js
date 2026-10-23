@@ -11,5 +11,15 @@ console.log(`Endpoint:          ${url} (HTTP ${res.status})`);
 console.log(`WSDL namespace:    ${target || "not found"}`);
 console.log(`Configured:        ${ns}${target && target !== ns ? "   <-- set ECLAIMLINK_NAMESPACE to the WSDL value" : ""}`);
 console.log(`Operations:        ${ops.join(", ") || "none found"}`);
-for (const op of ["UploadTransaction", "GetNewTransactions", "DownloadTransactionFile", "SetTransactionDownloaded"])
-  if (ops.length && !ops.includes(op)) console.log(`Missing operation: ${op}`);
+// input parameter names, which SOAP matches case-sensitively (for example fileID vs fileId)
+for (const op of ["UploadTransaction", "GetNewTransactions", "GetNewPriorAuthorizationTransactions", "DownloadTransactionFile", "SetTransactionDownloaded"]) {
+  if (ops.length && !ops.includes(op)) { console.log(`Missing operation: ${op}`); continue; }
+  const m = wsdl.match(new RegExp(`<[\\w:]*element name="${op}">([\\s\\S]*?)</[\\w:]*element>\\s*<[\\w:]*element name="${op}Response"`));
+  if (!m) continue;
+  const params = [...m[1].matchAll(/name="([^"]+)"/g)].map(x => x[1]);
+  console.log(`  ${op}(${params.join(", ")})`);
+  const fp = params.find(p => p.toLowerCase() === "fileid"), want = process.env.ECLAIMLINK_FILE_ID_PARAM || "fileID";
+  if (fp && fp !== want) console.log(`  <-- set ECLAIMLINK_FILE_ID_PARAM=${fp}`);
+}
+const elig = ops.filter(o => /elig|member|coverage/i.test(o));
+console.log(`Eligibility-type operations: ${elig.length ? elig.join(", ") : "none"}`);
