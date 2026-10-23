@@ -20,7 +20,7 @@ export function summarize(xml) {
       const enc = tag(own, "Encounter") || "";
       return { id: txt(own, "ID"), payer: txt(own, "PayerID"), member: txt(own, "MemberID"), visit: txt(enc, "Start") || txt(acts[0] || "", "Start"), clinicians: [...new Set(acts.map(a => txt(a, "Clinician")).filter(Boolean))], gross: num(txt(own, "Gross")) || actNet,
         patientShare: num(txt(own, "PatientShare")), net: tag(own, "Net") !== null ? num(txt(own, "Net")) : actNet,
-        activities: acts.length, resubmission: resub === null ? null : txt(resub, "Type") || "yes" };
+        activities: acts.length, resubmission: resub === null ? null : txt(resub, "Type") || "yes", resubComment: resub === null ? null : txt(resub, "Comment") || null };
     });
     totals = { claims: rows.length, gross: r2(rows.reduce((s, r) => s + r.gross, 0)), net: r2(rows.reduce((s, r) => s + r.net, 0)),
       resubmissions: rows.filter(r => r.resubmission).length };
