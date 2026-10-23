@@ -1600,6 +1600,7 @@ function addClaimsFromXml(xml, {draft = false, file = ""} = {}){
       events:draft?[{d:encDate,t:"Encounter"},{d:TODAY,t:"Imported from XML file"}]:[{d:encDate,t:"Encounter"},{d:sent,t:"Claim file found on eClaimLink"}],
       remits:[], resubs:resub&&!draft?[{d:sent,type:(resub.getElementsByTagName("Type")[0]||{}).textContent||"correction",note:"",amount:r2(claimNet),codes:[],outcome:null}]:[], writeOff:0, woReason:null,
       pa:actEls.map(a=>own(a,"PriorAuthorizationID")).find(Boolean)||null};
+    if (receiver) c.tpa = receiver;
     if (file){ c.srcXml = ser(ce); c.srcHeader = headerXml; c.srcFile = file; }
     if (ex){ S.claims[S.claims.indexOf(ex)] = c; updated++; } else { S.claims.push(c); added++; }
   });
@@ -1889,7 +1890,7 @@ const payerText = code => payerName(code) && payerName(code) !== code ? `${code}
 function payerNamesDlg(kind){
   const doc = kind === "doctor", key = doc ? "doctorNames" : "payerNames", saved = S[key] || {}, u = UI.rep;
   const rows = [...(u.sub||[]), ...(u.ra||[]), ...(ECL() ? [] : localRows("sub").concat(localRows("ra")))];
-  const seen = new Set(doc ? rows.flatMap(docsOf) : rows.map(r => r.payer).filter(Boolean));
+  const seen = new Set(doc ? rows.flatMap(docsOf) : rows.flatMap(r => [r.payer, r.tpa]).filter(Boolean));
   Object.keys(saved).forEach(k => seen.add(k));
   const nm = k => saved[k] || (doc ? "" : payerName(k) !== k ? payerName(k) : "");
   const lines = [...seen].sort().map(k => `${k}, ${nm(k)}`).join("\n");
@@ -1907,7 +1908,7 @@ function payerNamesDlg(kind){
 }
 // Remittance, rejection and submission reports. With the clinic server they read the eClaimLink files themselves
 // (remittance advice received, claim submissions sent); without it they use the records in this browser.
-UI.rep = {from:addDays(TODAY,-30), to:TODAY, basis:"tx", payer:"", doctor:"", q:"", status:"", busy:"", progress:"", ra:null, sub:null, raWin:null, subWin:null, raFiles:0, subFiles:0, errors:[]};
+UI.rep = {from:addDays(TODAY,-30), to:TODAY, basis:"tx", tpa:"", payer:"", doctor:"", q:"", status:"", busy:"", progress:"", ra:null, sub:null, raWin:null, subWin:null, raFiles:0, subFiles:0, errors:[]};
 const REP_PAGES = {"rep-remit":["ra","Remittance summary"],"rep-rejections":["ra","Rejections"],"rep-reasons":["ra","Rejection reasons"],"rep-submissions":["sub","Submission report"],
   "rep-recon":["both","Reconciliation"],"rep-unprocessed":["both","Unprocessed claims"]};
 const repKinds = () => REP_PAGES[current][0] === "both" ? ["sub","ra"] : [REP_PAGES[current][0]];
@@ -1925,11 +1926,11 @@ function localRows(kind){
   const out = [];
   for (const c of S.claims){
     if (kind === "sub"){ if (!c.submitted) continue; const t = totals(c);
-      out.push({claim:c.id, payer:c.payer, docs:c.doctor?[c.doctor]:[], member:c.card, file:"", date:c.submitted, visit:c.enc, gross:t.gross, net:t.net, activities:c.acts.length, resub:""});
-      for (const x of c.resubs) out.push({claim:c.id, payer:c.payer, docs:c.doctor?[c.doctor]:[], member:c.card, file:"", date:x.d, visit:c.enc, gross:t.gross, net:r2(x.amount||0), activities:c.acts.length, resub:x.type||"yes", comment:x.note||""});
+      out.push({claim:c.id, payer:c.payer, tpa:c.tpa||"", docs:c.doctor?[c.doctor]:[], member:c.card, file:"", date:c.submitted, visit:c.enc, gross:t.gross, net:t.net, activities:c.acts.length, resub:""});
+      for (const x of c.resubs) out.push({claim:c.id, payer:c.payer, tpa:c.tpa||"", docs:c.doctor?[c.doctor]:[], member:c.card, file:"", date:x.d, visit:c.enc, gross:t.gross, net:r2(x.amount||0), activities:c.acts.length, resub:x.type||"yes", comment:x.note||""});
       continue; }
     for (const r of c.remits){ const ra = S.ras.find(x => x.id === r.ra) || {}; const d = ra.date || r.d;
-      out.push({claim:c.id, payer:c.payer, docs:c.doctor?[c.doctor]:[], file:ra.source||"", date:d, visit:c.enc, settlement:d, paymentRef:ra.payRef||"", net:r2(r.paid+r.denied), paid:r.paid, denied:r.denied, codes:[...new Set(c.acts.map(a=>a.denial).filter(Boolean))]}); }
+      out.push({claim:c.id, payer:c.payer, tpa:c.tpa||"", docs:c.doctor?[c.doctor]:[], file:ra.source||"", date:d, visit:c.enc, settlement:d, paymentRef:ra.payRef||"", net:r2(r.paid+r.denied), paid:r.paid, denied:r.denied, codes:[...new Set(c.acts.map(a=>a.denial).filter(Boolean))]}); }
   }
   return out;
 }
@@ -1951,14 +1952,20 @@ async function loadRepRows(kind, w){
     for (const f of r.files){
       const date = dhpoToIso(f.transactionDate) || "", at = date + String(f.transactionDate||"").slice(10);
       for (const x of f.rows){
-        if (kind === "ra") rows.push({claim:x.id, payer:f.header.sender, docs:x.clinicians||[], file:f.fileName||f.fileId, date, at, visit:dhpoToIso(x.visit)||"", settlement:dhpoToIso(x.settlement)||date, paymentRef:x.paymentRef, net:x.net, paid:x.paid, denied:x.denied, codes:x.denialCodes});
-        else rows.push({claim:x.id, payer:x.payer || f.header.receiver, member:x.member, docs:x.clinicians||[], file:f.fileName||f.fileId, date, at, visit:dhpoToIso(x.visit)||"", gross:x.gross, net:x.net, activities:x.activities, resub:x.resubmission||"", comment:x.resubComment||""});
+        if (kind === "ra") rows.push({claim:x.id, payer:f.header.sender, tpa:f.header.sender, docs:x.clinicians||[], file:f.fileName||f.fileId, date, at, visit:dhpoToIso(x.visit)||"", settlement:dhpoToIso(x.settlement)||date, paymentRef:x.paymentRef, net:x.net, paid:x.paid, denied:x.denied, codes:x.denialCodes});
+        else rows.push({claim:x.id, payer:x.payer || f.header.receiver, tpa:f.header.receiver || "", member:x.member, docs:x.clinicians||[], file:f.fileName||f.fileId, date, at, visit:dhpoToIso(x.visit)||"", gross:x.gross, net:x.net, activities:x.activities, resub:x.resubmission||"", comment:x.resubComment||""});
       }
     }
   }
   return {rows, errors, files:found.length};
 }
 const repAll = kind => ECL() ? UI.rep[kind] : localRows(kind);
+// Remittance files are sent by the TPA, so a remittance row's payer comes from the claim's submission (or the claim here)
+function fixRaPayers(){
+  const u = UI.rep; if (!u.ra) return;
+  const m = new Map((u.sub||[]).filter(r => !r.resub || true).map(r => [r.claim, r]));
+  for (const r of u.ra){ const s = m.get(r.claim), c = claimById(r.claim); if (s && s.payer) r.payer = s.payer; else if (c && c.payer && r.payer === r.tpa) r.payer = c.payer; }
+}
 // Doctors (clinician licence IDs) on a row: from the file itself, else from the claim's submission, else from the claim in this browser
 function docsOf(r){
   if (r.docs && r.docs.length) return r.docs;
@@ -1968,18 +1975,21 @@ function docsOf(r){
 const docName = code => (S.doctorNames||{})[code] || "";
 const docText = code => docName(code) ? `${code} · ${docName(code)}` : (code || "–");
 const repDate = r => UI.rep.basis === "visit" ? (r.visit || (claimById(r.claim)||{}).enc || "") : r.date;
-const repRows = kind => { const u = UI.rep, all = repAll(kind); return all ? all.filter(r => (!u.payer || r.payer === u.payer) && (!u.doctor || docsOf(r).includes(u.doctor)) && repDate(r) && repDate(r) >= u.from && repDate(r) <= u.to) : null; };
+const repRows = kind => { const u = UI.rep, all = repAll(kind); return all ? all.filter(r => (!u.tpa || r.tpa === u.tpa) && (!u.payer || r.payer === u.payer) && (!u.doctor || docsOf(r).includes(u.doctor)) && repDate(r) && repDate(r) >= u.from && repDate(r) <= u.to) : null; };
 function repBar(kind){
-  const u = UI.rep, kinds = kind === "both" ? ["sub","ra"] : [kind], payers = [...new Set(kinds.flatMap(k => (repAll(k)||[]).map(r => r.payer)))].sort();
+  const u = UI.rep, kinds = kind === "both" ? ["sub","ra"] : [kind], payers = [...new Set(kinds.flatMap(k => (repAll(k)||[]).filter(r => !u.tpa || r.tpa === u.tpa).map(r => r.payer)))].sort();
   const doctors = [...new Set(kinds.flatMap(k => (repAll(k)||[]).flatMap(docsOf)))].sort();
+  const tpas = [...new Set(kinds.flatMap(k => (repAll(k)||[]).map(r => r.tpa)).filter(Boolean))].sort();
   const loaded = kinds.every(k => u[k]), stale = ECL() && loaded && !kinds.every(repLoaded);
   const fromLabel = u.basis === "visit" ? "Visit date from" : kind === "ra" ? "Remittance date from" : "Submission date from";
   const nFiles = kinds.map(k => `${u[k+"Files"]} ${k==="ra"?"remittance":"claim submission"} file${u[k+"Files"]===1?"":"s"}`).join(" and ");
-  const ext = kind === "both" ? "Payments and resubmissions up to 180 days after the end date are included." : u.basis === "visit" ? `Files ${kind==="ra"?"received up to 180":"sent up to 120"} days after the end date are searched for these visits.` : "";
+  const raNote = kind === "ra" && ECL() && u.ra && !u.sub ? " Remittance files name the TPA: load Submissions for these dates first to split them by payer." : "";
+  const ext = (kind === "both" ? "Payments and resubmissions up to 180 days after the end date are included." : u.basis === "visit" ? `Files ${kind==="ra"?"received up to 180":"sent up to 120"} days after the end date are searched for these visits.` : "") + raNote;
   return `<section class="panel rep-bar"><form id="repForm" class="form-grid">
     <div class="field"><label for="rBasis">Report by</label><select id="rBasis"><option value="tx" ${u.basis==="tx"?"selected":""}>${kind==="ra"?"Remittance date":"Submission date"}</option><option value="visit" ${u.basis==="visit"?"selected":""}>Visit date</option></select></div>
     <div class="field"><label for="rFrom">${fromLabel}</label><input type="date" id="rFrom" value="${u.from}" max="${TODAY}"></div>
     <div class="field"><label for="rTo">To</label><input type="date" id="rTo" value="${u.to}" max="${TODAY}"></div>
+    <div class="field"><label for="rTpa">TPA</label><select id="rTpa"><option value="">All TPAs</option>${tpas.map(t=>`<option value="${esc(t)}" ${u.tpa===t?"selected":""}>${esc(payerText(t))}</option>`).join("")}</select></div>
     <div class="field"><label for="rPayer">Payer</label><select id="rPayer"><option value="">All payers</option>${payers.map(p=>`<option value="${esc(p)}" ${u.payer===p?"selected":""}>${esc(payerText(p))}</option>`).join("")}</select></div>
     <div class="field"><label for="rDoc">Doctor</label><select id="rDoc"><option value="">All doctors</option>${doctors.map(d=>`<option value="${esc(d)}" ${u.doctor===d?"selected":""}>${esc(docText(d))}</option>`).join("")}</select></div>
     <div class="field"><button class="btn" type="button" id="repNames">Payer names</button> <button class="btn" type="button" id="repDocNames">Doctor names</button></div>
@@ -2016,14 +2026,14 @@ function recon(){
     g.sub.sort(byDate); g.ra.sort(byDate);
     const first = g.sub.find(s => !s.resub) || g.sub[0], last = g.sub[g.sub.length-1], lastRa = g.ra[g.ra.length-1];
     const d = u.basis === "visit" ? first.visit : first.date;
-    if (!d || d < u.from || d > u.to || (u.payer && first.payer !== u.payer) || (u.doctor && !docsOf(first).includes(u.doctor))) continue;
+    if (!d || d < u.from || d > u.to || (u.tpa && first.tpa !== u.tpa) || (u.payer && first.payer !== u.payer) || (u.doctor && !docsOf(first).includes(u.doctor))) continue;
     const rs = g.sub.filter(s => s.resub), comment = rs.filter(s => s.comment).map(s => (rs.length > 1 ? `${fmtD(s.date)}: ` : "") + s.comment).join(" | "), resubType = rs.length ? rs[rs.length-1].resub : "";
     const resubs = rs.length, net = first.net, paid = r2(g.ra.reduce((a,r) => a + r.paid, 0));
     let status;
     if (!g.ra.length) status = resubs ? "awaiting" : "unprocessed";
     else if (last.resub && when(last) >= when(lastRa) && paid < net - 0.01) status = "awaiting";
     else status = paid >= net - 0.01 ? "paid" : paid > 0 ? "partial" : "rejected";
-    out.push({claim:id, payer:first.payer, docs:docsOf(first), member:first.member||"", visit:first.visit||"", submitted:first.date, resubs, lastSent:last.date, remits:g.ra.length, lastRemit:lastRa ? lastRa.date : "",
+    out.push({claim:id, payer:first.payer, tpa:first.tpa||"", docs:docsOf(first), member:first.member||"", visit:first.visit||"", submitted:first.date, resubs, lastSent:last.date, remits:g.ra.length, lastRemit:lastRa ? lastRa.date : "",
       net, paid, balance:r2(Math.max(0, net - paid)), codes:[...new Set(g.ra.flatMap(r => r.codes||[]))], status, days:diff(last.date, TODAY), comment, resubType});
   }
   return out.sort((a,b) => (a.submitted||"").localeCompare(b.submitted||""));
@@ -2225,7 +2235,7 @@ function repSummary(page = current){
   }
   return out;
 }
-const repPeriod = () => { const u = UI.rep; return `${u.basis==="visit"?"Visits":"Dates"} ${fmtD(u.from)} to ${fmtD(u.to)}${u.payer?` · Payer ${payerText(u.payer)}`:" · All payers"}${u.doctor?` · Doctor ${docText(u.doctor)}`:""}`; };
+const repPeriod = () => { const u = UI.rep; return `${u.basis==="visit"?"Visits":"Dates"} ${fmtD(u.from)} to ${fmtD(u.to)}${u.tpa?` · TPA ${payerText(u.tpa)}`:""}${u.payer?` · Payer ${payerText(u.payer)}`:" · All payers"}${u.doctor?` · Doctor ${docText(u.doctor)}`:""}`; };
 const repSummaryHtml = () => { const l = repSummary(); return `<div class="print-only" style="margin-bottom:6px"><b>${esc((S.facility && S.facility.name) || "Polyclinic")}</b> · ${esc(REP_PAGES[current][1])} · ${esc(repPeriod())} · Printed ${fmtD(TODAY)}</div>` +
   (l.length ? `<section class="panel"><div class="panel-head"><div><h2>Summary</h2><p>${esc(repPeriod())}</p></div></div><ul style="margin:0;padding-left:20px;line-height:1.7">${l.map(x=>`<li>${esc(x)}</li>`).join("")}</ul></section>` : ""); };
 // Claims and amounts by doctor; a claim with several doctors counts under each
@@ -2251,22 +2261,22 @@ const csvSummary = () => [csvRow([REP_PAGES[current][1]]), csvRow([repPeriod()])
 function repCsv(){
   if (current === "rep-recon" || current === "rep-unprocessed"){
     const u = UI.rep, rows = (recon() || []).filter(r => (current === "rep-recon" || r.status === "unprocessed" || r.status === "awaiting") && (!u.status || r.status === u.status) && reconMatch(r));
-    return [csvRow(["Claim","Payer code","Payer name","Doctor","Member","Visit","First sent","Resubmissions","Last sent","Days since last sent","Remittances","Last remittance","Net AED","Paid AED","Outstanding AED","Status","Denial codes","Resubmission type","Resubmission comment","In my records"]),
-      ...rows.map(r=>csvRow([r.claim,r.payer,payerName(r.payer),(r.docs||docsOf(r)).map(docText).join("; "),r.member,r.visit,r.submitted,r.resubs,r.lastSent,r.days,r.remits,r.lastRemit,r.net,r.paid,r.balance,RECON[r.status][0],r.codes.join(" "),r.resubType,r.comment,inRecords(r.claim)]))].join("\n");
+    return [csvRow(["Claim","TPA","Payer code","Payer name","Doctor","Member","Visit","First sent","Resubmissions","Last sent","Days since last sent","Remittances","Last remittance","Net AED","Paid AED","Outstanding AED","Status","Denial codes","Resubmission type","Resubmission comment","In my records"]),
+      ...rows.map(r=>csvRow([r.claim,payerText(r.tpa),r.payer,payerName(r.payer),(r.docs||docsOf(r)).map(docText).join("; "),r.member,r.visit,r.submitted,r.resubs,r.lastSent,r.days,r.remits,r.lastRemit,r.net,r.paid,r.balance,RECON[r.status][0],r.codes.join(" "),r.resubType,r.comment,inRecords(r.claim)]))].join("\n");
   }
   const k = REP_PAGES[current][0], rows = repRows(k) || [];
-  if (current === "rep-submissions") return [csvRow(["Claim","Payer code","Payer name","Doctor","Member","Visit","Submitted","File","Gross AED","Net AED","Activities","Resubmission","Resubmission comment"]), ...rows.map(r=>csvRow([r.claim,r.payer,payerName(r.payer),(r.docs||docsOf(r)).map(docText).join("; "),r.member,r.visit,r.date,r.file,r.gross,r.net,r.activities,r.resub,r.comment]))].join("\n");
+  if (current === "rep-submissions") return [csvRow(["Claim","TPA","Payer code","Payer name","Doctor","Member","Visit","Submitted","File","Gross AED","Net AED","Activities","Resubmission","Resubmission comment"]), ...rows.map(r=>csvRow([r.claim,payerText(r.tpa),r.payer,payerName(r.payer),(r.docs||docsOf(r)).map(docText).join("; "),r.member,r.visit,r.date,r.file,r.gross,r.net,r.activities,r.resub,r.comment]))].join("\n");
   if (current === "rep-reasons") return [csvRow(["Code","Meaning","Claims","Denied AED","Payers"]), ...reasons(rows).map(e=>csvRow([e.code,DENIALS[e.code]||"",e.claims,r2(e.denied),Object.entries(e.payers).map(([p,n])=>`${payerText(p)} (${n})`).join("; ")]))].join("\n");
   const list = current === "rep-rejections" ? rows.filter(r=>r.denied>0) : rows;
-  return [csvRow(["Claim","Payer code","Payer name","Doctor","Visit","Settled","Payment reference","File","Claimed AED","Paid AED","Denied AED","Denial codes"]), ...list.map(r=>csvRow([r.claim,r.payer,payerName(r.payer),(r.docs||docsOf(r)).map(docText).join("; "),r.visit,r.settlement||r.date,r.paymentRef,r.file,r.net,r.paid,r.denied,r.codes.join(" ")]))].join("\n");
+  return [csvRow(["Claim","TPA","Payer code","Payer name","Doctor","Visit","Settled","Payment reference","File","Claimed AED","Paid AED","Denied AED","Denial codes"]), ...list.map(r=>csvRow([r.claim,payerText(r.tpa),r.payer,payerName(r.payer),(r.docs||docsOf(r)).map(docText).join("; "),r.visit,r.settlement||r.date,r.paymentRef,r.file,r.net,r.paid,r.denied,r.codes.join(" ")]))].join("\n");
 }
 function bindReports(){
   const u = UI.rep, f = $("#repForm");
-  const sync = () => { u.from = $("#rFrom").value || u.from; u.to = $("#rTo").value || u.to; u.payer = $("#rPayer").value; u.basis = $("#rBasis").value; u.doctor = $("#rDoc").value; };
+  const sync = () => { u.from = $("#rFrom").value || u.from; u.to = $("#rTo").value || u.to; u.tpa = $("#rTpa").value; u.payer = $("#rPayer").value; u.basis = $("#rBasis").value; u.doctor = $("#rDoc").value; };
   ["#rFrom","#rTo"].forEach(id => $(id).onchange = () => { sync(); if (u.from > u.to) [u.from, u.to] = [u.to, u.from]; render(); });
-  $("#rPayer").onchange = $("#rBasis").onchange = $("#rDoc").onchange = () => { sync(); render(); };
+  $("#rTpa").onchange = $("#rPayer").onchange = $("#rBasis").onchange = $("#rDoc").onchange = () => { sync(); render(); };
   f.onsubmit = async e => { e.preventDefault(); sync(); u.busy = "1"; u.errors = []; render();
-    try { for (const k of repKinds()){ const w = repWin(k), r = await loadRepRows(k, w); u[k] = r.rows; u[k+"Win"] = w; u[k+"Files"] = r.files; u.errors.push(...r.errors); } }
+    try { for (const k of repKinds()){ const w = repWin(k), r = await loadRepRows(k, w); u[k] = r.rows; u[k+"Win"] = w; u[k+"Files"] = r.files; u.errors.push(...r.errors); } fixRaPayers(); }
     catch(err){ toast(err.message); }
     u.busy = ""; u.progress = ""; render(); };
   $("#repNames").onclick = () => payerNamesDlg("payer"); $("#repDocNames").onclick = () => payerNamesDlg("doctor");
