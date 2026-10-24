@@ -18,9 +18,13 @@ export function summarize(xml) {
       const own = c.replace(/<Activity\b[\s\S]*?<\/Activity>/g, ""); // claim-level fields only, not each activity's
       const actNet = r2(acts.reduce((s, a) => s + num(txt(a, "Net")), 0));
       const enc = tag(own, "Encounter") || "";
+      const ps = tag(own, "PatientShare") !== null ? num(txt(own, "PatientShare")) : r2(acts.reduce((s, a) => s + num(txt(a, "PatientShare")), 0));
       return { id: txt(own, "ID"), payer: txt(own, "PayerID"), member: txt(own, "MemberID"), visit: txt(enc, "Start") || txt(acts[0] || "", "Start"), clinicians: [...new Set(acts.map(a => txt(a, "Clinician")).filter(Boolean))], gross: num(txt(own, "Gross")) || actNet,
-        patientShare: tag(own, "PatientShare") !== null ? num(txt(own, "PatientShare")) : r2(acts.reduce((s, a) => s + num(txt(a, "PatientShare")), 0)), net: tag(own, "Net") !== null ? num(txt(own, "Net")) : actNet,
-        activities: acts.length, resubmission: resub === null ? null : txt(resub, "Type") || "yes", resubComment: resub === null ? null : txt(resub, "Comment") || null };
+        patientShare: ps, net: tag(own, "Net") !== null ? num(txt(own, "Net")) : actNet,
+        activities: acts.length,
+        // Each activity as [code, type, quantity, net, patient share (the claim's share split by net)], for the CPT report
+        acts: acts.map(a => { const n = num(txt(a, "Net")); return [txt(a, "Code"), txt(a, "Type"), num(txt(a, "Quantity")) || 1, n, actNet ? r2(ps * n / actNet) : 0]; }),
+        resubmission: resub === null ? null : txt(resub, "Type") || "yes", resubComment: resub === null ? null : txt(resub, "Comment") || null };
     });
     totals = { claims: rows.length, gross: r2(rows.reduce((s, r) => s + r.gross, 0)), net: r2(rows.reduce((s, r) => s + r.net, 0)),
       resubmissions: rows.filter(r => r.resubmission).length };
@@ -31,7 +35,8 @@ export function summarize(xml) {
       // Visit date: the encounter start if the payer sent it, otherwise the first activity's start
       return { id: txt(own, "ID"), payerRef: txt(own, "IDPayer"), paymentRef: txt(own, "PaymentReference"), settlement: txt(own, "DateSettlement"),
         visit: txt(tag(own, "Encounter") || "", "Start") || txt(acts[0] || "", "Start"), clinicians: [...new Set(acts.map(a => txt(a, "Clinician")).filter(Boolean))],
-        net: r2(net), patientShare: r2(acts.reduce((s, a) => s + num(txt(a, "PatientShare")), 0)), paid: r2(paid), denied: r2(Math.max(0, net - paid)), denialCodes: [...new Set(acts.map(a => txt(a, "DenialCode")).filter(Boolean))] };
+        net: r2(net), patientShare: r2(acts.reduce((s, a) => s + num(txt(a, "PatientShare")), 0)), paid: r2(paid),
+        acts: acts.map(a => [txt(a, "Code"), num(txt(a, "Net")), num(txt(a, "PaymentAmount")), txt(a, "DenialCode")]), denied: r2(Math.max(0, net - paid)), denialCodes: [...new Set(acts.map(a => txt(a, "DenialCode")).filter(Boolean))] };
     });
     const codes = {};
     tags(xml, "Activity").forEach(a => { const k = txt(a, "DenialCode"); if (k) codes[k] = r2((codes[k] || 0) + Math.max(0, num(txt(a, "Net")) - num(txt(a, "PaymentAmount")))); });

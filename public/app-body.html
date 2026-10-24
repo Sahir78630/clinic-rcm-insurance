@@ -377,7 +377,7 @@ const VIEWS = [
   ["Front office", [["eligibility","Eligibility & access"],["approvals","Prior approvals"]]],
   ["Billing", [["claims","Claims"],["remittance","Remittance & reconciliation"],["denials","Denials"],["resubmissions","Resubmissions"],["rep-resubdue","Resubmission due dates"],["eclaimlink","eClaimLink files"]]],
   ["Finance", [["receivables","Insurance receivables"]]],
-  ["Reports", [["rep-remit","Remittance summary"],["rep-rejections","Rejections"],["rep-reasons","Rejection reasons"],["rep-submissions","Submissions"],["rep-recon","Reconciliation"],["rep-unprocessed","Unprocessed claims"]]],
+  ["Reports", [["rep-remit","Remittance summary"],["rep-rejections","Rejections"],["rep-reasons","Rejection reasons"],["rep-submissions","Submissions"],["rep-recon","Reconciliation"],["rep-unprocessed","Unprocessed claims"],["rep-cpt","Revenue by CPT"]]],
   ["Price list", [["prices","Payer price lists"]]]
 ];
 let current = (location.hash||"").slice(1);
@@ -394,7 +394,7 @@ function renderNav(){
   $("#nav").innerHTML = VIEWS.map(([g,items]) => `<div class="nav-group">${g?`<div class="eyebrow">${g}</div>`:""}${items.map(([id,label]) =>
     `<button type="button" data-go="${id}" ${id===current?'aria-current="page"':""}><span>${label}</span>${n[id]?`<span class="count">${n[id]}</span>`:""}</button>`).join("")}</div>`).join("");
 }
-function go(v){ if (v !== current && typeof UI !== "undefined" && UI.rep) UI.rep.status = ""; current = v; try { history.replaceState(null,"","#"+v); } catch(e) {} render(); window.scrollTo(0,0); }
+function go(v){ if (v !== current && typeof UI !== "undefined" && UI.rep) { UI.rep.status = ""; UI.rep.q = ""; } current = v; try { history.replaceState(null,"","#"+v); } catch(e) {} render(); window.scrollTo(0,0); }
 function render(){ renderBrand(); renderNav(); $("#view").innerHTML = R[current](); bindView(); ddmmDates($("#view")); }
 // Browsers show date boxes in the computer's own format (often mm/dd/yyyy). Each date box is shown instead as a
 // dd/mm/yy text box with a calendar button; the original box stays underneath, keeps its id, value and handlers,
@@ -2091,7 +2091,7 @@ function payerNamesDlg(kind){
 // (remittance advice received, claim submissions sent); without it they use the records in this browser.
 UI.rep = {from:addDays(TODAY,-30), to:TODAY, basis:"tx", tpa:"", payer:"", doctor:"", q:"", status:"", busy:"", progress:"", ra:null, sub:null, raWin:null, subWin:null, raFiles:0, subFiles:0, errors:[]};
 const REP_PAGES = {"rep-remit":["ra","Remittance summary"],"rep-rejections":["ra","Rejections"],"rep-reasons":["ra","Rejection reasons"],"rep-submissions":["sub","Submission report"],
-  "rep-recon":["both","Reconciliation"],"rep-unprocessed":["both","Unprocessed claims"],"rep-resubdue":["both","Resubmission due dates"]};
+  "rep-recon":["both","Reconciliation"],"rep-unprocessed":["both","Unprocessed claims"],"rep-resubdue":["both","Resubmission due dates"],"rep-cpt":["both","Revenue by CPT code"]};
 const repKinds = () => REP_PAGES[current][0] === "both" ? ["sub","ra"] : [REP_PAGES[current][0]];
 // The eClaimLink files each report needs. A visit is always before its claim file, so a visit-date report also
 // searches files sent up to 120 days (claims) or received up to 180 days (remittances) after the end date.
@@ -2110,11 +2110,12 @@ function localRows(kind){
   const out = [];
   for (const c of S.claims){
     if (kind === "sub"){ if (!c.submitted) continue; const t = totals(c);
-      out.push({claim:c.id, payer:c.payer, tpa:c.tpa||"", docs:c.doctor?[c.doctor]:[], member:c.card, file:"", date:c.submitted, visit:c.enc, gross:t.gross, copay:t.ps, net:t.net, activities:c.acts.length, resub:""});
+      out.push({claim:c.id, payer:c.payer, tpa:c.tpa||"", docs:c.doctor?[c.doctor]:[], member:c.card, file:"", date:c.submitted, visit:c.enc, gross:t.gross, copay:t.ps, acts:c.acts.map(a => [a.code, a.type||"3", a.qty||1, a.net, a.ps||0]), net:t.net, activities:c.acts.length, resub:""});
       for (const x of c.resubs) out.push({claim:c.id, payer:c.payer, tpa:c.tpa||"", docs:c.doctor?[c.doctor]:[], member:c.card, file:"", date:x.d, visit:c.enc, gross:t.gross, copay:t.ps, net:r2(x.amount||0), activities:c.acts.length, resub:x.type||"yes", comment:x.note||""});
       continue; }
-    for (const r of c.remits){ const ra = S.ras.find(x => x.id === r.ra) || {}; const d = ra.date || r.d;
-      out.push({claim:c.id, payer:c.payer, tpa:c.tpa||"", docs:c.doctor?[c.doctor]:[], file:ra.source||"", date:d, visit:c.enc, settlement:d, paymentRef:ra.payRef||"", copay:t.ps, net:r2(r.paid+r.denied), paid:r.paid, denied:r.denied, codes:[...new Set(c.acts.map(a=>a.denial).filter(Boolean))]}); }
+    const t = totals(c);
+    c.remits.forEach((r, i) => { const ra = S.ras.find(x => x.id === r.ra) || {}; const d = ra.date || r.d;
+      out.push({acts: i ? [] : c.acts.map(a => [a.code, a.net, a.paid||0, a.denial||""]), claim:c.id, payer:c.payer, tpa:c.tpa||"", docs:c.doctor?[c.doctor]:[], file:ra.source||"", date:d, visit:c.enc, settlement:d, paymentRef:ra.payRef||"", copay:t.ps, net:r2(r.paid+r.denied), paid:r.paid, denied:r.denied, codes:[...new Set(c.acts.map(a=>a.denial).filter(Boolean))]}); });
   }
   return out;
 }
@@ -2136,8 +2137,8 @@ async function loadRepRows(kind, w){
     for (const f of r.files){
       const date = dhpoToIso(f.transactionDate) || "", at = date + String(f.transactionDate||"").slice(10);
       for (const x of f.rows){
-        if (kind === "ra") rows.push({claim:x.id, payer:f.header.sender, tpa:f.header.sender, docs:x.clinicians||[], file:f.fileName||f.fileId, date, at, visit:dhpoToIso(x.visit)||"", settlement:dhpoToIso(x.settlement)||date, paymentRef:x.paymentRef, copay:x.patientShare||0, net:x.net, paid:x.paid, denied:x.denied, codes:x.denialCodes});
-        else rows.push({claim:x.id, payer:x.payer || f.header.receiver, tpa:f.header.receiver || "", member:x.member, docs:x.clinicians||[], file:f.fileName||f.fileId, date, at, visit:dhpoToIso(x.visit)||"", gross:x.gross, copay:x.patientShare||0, net:x.net, activities:x.activities, resub:x.resubmission||"", comment:x.resubComment||""});
+        if (kind === "ra") rows.push({claim:x.id, payer:f.header.sender, tpa:f.header.sender, docs:x.clinicians||[], file:f.fileName||f.fileId, date, at, visit:dhpoToIso(x.visit)||"", settlement:dhpoToIso(x.settlement)||date, paymentRef:x.paymentRef, copay:x.patientShare||0, acts:x.acts||[], net:x.net, paid:x.paid, denied:x.denied, codes:x.denialCodes});
+        else rows.push({claim:x.id, payer:x.payer || f.header.receiver, tpa:f.header.receiver || "", member:x.member, docs:x.clinicians||[], file:f.fileName||f.fileId, date, at, visit:dhpoToIso(x.visit)||"", gross:x.gross, copay:x.patientShare||0, acts:x.acts||[], net:x.net, activities:x.activities, resub:x.resubmission||"", comment:x.resubComment||""});
       }
     }
   }
@@ -2424,6 +2425,69 @@ function resubPayerDlg(){
   $("#rdSave").onclick = () => { const m = {}; $("#rdList").value.split(/\n/).forEach(l => { const [k, d] = l.split(/[,;\t]/).map(x => (x||"").trim()); if (k && +d > 0) m[k] = Math.round(+d); });
     S.resubDaysPayer = m; save(); closeDlg(); render(); };
 }
+// Revenue by CPT (and other activity) code: each claim's activities as first sent, with what the payer paid for that code
+const ACT_TYPES = {"3":"CPT","4":"HCPCS","5":"Drug","6":"Dental","8":"Service","9":"DRG","10":"Scientific"};
+function codeDescs(){ const m = new Map(); for (const l of Object.values(PRICES.lists||{})) for (const [c,,d] of l.items||[]) if (d && !m.has(c)) m.set(c, d); return m; }
+const monthLabel = k => k ? new Date(k+"-01T00:00:00").toLocaleDateString("en-GB",{month:"short",year:"2-digit"}) : "–";
+function cptData(){
+  const u = UI.rep, subs = repAll("sub"), ras = repAll("ra"); if (!subs || !ras) return null;
+  const when = r => r.at || r.date || "", first = new Map();
+  for (const r of subs){ const f = first.get(r.claim); if (!f || (f.resub && !r.resub) || (!f.resub === !r.resub && when(r) < when(f))) first.set(r.claim, r); }
+  const pay = new Map();
+  for (const r of ras){ const m = pay.get(r.claim) || new Map(); pay.set(r.claim, m);
+    for (const [code,, paid, den] of r.acts||[]){ const e = m.get(code) || {paid:0, den:new Set()}; e.paid += paid; if (den) e.den.add(den); m.set(code, e); } }
+  const out = [];
+  for (const [id, s] of first){
+    const d = u.basis === "visit" ? s.visit : s.date;
+    if (!d || d < u.from || d > u.to || (u.tpa && s.tpa !== u.tpa) || (u.payer && s.payer !== u.payer) || (u.doctor && !docsOf(s).includes(u.doctor))) continue;
+    const pm = pay.get(id), byCode = {};
+    (s.acts||[]).forEach(a => byCode[a[0]] = (byCode[a[0]]||0) + a[3]);
+    for (const [code, type, qty, net, ps] of s.acts||[]){
+      // A payment for a code is split across the claim's lines with that code by their amounts
+      const e = pm && pm.get(code), paid = e && byCode[code] ? r2(Math.min(net, e.paid * net / byCode[code])) : 0; // capped: a resubmission remittance can repeat earlier payments
+      out.push({claim:id, payer:s.payer, month:d.slice(0,7), code, type:ACT_TYPES[type] || type || "–", qty, net, ps, paid, denied: pm ? r2(Math.max(0, net - paid)) : 0, awaiting: pm ? 0 : net, den: e ? [...e.den] : []});
+    }
+  }
+  return out;
+}
+function cptGroups(){
+  const all = cptData(); if (!all) return null;
+  const q = UI.rep.q.trim().toLowerCase(), descs = codeDescs(), desc = c => descs.get(c) || "";
+  const lines = q ? all.filter(l => l.code.toLowerCase().includes(q) || desc(l.code).toLowerCase().includes(q)) : all;
+  const blank = () => ({claims:new Set(), qty:0, net:0, ps:0, paid:0, denied:0, awaiting:0, den:new Set()});
+  const add = (e, l) => { e.claims.add(l.claim); e.qty += l.qty; e.net += l.net; e.ps += l.ps; e.paid += l.paid; e.denied += l.denied; e.awaiting += l.awaiting; l.den.forEach(k => e.den.add(k)); return e; };
+  const bc = {}, bm = {}; lines.forEach(l => { add(bc[l.code] ||= {...blank(), code:l.code, type:l.type, desc:desc(l.code)}, l); add(bm[l.month] ||= {...blank(), k:l.month}, l); });
+  return {all, lines, codes:Object.values(bc).sort((a,b) => b.net - a.net), months:Object.values(bm).sort((a,b) => a.k.localeCompare(b.k)), t:lines.reduce(add, blank())};
+}
+const pctOf = (a,b) => b ? (100*a/b).toFixed(1)+"%" : "–";
+R["rep-cpt"] = () => {
+  const u = UI.rep, g = cptGroups(), head0 = head("Revenue by CPT code","Every service billed in the period by CPT and other activity codes: quantity, amount billed, co-pay, paid, denied and still awaiting payment, by code and by month.", g&&g.all.length?repDl("repDl"):"");
+  const monthPick = `<section class="panel"><div class="filters" style="margin:0;align-items:center"><label class="muted" style="display:flex;gap:6px;align-items:center;font-size:12.5px">Whole month <input type="month" id="cptMonth" value="${u.from.slice(0,7)}" max="${TODAY.slice(0,7)}"></label><span class="muted" style="font-size:12px">Sets the dates above to that month. Choose any dates above for a longer period, then press Load from eClaimLink.</span></div></section>`;
+  if (!g || !g.all.length) return head0 + repBar("both") + monthPick + (g ? `<section class="panel"><div class="empty">No services billed in this period.</div></section>` : repEmpty("both"));
+  const {codes, months, t} = g;
+  const cells = e => `<td class="num">${e.claims.size}</td><td class="num">${r2(e.qty)}</td><td class="num">${aed(e.net)}</td><td class="num">${aed(e.ps)}</td><td class="num">${aed(e.paid)}</td><td class="num">${aed(e.denied)}</td><td class="num">${aed(e.awaiting)}</td><td class="num">${pctOf(e.paid, e.net - e.awaiting)}</td>`;
+  const heads = `<th class="num">Claims</th><th class="num">Quantity</th><th class="num">Billed net AED</th><th class="num">Co-pay AED</th><th class="num">Paid AED</th><th class="num">Denied AED</th><th class="num">Awaiting AED</th><th class="num">Collected</th>`;
+  return head0 + repBar("both") + monthPick + `<div class="kpis">
+    <div class="kpi"><span class="eyebrow">Services billed</span><span class="v">${r2(t.qty)}</span><span class="s">${codes.length} codes on ${t.claims.size} claims</span></div>
+    <div class="kpi"><span class="eyebrow">Billed net</span><span class="v">${aed(t.net)}<small>AED</small></span><span class="s">co-pay AED ${aed(t.ps)}</span></div>
+    <div class="kpi"><span class="eyebrow">Paid</span><span class="v">${aed(t.paid)}<small>AED</small></span><span class="s">${pctOf(t.paid, t.net - t.awaiting)} of remitted amounts</span></div>
+    <div class="kpi ${t.denied?"alert":""}"><span class="eyebrow">Denied</span><span class="v">${aed(t.denied)}<small>AED</small></span><span class="s">by the payer on remittance</span></div>
+    <div class="kpi"><span class="eyebrow">Awaiting payment</span><span class="v">${aed(t.awaiting)}<small>AED</small></span><span class="s">no remittance yet</span></div>
+  </div>
+  <div class="grid2">
+    <section class="panel"><div class="panel-head"><div><h2>Billed and paid by month</h2><p>AED · ${u.basis==="visit"?"visit month":"month sent"}</p></div></div>${vbars(months.map(m=>({label:monthLabel(m.k), series:[{v:r2(m.net),color:"--s1",name:"Billed"},{v:r2(m.paid),color:"--s3",name:"Paid"}]})),{label:"Billed and paid by month"})}
+      <div class="legend"><span><i style="background:var(--s1)"></i>Billed net</span><span><i style="background:var(--s3)"></i>Paid</span></div></section>
+    <section class="panel"><div class="panel-head"><div><h2>Top codes by amount billed</h2><p>AED</p></div></div>${hbars(codes.slice(0,10).map(c=>({label:c.code, v:r2(c.net), color:"--s1"})),{label:"Top codes",pl:90})}</section>
+  </div>
+  <section class="panel"><div class="panel-head"><div><h2>By code</h2><p>Click a code to see only that code, by month below</p></div></div>
+    <div class="filters" style="margin:0 0 10px"><input type="text" id="repQ" placeholder="Search code or description (from your price lists)" value="${esc(u.q)}" style="flex:1 1 260px">${u.q?`<button class="btn sm" id="cptAll" type="button">Show all codes</button>`:""}</div>
+    <div class="table-wrap"><table><thead><tr><th>Code</th><th>Type</th><th>Description</th>${heads}<th class="num">Avg paid per unit</th><th>Denial codes</th></tr></thead><tbody>
+    ${codes.slice(0,1500).map(c=>`<tr class="click" data-cptq="${esc(c.code)}"><td class="mono"><b>${esc(c.code)}</b></td><td>${esc(c.type)}</td><td class="wrap-cell">${esc(c.desc||"–")}</td>${cells(c)}<td class="num">${c.qty && c.paid ? aed(c.paid/c.qty) : "–"}</td><td class="wrap-cell">${[...c.den].map(k=>`<span class="code" title="${esc(DENIALS[k]||"")}">${esc(k)}</span>`).join(" ")||"–"}</td></tr>`).join("")}
+    </tbody><tfoot><tr><td colspan="3">${codes.length} codes</td>${cells(t)}<td></td><td></td></tr></tfoot></table></div>${codes.length > 1500 ? `<p class="muted">Showing the top 1,500 codes. Download the CSV for all of them.</p>` : ""}</section>
+  <section class="panel"><div class="panel-head"><div><h2>By month${u.q?` · ${esc(u.q)}`:""}</h2><p>${u.basis==="visit"?"Visit month":"Month sent"}</p></div></div><div class="table-wrap"><table><thead><tr><th>Month</th>${heads}</tr></thead><tbody>
+    ${months.map(m=>`<tr><td>${monthLabel(m.k)}</td>${cells(m)}</tr>`).join("")}
+    </tbody><tfoot><tr><td>Total</td>${cells(t)}</tr></tfoot></table></div></section>`;
+};
 // A few sentences at the top of every report (and of its downloads) with the main figures
 function repSummary(page = current){
   const u = UI.rep, pct = (a,b) => b ? (100*a/b).toFixed(1)+"%" : "0.0%", A = v => "AED " + aed(v), out = [];
@@ -2432,6 +2496,15 @@ function repSummary(page = current){
     const all = recon(); if (!all || !all.length) return [];
     const sum = l => r2(l.reduce((a,r) => a + r.balance, 0)), of = s => all.filter(r => r.status === s);
     const net = r2(all.reduce((a,r)=>a+r.net,0)), paid = r2(all.reduce((a,r)=>a+r.paid,0)), den = [...of("partial"), ...of("rejected")], aw = of("awaiting"), un = of("unprocessed");
+    if (page === "rep-cpt"){
+      const g = cptGroups(); if (!g || !g.lines.length) return [];
+      const {t, codes, months} = g, top = codes[0], best = months.slice().sort((a,b) => b.net - a.net)[0];
+      out.push(`${r2(t.qty)} services under ${codes.length} codes were billed on ${t.claims.size} claims${u.q ? ` (codes matching "${u.q}")` : ""}: ${A(t.net)} net, with ${A(t.ps)} patient co-pay.`);
+      out.push(`${A(t.paid)} has been paid (${pctOf(t.paid, t.net - t.awaiting)} of remitted amounts), ${A(t.denied)} was denied and ${A(t.awaiting)} has no remittance yet.`);
+      if (top) out.push(`The largest code is ${top.code}${top.desc ? " (" + top.desc + ")" : ""} with ${A(top.net)} billed (${pctOf(top.net, t.net)}) and ${A(top.paid)} paid.`);
+      if (months.length > 1 && best) out.push(`The highest month was ${monthLabel(best.k)} with ${A(best.net)} billed.`);
+      return out;
+    }
     if (page === "rep-resubdue"){
       const l = resubDue() || [], o = k => l.filter(r => r.st === k), up = resubUpTo(l), d = [...o("ontime"), ...o("late")];
       if (!l.length) return [];
@@ -2503,6 +2576,7 @@ function byDoctor(page = current){
   return {cols, list:Object.values(m).map(e => ({...e, claims:e.claims.size})).sort((a,b) => b.net - a.net)};
 }
 function byDoctorHtml(){
+  if (current === "rep-cpt") return "";
   const b = byDoctor(); if (!b || (b.list.length < 2 && b.list[0] && b.list[0].doc === "(not given)")) return "";
   return `<section class="panel"><div class="panel-head"><div><h2>By doctor</h2><p>Clinician on the claim's activities. Choose a doctor above to see only their claims.</p></div></div><div class="table-wrap"><table><thead><tr><th>Doctor licence</th><th>Doctor name</th><th class="num">Claims</th>${b.cols.map(c => c ? `<th class="num">${c}</th>` : "").join("")}</tr></thead><tbody>
     ${b.list.map(e => `<tr><td class="mono">${esc(e.doc)}</td><td>${esc(docName(e.doc)||"–")}</td><td class="num">${e.claims}</td><td class="num">${aed(e.net)}</td>${b.cols[1]?`<td class="num">${aed(e.paid)}</td>`:""}<td class="num">${b.cols[2]==="Resubmissions"?e.other:aed(e.other)}</td></tr>`).join("")}
@@ -2511,6 +2585,12 @@ function byDoctorHtml(){
 Object.keys(REP_PAGES).forEach(p => { const page = R[p]; R[p] = () => page().replace("<!--repbar-->", repSummaryHtml()) + byDoctorHtml(); });
 const csvSummary = () => [csvRow([REP_PAGES[current][1]]), csvRow([repPeriod()]), ...repSummary().map(x => csvRow([x])), ""];
 function repCsv(){
+  if (current === "rep-cpt"){
+    const g = cptGroups() || {codes:[], months:[]}, f = e => [e.claims.size, r2(e.qty), r2(e.net), r2(e.ps), r2(e.paid), r2(e.denied), r2(e.awaiting), pctOf(e.paid, e.net - e.awaiting)];
+    return [csvRow(["Code","Type","Description","Claims","Quantity","Billed net AED","Co-pay AED","Paid AED","Denied AED","Awaiting AED","Collected","Avg paid per unit","Denial codes"]),
+      ...g.codes.map(c => csvRow([c.code, c.type, c.desc, ...f(c), c.qty && c.paid ? r2(c.paid/c.qty) : "", [...c.den].join(" ")])), "",
+      csvRow(["Month","Claims","Quantity","Billed net AED","Co-pay AED","Paid AED","Denied AED","Awaiting AED","Collected"]), ...g.months.map(m => csvRow([monthLabel(m.k), ...f(m)]))].join("\n");
+  }
   if (current === "rep-resubdue"){
     const u = UI.rep, rows = (resubDue() || []).filter(r => (!u.status || r.st === u.status) && reconMatch(r));
     return [csvRow(["Claim","TPA","Payer code","Payer name","Doctor","Member","Visit","First sent","Rejected on","Denial codes","Co-pay AED","Net AED","Paid AED","Not paid AED","Window (days)","Resubmit by","Days left","Resubmitted on","Status","Resubmission comment","In my records"]),
@@ -2540,6 +2620,9 @@ function bindReports(){
   const st = $("#repStatus"); if (st) st.onchange = () => { u.status = st.value; render(); };
   const rd = $("#rdDays"); if (rd) rd.onchange = () => { const n = Math.round(+rd.value); if (n > 0) { S.resubDays = n; save(); } render(); };
   const rp = $("#rdPayers"); if (rp) rp.onclick = resubPayerDlg;
+  const cm = $("#cptMonth"); if (cm) cm.onchange = () => { if (!cm.value) return; const a = cm.value + "-01", e = addDays(addDays(a, 32).slice(0,7) + "-01", -1); u.from = a; u.to = e < TODAY ? e : TODAY; render(); };
+  document.querySelectorAll("[data-cptq]").forEach(r => r.onclick = () => { u.q = r.dataset.cptq; render(); window.scrollTo(0, 0); });
+  const ca = $("#cptAll"); if (ca) ca.onclick = () => { u.q = ""; render(); };
   const q = $("#repQ"); if (q) q.oninput = () => { u.q = q.value; const pos = q.selectionStart; render(); const n = $("#repQ"); n.focus(); n.setSelectionRange(pos,pos); };
   const dl = $("#repDl"); if (dl) dl.onclick = () => downloadFile(`${current.replace("rep-","")}_${u.basis==="visit"?"visits_":""}${u.from}_to_${u.to}${u.payer?"_"+u.payer:""}.csv`, [...csvSummary(), repCsv()].join("\n"));
   const pdf = $("#repPdf"); if (pdf) pdf.onclick = () => { document.body.dataset.print = "rep"; const t = document.title; document.title = `${REP_PAGES[current][1]} ${u.from} to ${u.to}`; window.print(); document.title = t; delete document.body.dataset.print; };
