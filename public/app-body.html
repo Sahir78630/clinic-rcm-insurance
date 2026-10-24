@@ -2432,6 +2432,50 @@ function resubPayerDlg(){
 // Revenue by CPT (and other activity) code: each claim's activities as first sent, with what the payer paid for that code
 const ACT_TYPES = {"3":"CPT","4":"HCPCS","5":"Drug","6":"Dental","8":"Service","9":"DRG","10":"Scientific"};
 function codeDescs(){ const m = new Map(); for (const l of Object.values(PRICES.lists||{})) for (const [c,,d] of l.items||[]) if (d && !m.has(c)) m.set(c, d); return m; }
+// Short names (two words at most) for common outpatient codes, shown beside the code in the CPT report.
+// The clinic's own names (Code names) come first, then these, then the first two words of a price-list description.
+const CODE_SHORT = {
+  "99202":"New L2","99203":"New L3","99204":"New L4","99205":"New L5","99211":"Est L1","99212":"Est L2","99213":"Est L3","99214":"Est L4","99215":"Est L5",
+  "99241":"Consult L1","99242":"Consult L2","99243":"Consult L3","99244":"Consult L4","99245":"Consult L5",
+  "99281":"ER L1","99282":"ER L2","99283":"ER L3","99284":"ER L4","99285":"ER L5",
+  "99381":"Preventive new","99382":"Preventive new","99383":"Preventive new","99384":"Preventive new","99385":"Preventive new","99386":"Preventive new","99387":"Preventive new",
+  "99391":"Preventive est","99392":"Preventive est","99393":"Preventive est","99394":"Preventive est","99395":"Preventive est","99396":"Preventive est","99397":"Preventive est",
+  "99406":"Smoking counsel","99173":"Vision screen","92002":"Eye new","92004":"Eye new","92012":"Eye est","92014":"Eye est","92250":"Fundus photo","92134":"Retina OCT",
+  "92551":"Hearing screen","92557":"Audiometry","92567":"Tympanometry",
+  "80048":"BMP panel","80053":"CMP panel","80061":"Lipid panel","80069":"Renal panel","80074":"Hepatitis panel","80076":"Liver panel",
+  "81001":"Urinalysis","81002":"Urine dipstick","81003":"Urinalysis","81025":"Urine pregnancy",
+  "82040":"Albumin","82150":"Amylase","82247":"Bilirubin total","82270":"Occult blood","82306":"Vitamin D","82310":"Calcium","82465":"Cholesterol","82533":"Cortisol","82550":"CK total","82565":"Creatinine",
+  "82607":"Vitamin B12","82670":"Estradiol","82728":"Ferritin","82746":"Folate","82947":"Glucose","82950":"Glucose post","82951":"Glucose tolerance",
+  "83001":"FSH","83002":"LH","83036":"HbA1c","83540":"Iron","83550":"Iron binding","83690":"Lipase","83718":"HDL","83721":"LDL direct",
+  "84075":"Alk phos","84100":"Phosphorus","84132":"Potassium","84144":"Progesterone","84146":"Prolactin","84153":"PSA total","84295":"Sodium","84403":"Testosterone",
+  "84436":"T4 total","84439":"Free T4","84443":"TSH","84450":"AST","84460":"ALT","84478":"Triglycerides","84481":"Free T3","84520":"BUN","84550":"Uric acid","84702":"Beta hCG","84703":"hCG qualitative",
+  "85025":"CBC diff","85027":"CBC","85610":"PT INR","85730":"PTT","85651":"ESR","85652":"ESR",
+  "86038":"ANA","86140":"CRP","86141":"hs-CRP","86431":"Rheumatoid factor","86480":"TB IGRA","86580":"TB skin","86592":"Syphilis test","86703":"HIV antibody","86706":"HBs antibody","86803":"Hepatitis C",
+  "86900":"Blood group","86901":"Rh type","87070":"Bacterial culture","87086":"Urine culture","87177":"Ova parasites","87340":"HBsAg","87426":"COVID antigen","87635":"COVID PCR","87624":"HPV test","87804":"Flu rapid","87880":"Strep rapid",
+  "88142":"Pap cytology","36415":"Blood draw","99000":"Specimen handling",
+  "71045":"Chest X-ray","71046":"Chest X-ray","72040":"C-spine X-ray","72100":"L-spine X-ray","73030":"Shoulder X-ray","73110":"Wrist X-ray","73130":"Hand X-ray","73560":"Knee X-ray","73562":"Knee X-ray",
+  "73610":"Ankle X-ray","73630":"Foot X-ray","74018":"Abdomen X-ray","70450":"CT head","74176":"CT abdomen",
+  "76536":"Neck US","76641":"Breast US","76642":"Breast US","76700":"Abdomen US","76705":"Abdomen US","76770":"Renal US","76801":"OB US","76805":"OB US","76815":"OB US","76817":"Transvaginal OB",
+  "76830":"Transvaginal US","76856":"Pelvic US","76857":"Pelvic US","76870":"Scrotal US","76882":"MSK US","77067":"Screening mammogram","77080":"DEXA scan",
+  "93000":"ECG","93005":"ECG tracing","93010":"ECG report","93306":"Echocardiogram","93880":"Carotid duplex","93970":"Venous duplex",
+  "96360":"IV hydration","96365":"IV infusion","96372":"IM injection","96374":"IV push","90471":"Vaccine admin","90686":"Flu vaccine",
+  "94010":"Spirometry","94640":"Nebulizer","94760":"Pulse oximetry","69210":"Ear wax","10060":"Abscess drainage","11102":"Skin biopsy","11200":"Skin tags","12001":"Wound repair",
+  "17000":"Lesion destruction","17110":"Wart removal","20550":"Tendon injection","20605":"Joint injection","20610":"Joint injection","29125":"Arm splint","30901":"Nosebleed control","46600":"Anoscopy","51701":"Bladder catheter",
+  "57454":"Colposcopy biopsy","58300":"IUD insertion","59025":"Fetal NST",
+  "97010":"Hot/cold pack","97014":"E-stim","97035":"Ultrasound therapy","97110":"Therapeutic exercise","97112":"Neuro re-education","97140":"Manual therapy","97161":"PT eval","97162":"PT eval","97163":"PT eval","97530":"Therapeutic activities",
+  "D0120":"Periodic exam","D0150":"Comprehensive exam","D0220":"Periapical X-ray","D0274":"Bitewing X-rays","D1110":"Adult cleaning","D2391":"Composite filling","D3330":"Molar RCT","D7140":"Extraction"
+};
+const shortName = (code, desc) => (S.codeNames||{})[code] || CODE_SHORT[code] || (desc ? desc.replace(/[^\w\s/-]/g," ").trim().split(/\s+/).slice(0,2).join(" ") : "");
+function codeNamesDlg(codes){
+  const saved = S.codeNames || {}, list = [...new Set([...codes, ...Object.keys(saved)])].sort();
+  openDlg(dlgHead("Code short names", "One per line: code, short name (two words at most). Change any name, or fill in the empty ones. Leave a name empty to use the first words of its price-list description.",
+    `<button class="btn sm primary" id="cnSave" type="button">Save</button>`) +
+    `<div class="dlg-body"><textarea id="cnText" rows="16" style="width:100%;font-family:var(--mono,monospace)" placeholder="99213, Est L3">${esc(list.map(k => `${k}, ${saved[k] || CODE_SHORT[k] || ""}`).join("\n"))}</textarea>
+    <p class="muted" style="font-size:12.5px">Names are kept in this browser. </p></div>`);
+  $("#cnSave").onclick = () => { const m = {};
+    for (const l of $("#cnText").value.split(/\r?\n/)){ const i = l.search(/[,;\t]/); if (i < 1) continue; const k = l.slice(0,i).trim(), v = l.slice(i+1).trim().split(/\s+/).slice(0,2).join(" "); if (k && v) m[k] = v; }
+    S.codeNames = m; save(); dlg.close(); render(); toast(`${Object.keys(m).length} code names saved`); };
+}
 const monthLabel = k => k ? new Date(k+"-01T00:00:00").toLocaleDateString("en-GB",{month:"short",year:"2-digit"}) : "–";
 function cptData(){
   const u = UI.rep, subs = repAll("sub"), ras = repAll("ra"); if (!subs || !ras) return null;
@@ -2457,10 +2501,10 @@ function cptData(){
 function cptGroups(){
   const all = cptData(); if (!all) return null;
   const q = UI.rep.q.trim().toLowerCase(), descs = codeDescs(), desc = c => descs.get(c) || "";
-  const lines = q ? all.filter(l => l.code.toLowerCase().includes(q) || desc(l.code).toLowerCase().includes(q)) : all;
+  const lines = q ? all.filter(l => l.code.toLowerCase().includes(q) || desc(l.code).toLowerCase().includes(q) || shortName(l.code, desc(l.code)).toLowerCase().includes(q)) : all;
   const blank = () => ({claims:new Set(), qty:0, net:0, ps:0, paid:0, denied:0, awaiting:0, den:new Set()});
   const add = (e, l) => { e.claims.add(l.claim); e.qty += l.qty; e.net += l.net; e.ps += l.ps; e.paid += l.paid; e.denied += l.denied; e.awaiting += l.awaiting; l.den.forEach(k => e.den.add(k)); return e; };
-  const bc = {}, bm = {}; lines.forEach(l => { add(bc[l.code] ||= {...blank(), code:l.code, type:l.type, desc:desc(l.code)}, l); add(bm[l.month] ||= {...blank(), k:l.month}, l); });
+  const bc = {}, bm = {}; lines.forEach(l => { add(bc[l.code] ||= {...blank(), code:l.code, type:l.type, desc:desc(l.code), short:shortName(l.code, desc(l.code))}, l); add(bm[l.month] ||= {...blank(), k:l.month}, l); });
   return {all, lines, codes:Object.values(bc).sort((a,b) => b.net - a.net), months:Object.values(bm).sort((a,b) => a.k.localeCompare(b.k)), t:lines.reduce(add, blank())};
 }
 const pctOf = (a,b) => b ? (100*a/b).toFixed(1)+"%" : "–";
@@ -2481,13 +2525,13 @@ R["rep-cpt"] = () => {
   <div class="grid2">
     <section class="panel"><div class="panel-head"><div><h2>Billed and paid by month</h2><p>AED · ${u.basis==="visit"?"visit month":"month sent"}</p></div></div>${vbars(months.map(m=>({label:monthLabel(m.k), series:[{v:r2(m.net),color:"--s1",name:"Billed"},{v:r2(m.paid),color:"--s3",name:"Paid"}]})),{label:"Billed and paid by month"})}
       <div class="legend"><span><i style="background:var(--s1)"></i>Billed net</span><span><i style="background:var(--s3)"></i>Paid</span></div></section>
-    <section class="panel"><div class="panel-head"><div><h2>Top codes by amount billed</h2><p>AED</p></div></div>${hbars(codes.slice(0,10).map(c=>({label:c.code, v:r2(c.net), color:"--s1"})),{label:"Top codes",pl:90})}</section>
+    <section class="panel"><div class="panel-head"><div><h2>Top codes by amount billed</h2><p>AED</p></div></div>${hbars(codes.slice(0,10).map(c=>({label:c.short ? `${c.code} ${c.short}` : c.code, v:r2(c.net), color:"--s1"})),{label:"Top codes",pl:190})}</section>
   </div>
-  <section class="panel"><div class="panel-head"><div><h2>By code</h2><p>Click a code to see only that code, by month below</p></div></div>
-    <div class="filters" style="margin:0 0 10px"><input type="text" id="repQ" placeholder="Search code or description (from your price lists)" value="${esc(u.q)}" style="flex:1 1 260px">${u.q?`<button class="btn sm" id="cptAll" type="button">Show all codes</button>`:""}</div>
-    <div class="table-wrap"><table><thead><tr><th>Code</th><th>Type</th><th>Description</th>${heads}<th class="num">Avg paid per unit</th><th>Denial codes</th></tr></thead><tbody>
-    ${codes.slice(0,1500).map(c=>`<tr class="click" data-cptq="${esc(c.code)}"><td class="mono"><b>${esc(c.code)}</b></td><td>${esc(c.type)}</td><td class="wrap-cell">${esc(c.desc||"–")}</td>${cells(c)}<td class="num">${c.qty && c.paid ? aed(c.paid/c.qty) : "–"}</td><td class="wrap-cell">${[...c.den].map(k=>`<span class="code" title="${esc(DENIALS[k]||"")}">${esc(k)}</span>`).join(" ")||"–"}</td></tr>`).join("")}
-    </tbody><tfoot><tr><td colspan="3">${codes.length} codes</td>${cells(t)}<td></td><td></td></tr></tfoot></table></div>${codes.length > 1500 ? `<p class="muted">Showing the top 1,500 codes. Download the CSV for all of them.</p>` : ""}</section>
+  <section class="panel"><div class="panel-head"><div><h2>By code</h2><p>Click a code to see only that code, by month below. Short names are built in for common codes; change them with Code names.</p></div></div>
+    <div class="filters" style="margin:0 0 10px"><input type="text" id="repQ" placeholder="Search code or description (from your price lists)" value="${esc(u.q)}" style="flex:1 1 260px">${u.q?`<button class="btn sm" id="cptAll" type="button">Show all codes</button>`:""}<button class="btn sm" id="cptNames" type="button">Code names</button></div>
+    <div class="table-wrap"><table><thead><tr><th>Code</th><th>Short name</th><th>Type</th><th>Description</th>${heads}<th class="num">Avg paid per unit</th><th>Denial codes</th></tr></thead><tbody>
+    ${codes.slice(0,1500).map(c=>`<tr class="click" data-cptq="${esc(c.code)}"><td class="mono"><b>${esc(c.code)}</b></td><td><b>${esc(c.short||"–")}</b></td><td>${esc(c.type)}</td><td class="wrap-cell">${esc(c.desc||"–")}</td>${cells(c)}<td class="num">${c.qty && c.paid ? aed(c.paid/c.qty) : "–"}</td><td class="wrap-cell">${[...c.den].map(k=>`<span class="code" title="${esc(DENIALS[k]||"")}">${esc(k)}</span>`).join(" ")||"–"}</td></tr>`).join("")}
+    </tbody><tfoot><tr><td colspan="4">${codes.length} codes</td>${cells(t)}<td></td><td></td></tr></tfoot></table></div>${codes.length > 1500 ? `<p class="muted">Showing the top 1,500 codes. Download the CSV for all of them.</p>` : ""}</section>
   <section class="panel"><div class="panel-head"><div><h2>By month${u.q?` · ${esc(u.q)}`:""}</h2><p>${u.basis==="visit"?"Visit month":"Month sent"}</p></div></div><div class="table-wrap"><table><thead><tr><th>Month</th>${heads}</tr></thead><tbody>
     ${months.map(m=>`<tr><td>${monthLabel(m.k)}</td>${cells(m)}</tr>`).join("")}
     </tbody><tfoot><tr><td>Total</td>${cells(t)}</tr></tfoot></table></div></section>`;
@@ -2505,7 +2549,7 @@ function repSummary(page = current){
       const {t, codes, months} = g, top = codes[0], best = months.slice().sort((a,b) => b.net - a.net)[0];
       out.push(`${r2(t.qty)} services under ${codes.length} codes were billed on ${t.claims.size} claims${u.q ? ` (codes matching "${u.q}")` : ""}: ${A(t.net)} net, with ${A(t.ps)} patient co-pay.`);
       out.push(`${A(t.paid)} has been paid (${pctOf(t.paid, t.net - t.awaiting)} of remitted amounts), ${A(t.denied)} was denied and ${A(t.awaiting)} has no remittance yet.`);
-      if (top) out.push(`The largest code is ${top.code}${top.desc ? " (" + top.desc + ")" : ""} with ${A(top.net)} billed (${pctOf(top.net, t.net)}) and ${A(top.paid)} paid.`);
+      if (top) out.push(`The largest code is ${top.code}${top.short || top.desc ? " (" + (top.short || top.desc) + ")" : ""} with ${A(top.net)} billed (${pctOf(top.net, t.net)}) and ${A(top.paid)} paid.`);
       if (months.length > 1 && best) out.push(`The highest month was ${monthLabel(best.k)} with ${A(best.net)} billed.`);
       return out;
     }
@@ -2591,8 +2635,8 @@ const csvSummary = () => [csvRow([REP_PAGES[current][1]]), csvRow([repPeriod()])
 function repCsv(){
   if (current === "rep-cpt"){
     const g = cptGroups() || {codes:[], months:[]}, f = e => [e.claims.size, r2(e.qty), r2(e.net), r2(e.ps), r2(e.paid), r2(e.denied), r2(e.awaiting), pctOf(e.paid, e.net - e.awaiting)];
-    return [csvRow(["Code","Type","Description","Claims","Quantity","Billed net AED","Co-pay AED","Paid AED","Denied AED","Awaiting AED","Collected","Avg paid per unit","Denial codes"]),
-      ...g.codes.map(c => csvRow([c.code, c.type, c.desc, ...f(c), c.qty && c.paid ? r2(c.paid/c.qty) : "", [...c.den].join(" ")])), "",
+    return [csvRow(["Code","Short name","Type","Description","Claims","Quantity","Billed net AED","Co-pay AED","Paid AED","Denied AED","Awaiting AED","Collected","Avg paid per unit","Denial codes"]),
+      ...g.codes.map(c => csvRow([c.code, c.short, c.type, c.desc, ...f(c), c.qty && c.paid ? r2(c.paid/c.qty) : "", [...c.den].join(" ")])), "",
       csvRow(["Month","Claims","Quantity","Billed net AED","Co-pay AED","Paid AED","Denied AED","Awaiting AED","Collected"]), ...g.months.map(m => csvRow([monthLabel(m.k), ...f(m)]))].join("\n");
   }
   if (current === "rep-resubdue"){
@@ -2627,6 +2671,7 @@ function bindReports(){
   const cm = $("#cptMonth"); if (cm) cm.onchange = () => { if (!cm.value) return; const a = cm.value + "-01", e = addDays(addDays(a, 32).slice(0,7) + "-01", -1); u.from = a; u.to = e < TODAY ? e : TODAY; render(); };
   document.querySelectorAll("[data-cptq]").forEach(r => r.onclick = () => { u.q = r.dataset.cptq; render(); window.scrollTo(0, 0); });
   const ca = $("#cptAll"); if (ca) ca.onclick = () => { u.q = ""; render(); };
+  const cn = $("#cptNames"); if (cn) cn.onclick = () => codeNamesDlg([...document.querySelectorAll("[data-cptq]")].map(r => r.dataset.cptq));
   const q = $("#repQ"); if (q) q.oninput = () => { u.q = q.value; const pos = q.selectionStart; render(); const n = $("#repQ"); n.focus(); n.setSelectionRange(pos,pos); };
   const dl = $("#repDl"); if (dl) dl.onclick = () => downloadFile(`${current.replace("rep-","")}_${u.basis==="visit"?"visits_":""}${u.from}_to_${u.to}${u.payer?"_"+u.payer:""}.csv`, [...csvSummary(), repCsv()].join("\n"));
   const pdf = $("#repPdf"); if (pdf) pdf.onclick = () => { document.body.dataset.print = "rep"; const t = document.title; document.title = `${REP_PAGES[current][1]} ${u.from} to ${u.to}`; window.print(); document.title = t; delete document.body.dataset.print; };
