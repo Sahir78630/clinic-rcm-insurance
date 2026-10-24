@@ -133,6 +133,14 @@ tfoot td{font-weight:600;background:var(--sunk);border-top:1px solid var(--line)
 .ddmm input[type=date]{position:absolute;left:0;bottom:0;width:1px;height:1px;opacity:0;pointer-events:none;padding:0;border:0}
 .ddmm-cal{border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:0 8px;cursor:pointer;font-size:14px;line-height:1}
 .ddmm-cal:disabled{opacity:.5;cursor:default}
+.cal{position:absolute;z-index:50;top:calc(100% + 4px);left:0;background:var(--surface);border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.18);padding:10px;width:260px;color:var(--ink,inherit)}
+.cal-head{display:flex;align-items:center;gap:2px;margin-bottom:6px}.cal-head b{flex:1;text-align:center;font-size:13.5px}
+.cal button{background:none;border:0;border-radius:6px;cursor:pointer;color:inherit;font:inherit;padding:5px 0}
+.cal-head button{width:26px;font-size:15px}.cal button:hover:not(:disabled){background:var(--sunk)}
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;text-align:center;font-size:13px}.cal-grid i{font-style:normal;font-size:11px;color:var(--muted);padding:3px 0}
+.cal-grid button.today{outline:1px solid var(--accent);outline-offset:-1px}.cal-grid button.on{background:var(--accent);color:#fff}
+.cal button:disabled{opacity:.3;cursor:default}
+.cal-foot{display:flex;justify-content:space-between;margin-top:6px;border-top:1px solid var(--line);padding-top:6px}.cal-foot button{padding:4px 10px;color:var(--accent);font-weight:600;font-size:12.5px}
 input[type=text],input[type=password],input[type=number],input[type=date],select,textarea{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:7px 9px;min-width:0;max-width:100%}
 textarea{width:100%;font-family:var(--mono);font-size:12px;min-height:150px;resize:vertical}
 .form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px;align-items:end}
@@ -404,8 +412,43 @@ function ddmmDates(root){
       txt.value = fmtD(iso); set(iso);
     });
     nat.addEventListener("change", () => { txt.value = nat.value ? fmtD(nat.value) : ""; });
-    btn.addEventListener("click", () => { try { nat.showPicker(); } catch(e) { nat.focus(); } });
+    btn.addEventListener("click", e => { e.stopPropagation(); calOpen(wrap, txt, nat, set); });
+    txt.addEventListener("click", () => calOpen(wrap, txt, nat, set));
+    txt.addEventListener("keydown", e => { if (e.key === "ArrowDown" || (e.key === " " && !txt.value)) { e.preventDefault(); calOpen(wrap, txt, nat, set); } if (e.key === "Escape") calClose(); });
   });
+}
+// A small month calendar under a date box. Weeks start on Monday; dates outside the box's min/max are greyed out.
+let calEl = null;
+function calClose(){ if (calEl){ calEl.remove(); calEl = null; document.removeEventListener("mousedown", calOutside, true); document.removeEventListener("keydown", calKey, true); } }
+function calOutside(e){ if (calEl && !calEl.contains(e.target) && !calEl.owner.contains(e.target)) calClose(); }
+function calKey(e){ if (e.key === "Escape" && calEl){ e.stopPropagation(); e.preventDefault(); const t = calEl.txt; calClose(); t.focus(); } }
+function calOpen(wrap, txt, nat, set){
+  if (txt.disabled) return;
+  if (calEl && calEl.owner === wrap) return;
+  calClose();
+  const sel = nat.value || "", min = nat.min || "", max = nat.max || "";
+  let view = new Date((isoDate(txt.value) || sel || TODAY) + "T00:00:00"); view = new Date(view.getFullYear(), view.getMonth(), 1);
+  calEl = Object.assign(document.createElement("div"), {className:"cal"}); calEl.owner = wrap; calEl.txt = txt;
+  calEl.setAttribute("role", "dialog"); calEl.setAttribute("aria-label", "Choose a date");
+  const draw = () => {
+    const y = view.getFullYear(), m = view.getMonth(), first = (new Date(y, m, 1).getDay() + 6) % 7, days = new Date(y, m + 1, 0).getDate();
+    let cells = "";
+    for (let i = 0; i < first; i++) cells += `<span></span>`;
+    for (let d = 1; d <= days; d++){ const iso = toISO(new Date(y, m, d)), off = (min && iso < min) || (max && iso > max);
+      cells += `<button type="button" data-d="${iso}" class="${iso===sel?"on":""} ${iso===TODAY?"today":""}" ${off?"disabled":""}>${d}</button>`; }
+    calEl.innerHTML = `<div class="cal-head"><button type="button" data-nav="-12" aria-label="Previous year">«</button><button type="button" data-nav="-1" aria-label="Previous month">‹</button>
+      <b>${view.toLocaleDateString("en-GB",{month:"long", year:"numeric"})}</b><button type="button" data-nav="1" aria-label="Next month">›</button><button type="button" data-nav="12" aria-label="Next year">»</button></div>
+      <div class="cal-grid">${["Mo","Tu","We","Th","Fr","Sa","Su"].map(w=>`<i>${w}</i>`).join("")}${cells}</div>
+      <div class="cal-foot"><button type="button" data-d="${TODAY}" ${(min && TODAY < min) || (max && TODAY > max) ? "disabled" : ""}>Today</button><button type="button" data-clear>Clear</button></div>`;
+    calEl.querySelectorAll("[data-nav]").forEach(b => b.onclick = () => { view = new Date(view.getFullYear(), view.getMonth() + Number(b.dataset.nav), 1); draw(); });
+    calEl.querySelectorAll("[data-d]").forEach(b => b.onclick = () => { const iso = b.dataset.d; calClose(); txt.value = fmtD(iso); set(iso); });
+    calEl.querySelector("[data-clear]").onclick = () => { calClose(); txt.value = ""; set(""); };
+  };
+  draw();
+  wrap.appendChild(calEl);
+  const r = calEl.getBoundingClientRect(); if (r.right > window.innerWidth - 8) calEl.style.left = Math.max(0, wrap.offsetWidth - r.width) + "px";
+  if (r.bottom > window.innerHeight - 8 && wrap.getBoundingClientRect().top > r.height + 8) { calEl.style.top = "auto"; calEl.style.bottom = "calc(100% + 4px)"; }
+  setTimeout(() => { document.addEventListener("mousedown", calOutside, true); document.addEventListener("keydown", calKey, true); });
 }
 function toast(msg){ const t = $("#toast"); t.textContent = msg; t.hidden = false; clearTimeout(toast.h); toast.h = setTimeout(()=>t.hidden=true, 2600); }
 function head(title, sub, right=""){ return `<div class="page-head"><div><h1>${title}</h1><p>${sub}</p></div><div class="actions">${right}</div></div>`; }
