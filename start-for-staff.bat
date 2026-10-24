@@ -29,6 +29,7 @@ if "%PORT%"=="" set PORT=3000
 echo.
 echo Clinic RCM is shared on the clinic network. Keep this window open.
 echo On a staff computer, open one of these addresses in Chrome or Edge:
+echo     http://%COMPUTERNAME%:%PORT%
 for /f "tokens=2 delims=:" %%i in ('ipconfig ^| findstr /c:"IPv4"') do for /f "tokens=*" %%j in ("%%i") do echo     http://%%j:%PORT%
 echo and sign in with the staff username and password.
 echo If Windows asks whether to allow Node.js on the network, choose Private networks and click Allow.
