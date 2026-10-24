@@ -2096,9 +2096,12 @@ const repKinds = () => REP_PAGES[current][0] === "both" ? ["sub","ra"] : [REP_PA
 // The eClaimLink files each report needs. A visit is always before its claim file, so a visit-date report also
 // searches files sent up to 120 days (claims) or received up to 180 days (remittances) after the end date.
 // Reconciliation looks 180 days past the end date for resubmissions and payments.
+const remitBasis = () => current === "rep-resubdue" && UI.rep.basis === "remit";
 function repWin(kind){
   const u = UI.rep, ext = REP_PAGES[current][0] === "both" ? 180 : u.basis === "visit" ? (kind === "ra" ? 180 : 120) : 0;
   const b = addDays(u.to, ext);
+  // By remittance date (due dates only): the rejected claims may have been sent up to 180 days before
+  if (remitBasis()) return {a:addDays(u.from, -180), b:b < TODAY ? b : TODAY};
   return {a:u.from, b:b < TODAY ? b : TODAY};
 }
 const repLoaded = kind => { const w = UI.rep[kind+"Win"], n = repWin(kind); return Boolean(UI.rep[kind] && w && w.a <= n.a && w.b >= n.b); };
@@ -2163,12 +2166,12 @@ function repBar(kind){
   const doctors = [...new Set(kinds.flatMap(k => (repAll(k)||[]).flatMap(docsOf)))].sort();
   const tpas = [...new Set(kinds.flatMap(k => (repAll(k)||[]).map(r => r.tpa)).filter(Boolean))].sort();
   const loaded = kinds.every(k => u[k]), stale = ECL() && loaded && !kinds.every(repLoaded);
-  const fromLabel = u.basis === "visit" ? "Visit date from" : kind === "ra" ? "Remittance date from" : "Submission date from";
+  const fromLabel = remitBasis() ? "Remittance date from" : u.basis === "visit" ? "Visit date from" : kind === "ra" ? "Remittance date from" : "Submission date from";
   const nFiles = kinds.map(k => `${u[k+"Files"]} ${k==="ra"?"remittance":"claim submission"} file${u[k+"Files"]===1?"":"s"}`).join(" and ");
   const raNote = kind === "ra" && ECL() && u.ra && !u.sub ? " Remittance files name the TPA: load Submissions for these dates first to split them by payer." : "";
   const ext = (kind === "both" ? "Payments and resubmissions up to 180 days after the end date are included." : u.basis === "visit" ? `Files ${kind==="ra"?"received up to 180":"sent up to 120"} days after the end date are searched for these visits.` : "") + raNote;
   return `<section class="panel rep-bar"><form id="repForm" class="form-grid">
-    <div class="field"><label for="rBasis">Report by</label><select id="rBasis"><option value="tx" ${u.basis==="tx"?"selected":""}>${kind==="ra"?"Remittance date":"Submission date"}</option><option value="visit" ${u.basis==="visit"?"selected":""}>Visit date</option></select></div>
+    <div class="field"><label for="rBasis">Report by</label><select id="rBasis"><option value="tx" ${u.basis==="tx"?"selected":""}>${kind==="ra"?"Remittance date":"Submission date"}</option><option value="visit" ${u.basis==="visit"?"selected":""}>Visit date</option>${current==="rep-resubdue"?`<option value="remit" ${u.basis==="remit"?"selected":""}>Remittance (rejection) date</option>`:""}</select></div>
     <div class="field"><label for="rFrom">${fromLabel}</label><input type="date" id="rFrom" value="${u.from}" max="${TODAY}"></div>
     <div class="field"><label for="rTo">To</label><input type="date" id="rTo" value="${u.to}" max="${TODAY}"></div>
     <div class="field"><label for="rTpa">TPA</label><select id="rTpa"><option value="">All TPAs</option>${tpas.map(t=>`<option value="${esc(t)}" ${u.tpa===t?"selected":""}>${esc(payerText(t))}</option>`).join("")}</select></div>
@@ -2208,7 +2211,7 @@ function recon(){
     g.sub.sort(byDate); g.ra.sort(byDate);
     const first = g.sub.find(s => !s.resub) || g.sub[0], last = g.sub[g.sub.length-1], lastRa = g.ra[g.ra.length-1];
     const d = u.basis === "visit" ? first.visit : first.date;
-    if (!d || d < u.from || d > u.to || (u.tpa && first.tpa !== u.tpa) || (u.payer && first.payer !== u.payer) || (u.doctor && !docsOf(first).includes(u.doctor))) continue;
+    if ((!remitBasis() && (!d || d < u.from || d > u.to)) || (u.tpa && first.tpa !== u.tpa) || (u.payer && first.payer !== u.payer) || (u.doctor && !docsOf(first).includes(u.doctor))) continue;
     const rs = g.sub.filter(s => s.resub), comment = rs.filter(s => s.comment).map(s => (rs.length > 1 ? `${fmtD(s.date)}: ` : "") + s.comment).join(" | "), resubType = rs.length ? rs[rs.length-1].resub : "";
     const resubs = rs.length, net = first.net, paid = r2(g.ra.reduce((a,r) => a + r.paid, 0));
     let status;
@@ -2372,7 +2375,7 @@ function resubDue(){
   const rc = recon(); if (!rc) return null;
   const out = [];
   for (const r of rc){
-    if (!r.lastRemit) continue;
+    if (!r.lastRemit || (remitBasis() && (r.lastRemit < UI.rep.from || r.lastRemit > UI.rep.to))) continue;
     const pending = r.status === "partial" || r.status === "rejected", done = r.status === "awaiting" && r.remits > 0;
     if (!pending && !done) continue;
     const days = resubWin(r.payer), due = addDays(r.lastRemit, days), left = diff(TODAY, due);
@@ -2431,7 +2434,7 @@ function repSummary(page = current){
     const net = r2(all.reduce((a,r)=>a+r.net,0)), paid = r2(all.reduce((a,r)=>a+r.paid,0)), den = [...of("partial"), ...of("rejected")], aw = of("awaiting"), un = of("unprocessed");
     if (page === "rep-resubdue"){
       const l = resubDue() || [], o = k => l.filter(r => r.st === k), up = resubUpTo(l), d = [...o("ontime"), ...o("late")];
-      if (!l.length) return ["No rejected claims in this period."];
+      if (!l.length) return [];
       out.push(`${l.length} rejected or partly paid claims; resubmission window ${S.resubDays > 0 ? S.resubDays : 60} days from the remittance${Object.keys(S.resubDaysPayer||{}).length ? ", with payer exceptions" : ""}.`);
       out.push(`${o("overdue").length} are past their resubmission date and not resubmitted (${A(sum(o("overdue")))}); ${o("soon").length} are due within 7 days (${A(sum(o("soon")))}); ${o("open").length} still have time (${A(sum(o("open")))}).`);
       if (d.length) out.push(`${d.length} were resubmitted: ${o("ontime").length} on time (${pct(o("ontime").length, d.length)}) and ${o("late").length} late.`);
@@ -2483,7 +2486,7 @@ function repSummary(page = current){
   }
   return out;
 }
-const repPeriod = () => { const u = UI.rep; return `${u.basis==="visit"?"Visits":"Dates"} ${fmtD(u.from)} to ${fmtD(u.to)}${u.tpa?` · TPA ${payerText(u.tpa)}`:""}${u.payer?` · Payer ${payerText(u.payer)}`:" · All payers"}${u.doctor?` · Doctor ${docText(u.doctor)}`:""}`; };
+const repPeriod = () => { const u = UI.rep; return `${remitBasis()?"Rejections received":u.basis==="visit"?"Visits":"Dates"} ${fmtD(u.from)} to ${fmtD(u.to)}${u.tpa?` · TPA ${payerText(u.tpa)}`:""}${u.payer?` · Payer ${payerText(u.payer)}`:" · All payers"}${u.doctor?` · Doctor ${docText(u.doctor)}`:""}`; };
 const repSummaryHtml = () => { const l = repSummary(); return `<div class="print-only" style="margin-bottom:6px"><b>${esc((S.facility && S.facility.name) || "Polyclinic")}</b> · ${esc(REP_PAGES[current][1])} · ${esc(repPeriod())} · Printed ${fmtD(TODAY)}</div>` +
   (l.length ? `<section class="panel"><div class="panel-head"><div><h2>Summary</h2><p>${esc(repPeriod())}</p></div></div><ul style="margin:0;padding-left:20px;line-height:1.7">${l.map(x=>`<li>${esc(x)}</li>`).join("")}</ul></section>` : ""); };
 // Claims and amounts by doctor; a claim with several doctors counts under each
