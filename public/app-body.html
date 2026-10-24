@@ -474,8 +474,9 @@ R.overview = () => {
   for (let i=5;i>=0;i--){ const d = new Date(d0.getFullYear(), d0.getMonth()-i, 1); months.push({key:d.getFullYear()+"-"+z(d.getMonth()+1),label:d.toLocaleDateString("en-GB",{month:"short"})}); }
   months.forEach(m => { m.billed = S.claims.filter(c=>c.submitted && c.submitted.startsWith(m.key)).reduce((s,c)=>s+totals(c).net,0); m.col = S.ras.filter(r=>r.date.startsWith(m.key)).reduce((s,r)=>s+r.amount,0); });
   const byPayer = PAYERS.map(p=>({label:p.name,v:ab.rows[p.id]?ab.rows[p.id].total:0})).filter(x=>x.v>0).sort((a,b)=>b.v-a.v);
-  return head("Revenue cycle overview",`Insurance position as of ${fmtD(TODAY)}. Outstanding balances are net of patient share and age from claim submission.`) + (S.claims.length ? "" : gettingStarted()) +
-  `<div class="kpis">
+  return head("Revenue cycle overview",`Insurance position as of ${fmtD(TODAY)}. Outstanding balances are net of patient share and age from claim submission.`) + ovHtml() + (S.claims.length || ECL() ? "" : gettingStarted()) +
+  `<div class="page-head" style="margin-top:6px"><div><h2 style="margin:0;font-size:17px">Work in this browser</h2><p>Claims, remittances and approvals you have imported or entered here${ECL() && !S.claims.length ? ": none yet, so these are empty. Import claims on the Claims page to work on them" : ""}.</p></div></div>
+  <div class="kpis">
     <div class="kpi"><span class="eyebrow">Outstanding insurance AR</span><span class="v">${aed(ar)}<small>AED</small></span><span class="s">${live.filter(c=>totals(c).outstanding>0).length} open claims</span></div>
     <div class="kpi"><span class="eyebrow">Collected, last 30 days</span><span class="v">${aed(col30)}<small>AED</small></span><span class="s">from ${S.ras.filter(r=>diff(r.date,TODAY)<=30).length} remittances</span></div>
     <div class="kpi ${over90/ar>0.25?"alert":""}"><span class="eyebrow">AR over 90 days</span><span class="v">${ar?Math.round(100*over90/ar):0}<small>%</small></span><span class="s">AED ${aed(over90)}</span></div>
@@ -1310,6 +1311,7 @@ function bindView(){
   if (current==="eclaimlink") bindEcl(v);
   if (REP_PAGES[current]) bindReports();
   if (current === "prices") bindPrices();
+  if (current === "overview") bindOverview();
   v.querySelectorAll("[data-facility]").forEach(b=>b.onclick=facilityDlg);
   if (current==="resubmissions"){ v.querySelectorAll("[data-rsfilter]").forEach(b=>b.onclick=()=>{ UI.rsFilter=b.dataset.rsfilter; render(); }); }
   if (current==="receivables"){
@@ -1639,6 +1641,65 @@ function applyEclFile(key, type, xml, name){
   else return {done:false, msg:`${type} files are view only`};
   S.posted[key] = TODAY; save();
   return {done:true, msg};
+}
+
+/* ---------- overview: period summary ---------- */
+// The Overview's period panel: claims sent in the chosen period, matched with their remittances (the Reconciliation
+// logic). With the clinic server it reads eClaimLink after Load; without it, the claims in this browser.
+const OV_PERIODS = [["30","Last 30 days"],["90","Last 90 days"],["month","This month"],["lastmonth","Last month"],["year","This year"],["custom","Choose dates"]];
+UI.ov = {period:"30", from:addDays(TODAY,-30), to:TODAY, busy:false, loaded:""};
+function ovRange(p){
+  const d = new Date(TODAY+"T00:00:00"), iso = x => toISO(x);
+  if (p === "30" || p === "90") return [addDays(TODAY, -Number(p)), TODAY];
+  if (p === "month") return [iso(new Date(d.getFullYear(), d.getMonth(), 1)), TODAY];
+  if (p === "lastmonth") return [iso(new Date(d.getFullYear(), d.getMonth()-1, 1)), iso(new Date(d.getFullYear(), d.getMonth(), 0))];
+  if (p === "year") return [iso(new Date(d.getFullYear(), 0, 1)), TODAY];
+  return [UI.ov.from, UI.ov.to];
+}
+function ovHtml(){
+  const o = UI.ov, u = UI.rep, key = `${o.from}|${o.to}`, needLoad = ECL() && o.loaded !== key;
+  const keep = {from:u.from, to:u.to, basis:u.basis, tpa:u.tpa, payer:u.payer, doctor:u.doctor};
+  Object.assign(u, {from:o.from, to:o.to, basis:"tx", tpa:"", payer:"", doctor:""});
+  const all = needLoad ? null : recon();
+  Object.assign(u, keep);
+  const bar = `<form id="ovForm" class="form-grid" style="margin-bottom:10px">
+    <div class="field"><label for="ovPeriod">Period</label><select id="ovPeriod">${OV_PERIODS.map(([v,l]) => `<option value="${v}" ${o.period===v?"selected":""}>${l}</option>`).join("")}</select></div>
+    <div class="field"><label for="ovFrom">From</label><input type="date" id="ovFrom" value="${o.from}" max="${TODAY}" ${o.period==="custom"?"":"disabled"}></div>
+    <div class="field"><label for="ovTo">To</label><input type="date" id="ovTo" value="${o.to}" max="${TODAY}" ${o.period==="custom"?"":"disabled"}></div>
+    ${ECL()?`<div class="field"><button class="btn primary" type="submit" ${o.busy?"disabled":""}>${o.busy?"Loading…":needLoad?"Load from eClaimLink":"Reload"}</button></div>`:""}
+  </form><div class="muted" style="font-size:12.5px">${o.busy ? esc(u.progress||"") : ECL() ? (needLoad ? `Press <b>Load from eClaimLink</b> to see claims sent ${fmtD(o.from)} – ${fmtD(o.to)} and what was paid for them.` : `Claims sent ${fmtD(o.from)} – ${fmtD(o.to)} on ${eclLabel()}, with payments and resubmissions up to today.`) + (eclNeedsSignIn() ? ` <b>Not signed in:</b> test-mode data only. <button class="btn sm" data-go="eclaimlink" type="button">Sign in to eClaimLink</button>` : "")
+    : `From the claims in this browser, sent ${fmtD(o.from)} – ${fmtD(o.to)}. Open the website from the clinic server and sign in to eClaimLink to see all your eClaimLink claims here.`}</div>`;
+  const headP = `<div class="panel-head"><div><h2>Claims in the period</h2><p>Sent to payers, paid, denied and still waiting</p></div><div class="actions"><button class="btn sm" data-go="rep-recon" type="button">Reconciliation</button><button class="btn sm" data-go="rep-submissions" type="button">Submissions</button></div></div>`;
+  if (!all || !all.length) return `<section class="panel">${headP}${bar}${all ? `<div class="empty">No claims were sent in this period.</div>` : ""}</section>`;
+  const sum = (l, f) => r2(l.reduce((a,r) => a + f(r), 0)), of = s => all.filter(r => r.status === s);
+  const net = sum(all, r=>r.net), paid = sum(all, r=>r.paid), den = sum([...of("partial"), ...of("rejected")], r=>r.balance), aw = of("awaiting"), un = of("unprocessed");
+  const rs = all.reduce((a,r) => a + r.resubs, 0);
+  const bp = {}; all.forEach(r => { const p = bp[r.payer] ||= {payer:r.payer, net:0}; p.net += r.net; });
+  return `<section class="panel">${headP}${bar}
+  <div class="kpis" style="margin-top:12px">
+    <div class="kpi"><span class="eyebrow">Claims sent</span><span class="v">${all.length}</span><span class="s">AED ${aed(net)} net · ${rs} resubmission${rs===1?"":"s"}</span></div>
+    <div class="kpi"><span class="eyebrow">Paid</span><span class="v">${aed(paid)}<small>AED</small></span><span class="s">${net?(100*paid/net).toFixed(1):"0.0"}% collected</span></div>
+    <div class="kpi ${den?"alert":""}"><span class="eyebrow">Denied, not resubmitted</span><span class="v">${aed(den)}<small>AED</small></span><span class="s">${of("rejected").length + of("partial").length} claims</span></div>
+    <div class="kpi"><span class="eyebrow">Resubmitted, awaiting</span><span class="v">${aw.length}</span><span class="s">AED ${aed(sum(aw, r=>r.balance))}</span></div>
+    <div class="kpi"><span class="eyebrow">Unprocessed</span><span class="v">${un.length}</span><span class="s">AED ${aed(sum(un, r=>r.balance))} with no remittance</span></div>
+  </div>
+  <div class="grid2" style="margin-top:12px">
+    <div>${pie([{label:"Paid",v:paid,color:"--s3"},{label:"Denied, not resubmitted",v:den,color:"--s4"},{label:"Resubmitted, awaiting",v:sum(aw,r=>r.balance),color:"--dx"},{label:"Unprocessed",v:sum(un,r=>r.balance),color:"--info"}],{fmt:v=>"AED "+aed(v),center:aedK(net),centerSub:"AED sent",label:"Claims in the period"})}</div>
+    <div>${hbars(Object.values(bp).sort((a,b)=>b.net-a.net).slice(0,8).map(p=>({label:payerText(p.payer), v:r2(p.net), color:"--s1"})),{label:"Net sent by payer"})}</div>
+  </div></section>`;
+}
+function bindOverview(){
+  const o = UI.ov, f = $("#ovForm"); if (!f) return;
+  $("#ovPeriod").onchange = e => { o.period = e.target.value; [o.from, o.to] = ovRange(o.period); render(); };
+  ["#ovFrom","#ovTo"].forEach(id => $(id).onchange = () => { o.from = $("#ovFrom").value || o.from; o.to = $("#ovTo").value || o.to; if (o.from > o.to) [o.from, o.to] = [o.to, o.from]; render(); });
+  f.onsubmit = async e => { e.preventDefault(); const u = UI.rep; o.busy = true; u.errors = []; render();
+    try {
+      const sw = {a:o.from, b:o.to}, rw = {a:o.from, b:TODAY};
+      const s = await loadRepRows("sub", sw); u.sub = s.rows; u.subWin = sw; u.subFiles = s.files;
+      const r = await loadRepRows("ra", rw); u.ra = r.rows; u.raWin = rw; u.raFiles = r.files; u.errors.push(...s.errors, ...r.errors);
+      fixRaPayers(); o.loaded = `${o.from}|${o.to}`;
+    } catch(err){ toast(err.message); }
+    o.busy = false; u.progress = ""; render(); };
 }
 
 /* ---------- lab results and claim XML ---------- */
