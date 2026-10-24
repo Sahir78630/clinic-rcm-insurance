@@ -375,7 +375,7 @@ const legendBuckets = () => `<div class="legend">${BUCKETS.map(b=>`<span><i styl
 const VIEWS = [
   ["", [["overview","Overview"]]],
   ["Front office", [["eligibility","Eligibility & access"],["approvals","Prior approvals"]]],
-  ["Billing", [["claims","Claims"],["remittance","Remittance & reconciliation"],["denials","Denials"],["resubmissions","Resubmissions"],["eclaimlink","eClaimLink files"]]],
+  ["Billing", [["claims","Claims"],["remittance","Remittance & reconciliation"],["denials","Denials"],["resubmissions","Resubmissions"],["rep-resubdue","Resubmission due dates"],["eclaimlink","eClaimLink files"]]],
   ["Finance", [["receivables","Insurance receivables"]]],
   ["Reports", [["rep-remit","Remittance summary"],["rep-rejections","Rejections"],["rep-reasons","Rejection reasons"],["rep-submissions","Submissions"],["rep-recon","Reconciliation"],["rep-unprocessed","Unprocessed claims"]]],
   ["Price list", [["prices","Payer price lists"]]]
@@ -394,7 +394,7 @@ function renderNav(){
   $("#nav").innerHTML = VIEWS.map(([g,items]) => `<div class="nav-group">${g?`<div class="eyebrow">${g}</div>`:""}${items.map(([id,label]) =>
     `<button type="button" data-go="${id}" ${id===current?'aria-current="page"':""}><span>${label}</span>${n[id]?`<span class="count">${n[id]}</span>`:""}</button>`).join("")}</div>`).join("");
 }
-function go(v){ current = v; try { history.replaceState(null,"","#"+v); } catch(e) {} render(); window.scrollTo(0,0); }
+function go(v){ if (v !== current && typeof UI !== "undefined" && UI.rep) UI.rep.status = ""; current = v; try { history.replaceState(null,"","#"+v); } catch(e) {} render(); window.scrollTo(0,0); }
 function render(){ renderBrand(); renderNav(); $("#view").innerHTML = R[current](); bindView(); ddmmDates($("#view")); }
 // Browsers show date boxes in the computer's own format (often mm/dd/yyyy). Each date box is shown instead as a
 // dd/mm/yy text box with a calendar button; the original box stays underneath, keeps its id, value and handlers,
@@ -837,7 +837,7 @@ R.resubmissions = () => {
     return {p, n:rs.length, amt:rs.reduce((s,r)=>s+r.x.amount,0), wait:rs.filter(r=>!r.x.outcome).reduce((s,r)=>s+r.x.amount,0), sent:dn.reduce((s,r)=>s+r.x.amount,0), got:dn.reduce((s,r)=>s+r.x.outcome.paid,0)}; }).filter(r=>r.n);
   const sts = ["All","Awaiting payer","Recovered","Partially recovered","Denied again"];
   return head("Resubmissions","Denied claims sent back to the payer with a correction or an internal complaint, and what each one recovered.",
-    `<button class="btn" data-go="denials" type="button">${ready.length} denials ready to resubmit</button>`) +
+    `<button class="btn" data-go="rep-resubdue" type="button">Resubmission due dates</button> <button class="btn" data-go="denials" type="button">${ready.length} denials ready to resubmit</button>`) +
   `<div class="kpis">
     <div class="kpi"><span class="eyebrow">Awaiting payer</span><span class="v">${aed(waiting.reduce((s,r)=>s+r.x.amount,0))}<small>AED</small></span><span class="s">${waiting.length} resubmissions</span></div>
     <div class="kpi"><span class="eyebrow">Recovered, last 90 days</span><span class="v">${aed(d90.reduce((s,r)=>s+r.x.outcome.paid,0))}<small>AED</small></span><span class="s">${d90.filter(r=>r.x.outcome.paid>0).length} claims paid on resubmission</span></div>
@@ -2091,7 +2091,7 @@ function payerNamesDlg(kind){
 // (remittance advice received, claim submissions sent); without it they use the records in this browser.
 UI.rep = {from:addDays(TODAY,-30), to:TODAY, basis:"tx", tpa:"", payer:"", doctor:"", q:"", status:"", busy:"", progress:"", ra:null, sub:null, raWin:null, subWin:null, raFiles:0, subFiles:0, errors:[]};
 const REP_PAGES = {"rep-remit":["ra","Remittance summary"],"rep-rejections":["ra","Rejections"],"rep-reasons":["ra","Rejection reasons"],"rep-submissions":["sub","Submission report"],
-  "rep-recon":["both","Reconciliation"],"rep-unprocessed":["both","Unprocessed claims"]};
+  "rep-recon":["both","Reconciliation"],"rep-unprocessed":["both","Unprocessed claims"],"rep-resubdue":["both","Resubmission due dates"]};
 const repKinds = () => REP_PAGES[current][0] === "both" ? ["sub","ra"] : [REP_PAGES[current][0]];
 // The eClaimLink files each report needs. A visit is always before its claim file, so a visit-date report also
 // searches files sent up to 120 days (claims) or received up to 180 days (remittances) after the end date.
@@ -2364,6 +2364,63 @@ R["rep-unprocessed"] = () => {
     <input type="text" id="repQ" placeholder="Search claim or member" value="${esc(u.q)}" style="flex:1 1 220px"></div>
   ${reconTable(list, "aging")}</section>`;
 };
+// Resubmission deadlines: a rejected or partly paid claim must be resubmitted within a set number of days of the
+// remittance that rejected it. The window is set for all payers, with optional per-payer exceptions.
+const resubWin = code => { const own = (S.resubDaysPayer||{})[code]; return own > 0 ? own : (S.resubDays > 0 ? S.resubDays : 60); };
+const RESUB_ST = {overdue:["Overdue, not resubmitted","--bad"], soon:["Due within 7 days","--warn"], open:["Not resubmitted, time left","--info"], ontime:["Resubmitted on time","--ok"], late:["Resubmitted late","--dx"]};
+function resubDue(){
+  const rc = recon(); if (!rc) return null;
+  const out = [];
+  for (const r of rc){
+    if (!r.lastRemit) continue;
+    const pending = r.status === "partial" || r.status === "rejected", done = r.status === "awaiting" && r.remits > 0;
+    if (!pending && !done) continue;
+    const days = resubWin(r.payer), due = addDays(r.lastRemit, days), left = diff(TODAY, due);
+    const st = pending ? (left < 0 ? "overdue" : left <= 7 ? "soon" : "open") : (r.lastSent <= due ? "ontime" : "late");
+    out.push({...r, window:days, due, left, resubOn: done ? r.lastSent : "", st});
+  }
+  return out.sort((a,b) => (a.resubOn ? 1 : 0) - (b.resubOn ? 1 : 0) || a.due.localeCompare(b.due));
+}
+// "Resubmitted up to": every rejection received on or before this date has been resubmitted
+const resubUpTo = l => { const p = l.filter(r => !r.resubOn).map(r => r.lastRemit).sort()[0], all = l.map(r => r.lastRemit).sort();
+  return p ? (p > all[0] ? addDays(p, -1) : "") : all[all.length-1] || ""; };
+R["rep-resubdue"] = () => {
+  const u = UI.rep, all = resubDue(), head0 = head("Resubmission due dates","Rejected and partly paid claims with the last date to resubmit each one, counted from the remittance that rejected it, and whether resubmissions were sent in time.", all&&all.length?repDl("repDl"):"");
+  const winBar = `<section class="panel"><div class="filters" style="margin:0;align-items:center"><label class="muted" style="display:flex;gap:6px;align-items:center;font-size:12.5px">Resubmit within <input type="number" id="rdDays" min="1" max="365" value="${S.resubDays > 0 ? S.resubDays : 60}" style="width:70px"> days of the remittance</label>
+    <button class="btn sm" id="rdPayers" type="button">Payer exceptions${Object.keys(S.resubDaysPayer||{}).length ? ` (${Object.keys(S.resubDaysPayer).length})` : ""}</button><span class="muted" style="font-size:12px">Set this to the resubmission time limit in your payer contracts.</span></div></section>`;
+  if (!all || !all.length) return head0 + repBar("both") + winBar + (all ? `<section class="panel"><div class="empty">No rejected claims in this period.</div></section>` : repEmpty("both"));
+  const of = k => all.filter(r => r.st === k), sum = l => r2(l.reduce((a,r) => a + r.balance, 0));
+  const list = all.filter(r => (!u.status || r.st === u.status) && reconMatch(r));
+  const upTo = resubUpTo(all), oldest = all.filter(r => !r.resubOn).map(r => r.lastRemit).sort()[0];
+  const bp = {}; all.forEach(r => { const p = bp[r.payer] ||= {payer:r.payer, rows:[]}; p.rows.push(r); });
+  const pl = Object.values(bp).sort((a,b) => sum(b.rows) - sum(a.rows));
+  const done = [...of("ontime"), ...of("late")];
+  return head0 + repBar("both") + winBar + `<div class="kpis">
+    <div class="kpi ${of("overdue").length?"alert":""}"><span class="eyebrow">Overdue, not resubmitted</span><span class="v">${of("overdue").length}</span><span class="s">AED ${aed(sum(of("overdue")))} past the due date</span></div>
+    <div class="kpi"><span class="eyebrow">Due within 7 days</span><span class="v">${of("soon").length}</span><span class="s">AED ${aed(sum(of("soon")))}</span></div>
+    <div class="kpi"><span class="eyebrow">Not resubmitted, time left</span><span class="v">${of("open").length}</span><span class="s">AED ${aed(sum(of("open")))}</span></div>
+    <div class="kpi"><span class="eyebrow">Resubmitted on time</span><span class="v">${done.length ? Math.round(100*of("ontime").length/done.length) : 0}<small>%</small></span><span class="s">${of("ontime").length} on time, ${of("late").length} late</span></div>
+    <div class="kpi"><span class="eyebrow">Resubmissions done up to</span><span class="v" style="font-size:20px">${upTo ? fmtD(upTo) : "–"}</span><span class="s">${oldest ? `oldest still open: rejected ${fmtD(oldest)}` : "every rejection resubmitted"}</span></div>
+  </div>
+  <section class="panel"><div class="panel-head"><div><h2>By payer</h2><p>"Done up to": every rejection received on or before this date has been resubmitted</p></div></div><div class="table-wrap"><table><thead><tr><th>Payer code</th><th>Payer name</th><th class="num">Window (days)</th><th class="num">Overdue</th><th class="num">Due in 7 days</th><th class="num">Time left</th><th class="num">Not resubmitted AED</th><th class="num">On time</th><th class="num">Late</th><th>Next due</th><th>Done up to</th></tr></thead><tbody>
+    ${pl.map(p => { const c = k => p.rows.filter(r => r.st === k).length, open = p.rows.filter(r => !r.resubOn), next = open.map(r => r.due).sort()[0], up = resubUpTo(p.rows);
+      return `<tr><td class="mono"><b>${esc(p.payer||"–")}</b></td><td>${esc(payerName(p.payer)||"–")}</td><td class="num">${resubWin(p.payer)}</td><td class="num" style="${c("overdue")?"color:var(--bad);font-weight:600":""}">${c("overdue")}</td><td class="num">${c("soon")}</td><td class="num">${c("open")}</td><td class="num">${aed(sum(open))}</td><td class="num">${c("ontime")}</td><td class="num">${c("late")}</td><td class="muted">${next ? fmtD(next) : "–"}</td><td class="muted">${up ? fmtD(up) : "–"}</td></tr>`; }).join("")}
+    </tbody></table></div></section>
+  <section class="panel"><div class="filters" style="margin:0 0 10px"><select id="repStatus"><option value="">All (${all.length})</option>${Object.keys(RESUB_ST).map(k => `<option value="${k}" ${u.status===k?"selected":""}>${RESUB_ST[k][0]} (${of(k).length})</option>`).join("")}</select>
+    <input type="text" id="repQ" placeholder="Search claim, member or denial code" value="${esc(u.q)}" style="flex:1 1 220px"></div>
+  <div class="table-wrap"><table><thead><tr><th>Claim</th><th>Payer code</th><th>Payer name</th><th>TPA</th><th>Doctor</th><th>Visit</th><th>First sent</th><th>Rejected on</th><th>Denial codes</th><th class="num">Not paid AED</th><th>Resubmit by</th><th class="num">Days left</th><th>Resubmitted on</th><th>Status</th><th>In my records</th></tr></thead><tbody>
+    ${list.slice(0,1000).map(r => `<tr ${claimById(r.claim)?`class="click" data-claim="${esc(r.claim)}"`:""}><td class="mono">${esc(r.claim)}</td><td class="mono">${esc(r.payer||"–")}</td><td>${esc(payerName(r.payer)||"–")}</td><td>${esc(r.tpa && r.tpa !== r.payer ? payerText(r.tpa) : "–")}</td><td class="wrap-cell">${esc((r.docs||[]).map(docText).join(", ")||"–")}</td><td class="muted">${fmtD(r.visit)}</td><td class="muted">${fmtD(r.submitted)}</td><td class="muted">${fmtD(r.lastRemit)}</td><td class="wrap-cell">${r.codes.map(k=>`<span class="code" title="${esc(DENIALS[k]||"")}">${esc(k)}</span>`).join(" ")||"–"}</td><td class="num">${aed(r.resubOn ? r2(r.net - r.paid) : r.balance)}</td><td><b>${fmtD(r.due)}</b></td><td class="num" style="${!r.resubOn && r.left < 0 ? "color:var(--bad);font-weight:600" : ""}">${r.resubOn ? "–" : r.left}</td><td class="muted">${r.resubOn ? fmtD(r.resubOn) : "–"}</td><td><span class="pill" style="color:var(${RESUB_ST[r.st][1]})">${RESUB_ST[r.st][0]}</span></td><td>${inRecords(r.claim)}</td></tr>`).join("") || `<tr><td colspan="15" class="empty">No claims match.</td></tr>`}
+    </tbody></table></div>${list.length > 1000 ? `<p class="muted">Showing the first 1,000 of ${list.length}. Download the CSV for all of them.</p>` : ""}</section>`;
+};
+function resubPayerDlg(){
+  const cur = Object.entries(S.resubDaysPayer||{}).map(([k,v]) => `${k}, ${v}`).join("\n");
+  openDlg(dlgHead("Resubmission time limit by payer", "Payers not listed use the general number of days.") + `<div class="dlg-body">
+    <p class="muted" style="margin-top:0">One payer per line: payer code, days. For example <span class="code">INS008, 90</span></p>
+    <textarea id="rdList" rows="10" style="width:100%;font-family:var(--mono)">${esc(cur)}</textarea>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px"><button class="btn" type="button" data-close>Cancel</button><button class="btn primary" id="rdSave" type="button">Save</button></div></div>`);
+  $("#rdSave").onclick = () => { const m = {}; $("#rdList").value.split(/\n/).forEach(l => { const [k, d] = l.split(/[,;\t]/).map(x => (x||"").trim()); if (k && +d > 0) m[k] = Math.round(+d); });
+    S.resubDaysPayer = m; save(); closeDlg(); render(); };
+}
 // A few sentences at the top of every report (and of its downloads) with the main figures
 function repSummary(page = current){
   const u = UI.rep, pct = (a,b) => b ? (100*a/b).toFixed(1)+"%" : "0.0%", A = v => "AED " + aed(v), out = [];
@@ -2372,6 +2429,15 @@ function repSummary(page = current){
     const all = recon(); if (!all || !all.length) return [];
     const sum = l => r2(l.reduce((a,r) => a + r.balance, 0)), of = s => all.filter(r => r.status === s);
     const net = r2(all.reduce((a,r)=>a+r.net,0)), paid = r2(all.reduce((a,r)=>a+r.paid,0)), den = [...of("partial"), ...of("rejected")], aw = of("awaiting"), un = of("unprocessed");
+    if (page === "rep-resubdue"){
+      const l = resubDue() || [], o = k => l.filter(r => r.st === k), up = resubUpTo(l), d = [...o("ontime"), ...o("late")];
+      if (!l.length) return ["No rejected claims in this period."];
+      out.push(`${l.length} rejected or partly paid claims; resubmission window ${S.resubDays > 0 ? S.resubDays : 60} days from the remittance${Object.keys(S.resubDaysPayer||{}).length ? ", with payer exceptions" : ""}.`);
+      out.push(`${o("overdue").length} are past their resubmission date and not resubmitted (${A(sum(o("overdue")))}); ${o("soon").length} are due within 7 days (${A(sum(o("soon")))}); ${o("open").length} still have time (${A(sum(o("open")))}).`);
+      if (d.length) out.push(`${d.length} were resubmitted: ${o("ontime").length} on time (${pct(o("ontime").length, d.length)}) and ${o("late").length} late.`);
+      out.push(up ? `Resubmissions are done for every rejection received up to ${fmtD(up)}.` : `The oldest rejection in this period has not been resubmitted yet.`);
+      return out;
+    }
     if (page === "rep-recon"){
       out.push(`${all.length} claims were sent for ${A(net)} net, with ${A(all.reduce((a,r)=>a+(r.copay||0),0))} patient co-payment.`);
       out.push(`${A(paid)} has been paid (${pct(paid, net)} collected): ${of("paid").length} claims in full and ${of("partial").length} in part.`);
@@ -2425,6 +2491,7 @@ function byDoctor(page = current){
   const both = REP_PAGES[page][0] === "both", ra = REP_PAGES[page][0] === "ra";
   let rows = both ? recon() : repRows(REP_PAGES[page][0]); if (!rows || !rows.length) return null;
   if (page === "rep-unprocessed") rows = rows.filter(r => r.status === "unprocessed" || r.status === "awaiting");
+  if (page === "rep-resubdue") { rows = resubDue() || []; if (!rows.length) return null; }
   if (page === "rep-rejections" || page === "rep-reasons") rows = rows.filter(r => r.denied > 0);
   const m = {};
   for (const r of rows) for (const d of (both ? r.docs : docsOf(r)).length ? (both ? r.docs : docsOf(r)) : ["(not given)"]){
@@ -2441,6 +2508,11 @@ function byDoctorHtml(){
 Object.keys(REP_PAGES).forEach(p => { const page = R[p]; R[p] = () => page().replace("<!--repbar-->", repSummaryHtml()) + byDoctorHtml(); });
 const csvSummary = () => [csvRow([REP_PAGES[current][1]]), csvRow([repPeriod()]), ...repSummary().map(x => csvRow([x])), ""];
 function repCsv(){
+  if (current === "rep-resubdue"){
+    const u = UI.rep, rows = (resubDue() || []).filter(r => (!u.status || r.st === u.status) && reconMatch(r));
+    return [csvRow(["Claim","TPA","Payer code","Payer name","Doctor","Member","Visit","First sent","Rejected on","Denial codes","Co-pay AED","Net AED","Paid AED","Not paid AED","Window (days)","Resubmit by","Days left","Resubmitted on","Status","Resubmission comment","In my records"]),
+      ...rows.map(r=>csvRow([r.claim,payerText(r.tpa),r.payer,payerName(r.payer),(r.docs||[]).map(docText).join("; "),r.member,r.visit,r.submitted,r.lastRemit,r.codes.join(" "),r.copay||0,r.net,r.paid,r.balance,r.window,r.due,r.resubOn?"":r.left,r.resubOn,RESUB_ST[r.st][0],r.comment,inRecords(r.claim)]))].join("\n");
+  }
   if (current === "rep-recon" || current === "rep-unprocessed"){
     const u = UI.rep, rows = (recon() || []).filter(r => (current === "rep-recon" || r.status === "unprocessed" || r.status === "awaiting") && (!u.status || r.status === u.status) && reconMatch(r));
     return [csvRow(["Claim","TPA","Payer code","Payer name","Doctor","Member","Visit","First sent","Resubmissions","Last sent","Days since last sent","Remittances","Last remittance","Co-pay AED","Net AED","Paid AED","Outstanding AED","Status","Denial codes","Resubmission type","Resubmission comment","In my records"]),
@@ -2463,6 +2535,8 @@ function bindReports(){
     u.busy = ""; u.progress = ""; render(); };
   $("#repNames").onclick = () => payerNamesDlg("payer"); $("#repDocNames").onclick = () => payerNamesDlg("doctor");
   const st = $("#repStatus"); if (st) st.onchange = () => { u.status = st.value; render(); };
+  const rd = $("#rdDays"); if (rd) rd.onchange = () => { const n = Math.round(+rd.value); if (n > 0) { S.resubDays = n; save(); } render(); };
+  const rp = $("#rdPayers"); if (rp) rp.onclick = resubPayerDlg;
   const q = $("#repQ"); if (q) q.oninput = () => { u.q = q.value; const pos = q.selectionStart; render(); const n = $("#repQ"); n.focus(); n.setSelectionRange(pos,pos); };
   const dl = $("#repDl"); if (dl) dl.onclick = () => downloadFile(`${current.replace("rep-","")}_${u.basis==="visit"?"visits_":""}${u.from}_to_${u.to}${u.payer?"_"+u.payer:""}.csv`, [...csvSummary(), repCsv()].join("\n"));
   const pdf = $("#repPdf"); if (pdf) pdf.onclick = () => { document.body.dataset.print = "rep"; const t = document.title; document.title = `${REP_PAGES[current][1]} ${u.from} to ${u.to}`; window.print(); document.title = t; delete document.body.dataset.print; };
