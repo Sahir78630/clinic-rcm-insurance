@@ -19,7 +19,7 @@ export function summarize(xml) {
       const actNet = r2(acts.reduce((s, a) => s + num(txt(a, "Net")), 0));
       const enc = tag(own, "Encounter") || "";
       return { id: txt(own, "ID"), payer: txt(own, "PayerID"), member: txt(own, "MemberID"), visit: txt(enc, "Start") || txt(acts[0] || "", "Start"), clinicians: [...new Set(acts.map(a => txt(a, "Clinician")).filter(Boolean))], gross: num(txt(own, "Gross")) || actNet,
-        patientShare: num(txt(own, "PatientShare")), net: tag(own, "Net") !== null ? num(txt(own, "Net")) : actNet,
+        patientShare: tag(own, "PatientShare") !== null ? num(txt(own, "PatientShare")) : r2(acts.reduce((s, a) => s + num(txt(a, "PatientShare")), 0)), net: tag(own, "Net") !== null ? num(txt(own, "Net")) : actNet,
         activities: acts.length, resubmission: resub === null ? null : txt(resub, "Type") || "yes", resubComment: resub === null ? null : txt(resub, "Comment") || null };
     });
     totals = { claims: rows.length, gross: r2(rows.reduce((s, r) => s + r.gross, 0)), net: r2(rows.reduce((s, r) => s + r.net, 0)),
@@ -31,7 +31,7 @@ export function summarize(xml) {
       // Visit date: the encounter start if the payer sent it, otherwise the first activity's start
       return { id: txt(own, "ID"), payerRef: txt(own, "IDPayer"), paymentRef: txt(own, "PaymentReference"), settlement: txt(own, "DateSettlement"),
         visit: txt(tag(own, "Encounter") || "", "Start") || txt(acts[0] || "", "Start"), clinicians: [...new Set(acts.map(a => txt(a, "Clinician")).filter(Boolean))],
-        net: r2(net), paid: r2(paid), denied: r2(Math.max(0, net - paid)), denialCodes: [...new Set(acts.map(a => txt(a, "DenialCode")).filter(Boolean))] };
+        net: r2(net), patientShare: r2(acts.reduce((s, a) => s + num(txt(a, "PatientShare")), 0)), paid: r2(paid), denied: r2(Math.max(0, net - paid)), denialCodes: [...new Set(acts.map(a => txt(a, "DenialCode")).filter(Boolean))] };
     });
     const codes = {};
     tags(xml, "Activity").forEach(a => { const k = txt(a, "DenialCode"); if (k) codes[k] = r2((codes[k] || 0) + Math.max(0, num(txt(a, "Net")) - num(txt(a, "PaymentAmount")))); });
