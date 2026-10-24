@@ -3,7 +3,7 @@ REM Double-click this file once on the clinic server computer so staff computers
 REM It asks for administrator permission, then allows Clinic RCM (port 3000) through Windows Firewall on every network type.
 net session >nul 2>nul
 if errorlevel 1 (
-  powershell -NoProfile -Command "Start-Process -Verb RunAs -FilePath %~f0"
+  powershell -NoProfile -Command "Start-Process -Verb RunAs -FilePath '%~f0'"
   exit /b
 )
 netsh advfirewall firewall delete rule name="Clinic RCM" >nul 2>nul
