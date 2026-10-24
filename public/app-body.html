@@ -128,6 +128,11 @@ tfoot td{font-weight:600;background:var(--sunk);border-top:1px solid var(--line)
 .filters{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .field{display:flex;flex-direction:column;gap:4px;min-width:0}
 .field label{font-size:12px;font-weight:600;color:var(--muted)}
+.ddmm{position:relative;display:flex;align-items:stretch;gap:4px;min-width:0}
+.ddmm input[type=text]{flex:1 1 auto;width:100%;min-width:0}
+.ddmm input[type=date]{position:absolute;left:0;bottom:0;width:1px;height:1px;opacity:0;pointer-events:none;padding:0;border:0}
+.ddmm-cal{border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:0 8px;cursor:pointer;font-size:14px;line-height:1}
+.ddmm-cal:disabled{opacity:.5;cursor:default}
 input[type=text],input[type=password],input[type=number],input[type=date],select,textarea{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:7px 9px;min-width:0;max-width:100%}
 textarea{width:100%;font-family:var(--mono);font-size:12px;min-height:150px;resize:vertical}
 .form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px;align-items:end}
@@ -378,7 +383,30 @@ function renderNav(){
     `<button type="button" data-go="${id}" ${id===current?'aria-current="page"':""}><span>${label}</span>${n[id]?`<span class="count">${n[id]}</span>`:""}</button>`).join("")}</div>`).join("");
 }
 function go(v){ current = v; try { history.replaceState(null,"","#"+v); } catch(e) {} render(); window.scrollTo(0,0); }
-function render(){ renderBrand(); renderNav(); $("#view").innerHTML = R[current](); bindView(); }
+function render(){ renderBrand(); renderNav(); $("#view").innerHTML = R[current](); bindView(); ddmmDates($("#view")); }
+// Browsers show date boxes in the computer's own format (often mm/dd/yyyy). Each date box is shown instead as a
+// dd/mm/yy text box with a calendar button; the original box stays underneath, keeps its id, value and handlers,
+// and receives the change.
+function ddmmDates(root){
+  root.querySelectorAll('input[type="date"]:not([data-ddmm])').forEach(nat => {
+    nat.dataset.ddmm = "1";
+    const wrap = document.createElement("span"); wrap.className = "ddmm";
+    const txt = Object.assign(document.createElement("input"), {type:"text", placeholder:"dd/mm/yy", value:nat.value ? fmtD(nat.value) : "", disabled:nat.disabled, inputMode:"numeric", autocomplete:"off"});
+    txt.setAttribute("aria-label", (nat.labels && nat.labels[0] ? nat.labels[0].textContent : "Date") + " (dd/mm/yy)");
+    if (nat.id && nat.labels) [...nat.labels].forEach(l => l.addEventListener("click", e => { e.preventDefault(); txt.focus(); }));
+    const btn = Object.assign(document.createElement("button"), {type:"button", className:"ddmm-cal", title:"Choose on calendar", disabled:nat.disabled, textContent:"📅"});
+    nat.parentNode.insertBefore(wrap, nat); wrap.append(txt, btn, nat);
+    const set = iso => { if (nat.value === iso) return; nat.value = iso; nat.dispatchEvent(new Event("input", {bubbles:true})); nat.dispatchEvent(new Event("change", {bubbles:true})); };
+    txt.addEventListener("change", () => {
+      const v = txt.value.trim(); if (!v) { set(""); return; }
+      const iso = isoDate(v);
+      if (!iso || isNaN(new Date(iso+"T00:00:00"))) { toast("Enter the date as dd/mm/yy, for example 24/10/26"); txt.value = nat.value ? fmtD(nat.value) : ""; return; }
+      txt.value = fmtD(iso); set(iso);
+    });
+    nat.addEventListener("change", () => { txt.value = nat.value ? fmtD(nat.value) : ""; });
+    btn.addEventListener("click", () => { try { nat.showPicker(); } catch(e) { nat.focus(); } });
+  });
+}
 function toast(msg){ const t = $("#toast"); t.textContent = msg; t.hidden = false; clearTimeout(toast.h); toast.h = setTimeout(()=>t.hidden=true, 2600); }
 function head(title, sub, right=""){ return `<div class="page-head"><div><h1>${title}</h1><p>${sub}</p></div><div class="actions">${right}</div></div>`; }
 
@@ -819,7 +847,7 @@ R.receivables = () => {
 
 /* ---------- dialogs ---------- */
 const dlg = $("#dlg");
-function openDlg(html){ $("#dlgInner").innerHTML = html; if (!dlg.open) dlg.showModal(); bindDlg(); }
+function openDlg(html){ $("#dlgInner").innerHTML = html; if (!dlg.open) dlg.showModal(); bindDlg(); ddmmDates($("#dlgInner")); }
 function closeDlg(){ dlg.close(); }
 dlg.addEventListener("click", e => { if (e.target === dlg) closeDlg(); });
 const dlgHead = (title, sub, right="") => `<div class="dlg-head"><div><h2>${title}</h2><div class="muted" style="font-size:12.5px;margin-top:2px">${sub}</div></div><div class="actions">${right}<button class="dlg-x" data-close aria-label="Close" type="button">×</button></div></div>`;

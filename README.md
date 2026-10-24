@@ -87,7 +87,7 @@ The server connects to the eClaimLink (Dubai Health Post Office) web service wit
 | Prior approvals: **New request** | `Prior.Request` |
 | Remittance or Prior approvals: **Download from eClaimLink** | New `Remittance.Advice` files post payments and denial codes to claims. `Prior.Authorization` replies update approval requests. |
 
-**Dates** are shown as dd/mm/yy everywhere, including the CSV downloads. Imports accept dd/mm/yy, dd/mm/yyyy and yyyy-mm-dd. The date pickers follow the computer's own date setting (Windows: Settings → Time & language → Region → Short date: dd/MM/yy).
+**Dates** are shown as dd/mm/yy everywhere, including the CSV downloads. Imports accept dd/mm/yy, dd/mm/yyyy and yyyy-mm-dd. Date boxes show and take dd/mm/yy whatever the computer's date setting; the calendar button next to each opens a calendar.
 
 **Uploading files.** Every upload (claims, appointment lists, price lists, payer and doctor names) takes CSV, Excel (.xlsx, .xls) or PDF; claims also take eClaimLink XML. Excel and PDF are turned into rows with the same column headings as the CSV. PDF works for table exports with selectable text (each line becomes a row, wide gaps become columns); scanned PDFs have no text to read. The Excel and PDF readers (SheetJS and pdf.js) load from cdnjs the first time they are needed, so that computer needs internet access. Remittance advice is imported as eClaimLink XML.
 
