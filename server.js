@@ -189,6 +189,14 @@ if (process.argv[1] && samePath(fileURLToPath(import.meta.url), resolve(process.
   const port = Number(env.PORT) || 3000;
   const host = env.HOST || "127.0.0.1";
   if (!env.APP_USERNAME || !env.APP_PASSWORD) console.warn("APP_USERNAME / APP_PASSWORD are not set: anyone who can reach this server can use it. Set them before exposing it beyond this computer.");
-  createServer(createApp({ db, cfg, env })).listen(port, host, () =>
-    console.log(`Clinic RCM running at http://${host}:${port} (eligibility provider: ${defaultProvider(env)}, eClaimLink: ${ecl.mode(env)})`));
+  createServer(createApp({ db, cfg, env }))
+    .on("error", e => {
+      if (e.code !== "EADDRINUSE") throw e;
+      console.error(`\nClinic RCM is already running on port ${port} (another window, or the copy that starts with Windows).\n` +
+        `Close that window first, or open http://127.0.0.1:${port} to use the copy that is running.\n` +
+        `To stop every copy at once, type:  taskkill /IM node.exe /F`);
+      process.exit(1);
+    })
+    .listen(port, host, () =>
+      console.log(`Clinic RCM running at http://${host}:${port} (eligibility provider: ${defaultProvider(env)}, eClaimLink: ${ecl.mode(env)})`));
 }
