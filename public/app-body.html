@@ -1081,7 +1081,7 @@ function claimDlg(id){
   let act = "";
   const chk = c.status === "Draft" ? checkState(c) : null;
   if (c.status === "Draft") act = blocked(c)
-    ? `<span class="muted">Fix the errors in the claim check first.</span> <button class="btn sm" data-act="submit" type="button">Submit anyway</button>`
+    ? `<span class="muted">Fix the errors in the claim check first.</span> <button class="btn sm primary" data-act="correct" type="button">Correct claim</button> <button class="btn sm" data-act="submit" type="button">Submit anyway</button>`
     : `<button class="btn primary" data-act="submit" type="button">${ECL()?"Submit to "+eclLabel():"Submit to payer"}</button>`;
   if (st === "Rejected" || st === "Partially paid") act = `
     <div class="form-grid" style="width:100%">
@@ -1108,7 +1108,7 @@ function claimDlg(id){
     ${c.acts.some(a=>a.denial)?`<div class="result bad">${[...new Set(c.acts.filter(a=>a.denial).map(a=>a.denial))].map(k=>`<div><span class="code">${k}</span> ${esc(DENIALS[k]||"")}</div>`).join("")}</div>`:""}
     ${resubHist}
     <div class="actions">${act}</div>
-    <div class="actions"><button class="btn sm" data-act="labs" type="button">Enter lab results</button><button class="btn sm" data-act="dlxml" type="button">Download claim XML</button></div>
+    <div class="actions">${(c.status==="Draft"&&!blocked(c))||st==="Rejected"||st==="Partially paid"?`<button class="btn sm primary" data-act="correct" type="button">Correct claim</button>`:""}<button class="btn sm" data-act="labs" type="button">Enter lab results</button><button class="btn sm" data-act="dlxml" type="button">Download claim XML</button></div>
     <div><span class="eyebrow">History</span><ul class="timeline" style="margin-top:8px">${c.events.slice().sort((a,b)=>a.d.localeCompare(b.d)).map(e=>`<li><span class="muted">${fmtD(e.d)}</span> · ${esc(e.t)}</li>`).join("")}</ul></div>
   </div>`);
   dlg.dataset.claim = id;
@@ -1241,6 +1241,7 @@ function bindDlg(){
         .catch(e=>{ toast(e.message); claimDlg(c.id); }); return; }
     if (a==="submit"){ submitClaim(claimById(dlg.dataset.claim)); done("Claim submitted"); claimDlg(dlg.dataset.claim); }
     if (a==="labs"){ labDlg(dlg.dataset.claim); return; }
+    if (a==="correct"){ correctDlg(dlg.dataset.claim); return; }
     if (a==="dlxml"){ downloadClaimsXml([claimById(dlg.dataset.claim)]); return; }
     if (a==="resubXml"){ const c=claimById(dlg.dataset.claim); const last=c.resubs[c.resubs.length-1]; const x=c.srcXml&&last?claimFileXml([c],{resub:last}):resubXml(c);
       openDlg(dlgHead(`Resubmission file · <span class="mono">${c.id}</span>`,"eClaimLink-style Claim.Submission with a Resubmission block. Copy it into your submission tool.",`<button class="btn sm" data-act="copyXml" type="button">Copy</button>`)+`<div class="dlg-body"><textarea id="xmlOut" readonly style="min-height:360px">${esc(x)}</textarea><div class="actions"><button class="btn sm" data-claim="${c.id}" type="button">Back to claim</button></div></div>`); return; }
@@ -1791,6 +1792,68 @@ const LAB_FIELDS = {
 };
 const OBS_TYPES = ["LOINC","Text","Result","File"];
 const isLab = a => /^8\d{4}$/.test(a.code || "");
+// Correct a claim's details after the claim check, before it is submitted or resubmitted. The claim file keeps
+// everything else from the original XML; only the corrected fields change in it.
+function correctDlg(id){
+  const c = claimById(id); if (!c) return;
+  const issues = checkClaim(c);
+  const dxRow = (d, i) => `<tr class="cxDx"><td class="muted">${i ? "Secondary" : "Principal"}</td><td><input type="text" class="dxC" value="${esc(d[0]||"")}" placeholder="ICD-10, e.g. J06.9" style="width:130px"></td><td><button class="btn sm cxDel" type="button" aria-label="Remove">✕</button></td></tr>`;
+  const actRow = a => `<tr class="cxAct" data-aid="${esc(a.aid||"")}"><td class="mono muted">${esc(a.aid||"new")}</td><td><input type="text" class="acC" value="${esc(a.code||"")}" style="width:90px"></td>
+    <td><input type="number" class="acQ" value="${a.qty||1}" min="0" step="any" style="width:64px"></td><td><input type="number" class="acG" value="${r2(a.gross||0)}" min="0" step="0.01" style="width:96px"></td>
+    <td><input type="number" class="acP" value="${r2(a.ps||0)}" min="0" step="0.01" style="width:90px"></td><td class="num acN">${aed(r2((a.gross||0)-(a.ps||0)))}</td><td><button class="btn sm cxDel" type="button" aria-label="Remove">✕</button></td></tr>`;
+  openDlg(dlgHead(`Correct claim · <span class="mono" style="font-size:15px">${esc(c.id)}</span>`, "Fix what the claim check found, then save. The check runs again and the claim file is updated.",
+    `<button class="btn sm primary" id="cxSave" type="button">Save corrections</button>`) +
+  `<div class="dlg-body">
+    ${issues.length ? `<div class="result ${issues.some(x=>x.level==="error")?"bad":"warn"}">${issues.map(issueHtml).join("")}</div>` : `<div class="result ok">The claim check found no problems.</div>`}
+    <div class="form-grid">
+      <div class="field"><label for="cxCard">Member card no.</label><input type="text" id="cxCard" value="${esc(c.card||"")}"></div>
+      <div class="field"><label for="cxPayer">Payer code</label><input type="text" id="cxPayer" value="${esc(c.payer||"")}" list="cxPayers"><datalist id="cxPayers">${[...new Set([...PAYERS.map(p=>p.id), ...Object.keys(S.payerNames||{})])].map(k=>`<option value="${esc(k)}">${esc(payerText(k))}</option>`).join("")}</datalist></div>
+      <div class="field"><label for="cxEnc">Encounter date</label><input type="date" id="cxEnc" value="${esc(c.enc||"")}" max="${TODAY}"></div>
+      <div class="field"><label for="cxDoc">Clinician licence</label><input type="text" id="cxDoc" value="${esc(c.doctor||"")}" list="cxDocs"><datalist id="cxDocs">${Object.entries(S.doctorNames||{}).map(([k,v])=>`<option value="${esc(k)}">${esc(v)}</option>`).join("")}</datalist></div>
+      <div class="field"><label for="cxPa">Prior approval no.</label><input type="text" id="cxPa" value="${esc(c.pa||"")}"></div>
+    </div>
+    <div><span class="eyebrow">Diagnosis</span><div class="table-wrap" style="margin-top:6px"><table><tbody id="cxDxs">${(c.dx.length ? c.dx : [["",""]]).map(dxRow).join("")}</tbody></table></div>
+      <button class="btn sm" id="cxAddDx" type="button" style="margin-top:6px">Add diagnosis</button></div>
+    <div><span class="eyebrow">Activities</span><div class="table-wrap" style="margin-top:6px"><table><thead><tr><th>ID</th><th>Code</th><th>Qty</th><th>Gross AED</th><th>Patient share AED</th><th class="num">Net AED</th><th></th></tr></thead><tbody id="cxActs">${c.acts.map(actRow).join("")}</tbody></table></div>
+      <button class="btn sm" id="cxAddAct" type="button" style="margin-top:6px">Add activity</button></div>
+    <div class="field"><label for="cxNote">What was corrected (kept in the claim history)</label><input type="text" id="cxNote" placeholder="e.g. Corrected principal diagnosis and member card number"></div>
+  </div>`);
+  const box = $("#dlgInner");
+  const wire = () => { box.querySelectorAll(".cxDel").forEach(b => b.onclick = () => { b.closest("tr").remove(); box.querySelectorAll(".cxDx td:first-child").forEach((td,i) => td.textContent = i ? "Secondary" : "Principal"); });
+    box.querySelectorAll(".cxAct").forEach(tr => tr.querySelectorAll(".acG,.acP").forEach(i => i.oninput = () => { tr.querySelector(".acN").textContent = aed(r2((+tr.querySelector(".acG").value||0) - (+tr.querySelector(".acP").value||0))); })); };
+  wire();
+  $("#cxAddDx").onclick = () => { $("#cxDxs").insertAdjacentHTML("beforeend", dxRow(["",""], box.querySelectorAll(".cxDx").length)); wire(); };
+  $("#cxAddAct").onclick = () => { $("#cxActs").insertAdjacentHTML("beforeend", actRow({qty:1, gross:0, ps:0})); wire(); };
+  $("#cxSave").onclick = () => {
+    const before = JSON.stringify([c.card, c.payer, c.enc, c.doctor, c.pa, c.dx, c.acts.map(a => [a.aid, a.code, a.qty, a.gross, a.ps])]);
+    const changes = [];
+    const dx = [...box.querySelectorAll(".cxDx .dxC")].map(i => i.value.trim().toUpperCase()).filter(Boolean);
+    if (!dx.length) return toast("Enter at least one diagnosis code");
+    const rows = [...box.querySelectorAll(".cxAct")].map(tr => ({aid:tr.dataset.aid, code:tr.querySelector(".acC").value.trim().toUpperCase(), qty:+tr.querySelector(".acQ").value||0,
+      gross:r2(+tr.querySelector(".acG").value||0), ps:r2(+tr.querySelector(".acP").value||0)}));
+    if (!rows.length || rows.some(r => !r.code)) return toast("Every activity needs a code, and the claim needs at least one activity");
+    if (rows.some(r => r.ps > r.gross)) return toast("Patient share cannot be more than the gross amount");
+    const set = (k, v, label) => { if ((c[k]||"") !== v){ changes.push(`${label} ${c[k]||"–"} → ${v||"–"}`); c[k] = v; } };
+    set("card", $("#cxCard").value.trim(), "member card"); set("payer", $("#cxPayer").value.trim(), "payer");
+    set("enc", $("#cxEnc").value || c.enc, "encounter"); set("doctor", $("#cxDoc").value.trim(), "clinician"); set("pa", $("#cxPa").value.trim() || null, "prior approval");
+    const oldDx = c.dx.map(d => d[0]).join(" "); if (oldDx !== dx.join(" ")){ changes.push(`diagnosis ${oldDx||"–"} → ${dx.join(" ")}`); c.dx = dx.map(k => [k, (c.dx.find(d => d[0] === k)||[])[1] || ""]); }
+    let n = 0; const used = new Set(c.acts.map(a => a.aid));
+    const acts = rows.map(r => { const a = c.acts.find(x => x.aid && x.aid === r.aid);
+      if (a){ if (a.code !== r.code || a.qty !== r.qty || a.gross !== r.gross || a.ps !== r.ps) changes.push(`activity ${a.aid}: ${a.code} → ${r.code}, qty ${r.qty}, net ${aed(r.gross - r.ps)}`);
+        return {...a, code:r.code, qty:r.qty, gross:r.gross, ps:r.ps, net:r2(r.gross - r.ps), desc: a.code === r.code ? a.desc : ""}; }
+      let aid; do { aid = `${c.id}-${c.acts.length + (++n)}`; } while (used.has(aid)); used.add(aid);
+      changes.push(`activity ${aid} added: ${r.code}`);
+      return {aid, code:r.code, type:/^D\d/.test(r.code) ? "6" : "3", obs:[], desc:"", qty:r.qty, gross:r.gross, ps:r.ps, net:r2(r.gross - r.ps), paid:0, denial:null}; });
+    c.acts.filter(a => !rows.some(r => r.aid === a.aid)).forEach(a => changes.push(`activity ${a.aid} (${a.code}) removed`));
+    c.acts = acts;
+    if (JSON.stringify([c.card, c.payer, c.enc, c.doctor, c.pa, c.dx, c.acts.map(a => [a.aid, a.code, a.qty, a.gross, a.ps])]) === before) { toast("Nothing was changed"); return; }
+    c.corrected = true;
+    const note = $("#cxNote").value.trim();
+    c.events.push({d:TODAY, t:`Corrected: ${note ? note + " (" + changes.join("; ") + ")" : changes.join("; ")}`});
+    save(); const left = checkClaim(c).filter(x => x.level === "error").length;
+    toast(left ? `Saved. ${left} error${left===1?"":"s"} still to fix.` : "Saved. The claim check passes now."); claimDlg(c.id); render();
+  };
+}
 function labDlg(id){
   const c = claimById(id); if (!c) return;
   const acts = c.acts.filter(isLab).length ? c.acts.filter(isLab) : c.acts;
@@ -1826,8 +1889,47 @@ function obsXml(doc, o, ind){
     el.appendChild(doc.createTextNode("\n" + ind + "  ")); const x = doc.createElement(t); x.textContent = v; el.appendChild(x); }
   el.appendChild(doc.createTextNode("\n" + ind)); return el;
 }
+// Writes corrections made with Correct claim into the original claim XML: member, payer, totals, encounter date,
+// diagnoses and activities. Fields that were not corrected keep their original text.
+function applyCorrections(doc, ce, c){
+  const kids = (el, tag) => [...el.children].filter(x => x.tagName === tag);
+  const setText = (el, tag, v) => { const x = kids(el, tag)[0]; if (x) x.textContent = v; return !!x; };
+  const dmy = iso => iso.split("-").reverse().join("/"), t = totals(c);
+  setText(ce, "MemberID", c.card || ""); setText(ce, "PayerID", c.payer || "");
+  setText(ce, "Gross", t.gross.toFixed(2)); setText(ce, "PatientShare", t.ps.toFixed(2)); setText(ce, "Net", t.net.toFixed(2));
+  const newDate = el => { const x = kids(el, "Start")[0]; if (x && c.enc) x.textContent = dmy(c.enc) + (x.textContent.trim().slice(10) || " 09:00"); };
+  const enc = kids(ce, "Encounter")[0]; if (enc) { newDate(enc); const e = kids(enc, "End")[0]; if (e && c.enc) e.textContent = dmy(c.enc) + (e.textContent.trim().slice(10) || " 10:00"); }
+  // Diagnoses: rewrite the list in place of the old one
+  const dxs = kids(ce, "Diagnosis"), anchor = dxs.length ? dxs[0] : kids(ce, "Activity")[0] || null, ind = "\n    ";
+  if (dxs.length || anchor) {
+    c.dx.forEach((d, i) => { const el = doc.createElement("Diagnosis");
+      for (const [k, v] of [["Type", i ? "Secondary" : "Principal"], ["Code", d[0]]]) { el.appendChild(doc.createTextNode(ind + "  ")); const x = doc.createElement(k); x.textContent = v; el.appendChild(x); }
+      el.appendChild(doc.createTextNode(ind)); ce.insertBefore(el, anchor); ce.insertBefore(doc.createTextNode(ind), anchor); });
+    dxs.forEach(x => { const p = x.previousSibling; if (p && p.nodeType === 3 && !p.textContent.trim()) p.remove(); x.remove(); });
+  }
+  // Activities: update, remove, and add (a new one copies the first activity's layout)
+  const els = kids(ce, "Activity"), idOf = el => (kids(el, "ID")[0] || {textContent:""}).textContent.trim();
+  const first = els[0];
+  for (const el of els) { const a = c.acts.find(x => x.aid === idOf(el));
+    if (!a) { const p = el.previousSibling; if (p && p.nodeType === 3 && !p.textContent.trim()) p.remove(); el.remove(); continue; }
+    setText(el, "Code", a.code); setText(el, "Quantity", String(a.qty)); setText(el, "Net", r2(a.net).toFixed(2)); newDate(el);
+    if (c.doctor) setText(el, "Clinician", c.doctor);
+    if (c.pa && !setText(el, "PriorAuthorizationID", c.pa)) { const x = doc.createElement("PriorAuthorizationID"); x.textContent = c.pa; el.insertBefore(doc.createTextNode(ind + "  "), el.lastChild); el.insertBefore(x, el.lastChild); }
+  }
+  let after = kids(ce, "Activity").pop() || null;
+  for (const a of c.acts.filter(a => !els.some(el => idOf(el) === a.aid))) {
+    let el;
+    if (first) { el = first.cloneNode(true); kids(el, "Observation").forEach(x => x.remove()); setText(el, "ID", a.aid); setText(el, "Code", a.code); setText(el, "Quantity", String(a.qty)); setText(el, "Net", r2(a.net).toFixed(2)); setText(el, "Type", a.type || "3"); newDate(el); if (c.doctor) setText(el, "Clinician", c.doctor); }
+    else { el = doc.createElement("Activity");
+      for (const [k, v] of [["ID", a.aid], ["Start", dmy(c.enc) + " 09:00"], ["Type", a.type || "3"], ["Code", a.code], ["Quantity", String(a.qty)], ["Net", r2(a.net).toFixed(2)], ["Clinician", c.doctor || ""]]) { el.appendChild(doc.createTextNode(ind + "  ")); const x = doc.createElement(k); x.textContent = v; el.appendChild(x); }
+      el.appendChild(doc.createTextNode(ind)); }
+    const ref = after ? after.nextSibling : null;
+    ce.insertBefore(doc.createTextNode(ind), ref); ce.insertBefore(el, ref); after = el;
+  }
+}
 function claimSrcXml(c, resub){
   const doc = new DOMParser().parseFromString(c.srcXml, "application/xml"), ce = doc.documentElement;
+  if (c.corrected) applyCorrections(doc, ce, c);
   // A resubmission sends the same claim with a <Resubmission> block (type and comment) after the activities
   [...ce.children].filter(x => x.tagName === "Resubmission").forEach(x => { const p = x.previousSibling; if (p && p.nodeType === 3 && !p.textContent.trim()) p.remove(); x.remove(); });
   if (resub){
