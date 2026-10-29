@@ -95,9 +95,9 @@ if errorlevel 1 (
 echo.
 echo Done. Cloudflare Tunnel now runs as a Windows service and starts with Windows by itself.
 echo.
-echo Last step, in the Cloudflare dashboard: on your tunnel, add a Public Hostname
+echo Last step, in the Cloudflare dashboard: open your tunnel, Routes, Add route, Published application
 echo     Subdomain: rcm      Domain: your clinic's domain
-echo     Type: HTTP          URL: localhost:3000
+echo     Service URL: http://localhost:3000
 echo Then open https://rcm.your-domain in any browser and sign in.
 echo.
 pause
