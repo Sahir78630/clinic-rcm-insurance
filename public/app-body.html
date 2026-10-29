@@ -200,7 +200,7 @@ dialog::backdrop{background:rgba(8,16,14,.45)}
     <nav class="nav" id="nav"></nav>
     <div class="rail-foot">
       <div>Facility licence <span class="mono" id="licenceText">not set</span></div>
-      <div>All figures in AED. Claims and payments are stored in this browser.</div>
+      <div id="syncText">All figures in AED. Claims and payments are stored in this browser.</div>
       <button class="btn sm" id="facilityBtn" type="button">Facility details</button>
       <button class="btn sm danger" id="resetBtn" type="button">Clear all data</button>
     </div>
@@ -292,7 +292,20 @@ const KEY = "rcm-v5";
 let S;
 try { S = JSON.parse(localStorage.getItem(KEY)); } catch(e) { S = null; }
 if (!S || S.v !== 5) S = emptyState();
-function save(){ try { localStorage.setItem(KEY, JSON.stringify(S)); } catch(e) {} }
+// Served by the clinic server: records live in its database and every member of staff works on the same records.
+// The browser keeps no copy of its own. A copy left in this browser from before is offered to the server once.
+const SHARED = Boolean((document.querySelector('meta[name="rcm-api"]') || {}).content);
+const OLD_LOCAL = SHARED && (S.claims.length || S.patients.length || S.ras.length || S.auths.length) ? S : null;
+if (SHARED) S = emptyState();
+const COLLS = ["patients","claims","ras","auths","appts"];
+const CLIENT = Math.random().toString(36).slice(2);
+// set: each setting as last saved on the server; the starting values count as saved, so the server's own replace them
+const SYNC = {ready:false, rev:0, base:{}, set:Object.fromEntries(Object.entries(emptyState()).filter(([k]) => !COLLS.includes(k) && k !== "log").map(([k,v]) => [k, JSON.stringify(v)])), prices:JSON.stringify({lists:{}}), logs:new WeakSet(), dirty:false, timer:null, busy:false, again:false, ok:true, stale:false, me:null};
+function save(){
+  if (!SHARED){ try { localStorage.setItem(KEY, JSON.stringify(S)); } catch(e) {} return; }
+  if (!SYNC.ready) return;
+  SYNC.dirty = true; clearTimeout(SYNC.timer); SYNC.timer = setTimeout(syncNow, 400);
+}
 const patient = id => S.patients.find(p => p.id === id) || {name:"Unknown",policy:{}};
 const claimById = id => S.claims.find(c => c.id === id);
 
@@ -381,6 +394,7 @@ const VIEWS = [
   ["Price list", [["prices","Payer price lists"]]]
 ];
 let current = (location.hash||"").slice(1);
+if (SHARED) VIEWS.push(["Account", [["account","Account & staff"]]]);
 if (!VIEWS.some(g => g[1].some(v => v[0] === current))) current = "overview";
 let UI = {claimQ:"",claimPayer:"",claimStatus:"",claimDept:"",claimFrom:"",claimTo:"",paFilter:"All",arBasis:"sub",arPayer:"",verifyResult:null};
 try { const u = JSON.parse(localStorage.getItem(KEY+"-ui")); if (u) UI.arBasis = u.arBasis || "sub"; } catch(e) {}
@@ -395,7 +409,7 @@ function renderNav(){
     `<button type="button" data-go="${id}" ${id===current?'aria-current="page"':""}><span>${label}</span>${n[id]?`<span class="count">${n[id]}</span>`:""}</button>`).join("")}</div>`).join("");
 }
 function go(v){ if (v !== current && typeof UI !== "undefined" && UI.rep) { UI.rep.status = ""; UI.rep.q = ""; } current = v; try { history.replaceState(null,"","#"+v); } catch(e) {} render(); window.scrollTo(0,0); }
-function render(){ renderBrand(); renderNav(); $("#view").innerHTML = R[current](); bindView(); ddmmDates($("#view")); }
+function render(){ renderBrand(); renderNav(); $("#view").innerHTML = SHARED && !SYNC.ready ? `<section class="panel"><p class="muted">Loading the shared records from the clinic server…</p></section>` : R[current](); bindView(); ddmmDates($("#view")); }
 // Browsers show date boxes in the computer's own format (often mm/dd/yyyy). Each date box is shown instead as a
 // dd/mm/yy text box with a calendar button; the original box stays underneath, keeps its id, value and handlers,
 // and receives the change.
@@ -1207,7 +1221,7 @@ function importAppts(txt, replace){
     let p = S.patients.find(x => (k1 && norm(x.eid) === k1) || (k2 && norm(x.policy.card) === k2));
     const py = findPayer(col(r,"payer")), plan = PLANS.find(x => norm(x.name) === norm(col(r,"plan"))) || PLANS[1], vt = col(r,"valid_until");
     if (!p && py){
-      p = {id:"P"+(20000+S.patients.length),name:name||"Unnamed patient",dob:"",eid,mobile:"",policy:{payer:py.id,plan:plan.name,card:card||"–",validFrom:addDays(vt||TODAY,-365),validTo:/^\d{4}-\d{2}-\d{2}$/.test(vt)?vt:addDays(TODAY,180),copay:plan.copay,ded:plan.ded,network:plan.network}};
+      p = {id:"P"+(20000+S.patients.length)+(SHARED?"-"+Date.now().toString(36).slice(-4)+i:""),name:name||"Unnamed patient",dob:"",eid,mobile:"",policy:{payer:py.id,plan:plan.name,card:card||"–",validFrom:addDays(vt||TODAY,-365),validTo:/^\d{4}-\d{2}-\d{2}$/.test(vt)?vt:addDays(TODAY,180),copay:plan.copay,ded:plan.ded,network:plan.network}};
       S.patients.push(p); added++;
     } else if (p && py && vt && /^\d{4}-\d{2}-\d{2}$/.test(vt)){ p.policy.payer = py.id; p.policy.validTo = vt; if (card) p.policy.card = card; }
     if (!p){ skipped++; return; }
@@ -1336,6 +1350,7 @@ function importRa(xml, opts={}){
 /* ---------- view bindings ---------- */
 function bindView(){
   const v = $("#view");
+  if (current === "account" && SHARED && SYNC.ready) bindAccount();
   const am = $("#actMonths"); if (am) am.onchange = () => { UI.actMonths = Number(am.value); render(); };
   v.querySelectorAll("[data-go]").forEach(b=>b.onclick=()=>{ if (b.dataset.status){ UI.claimStatus=b.dataset.status; UI.claimPayer=""; UI.claimTpa=""; UI.claimQ=""; UI.claimDept=""; UI.claimFrom=""; UI.claimTo=""; } go(b.dataset.go); });
   v.querySelectorAll("[data-claim]").forEach(el=>{ el.onclick=()=>claimDlg(el.dataset.claim); el.onkeydown=e=>{ if(e.key==="Enter") claimDlg(el.dataset.claim); }; });
@@ -1450,6 +1465,7 @@ async function eclFileDlg(id){
 async function api(path, body){
   const r = await fetch(API_BASE + path, body === undefined ? {credentials:"same-origin"} : {method:"POST",credentials:"same-origin",headers:{"content-type":"application/json"},body:JSON.stringify(body)});
   const j = await r.json().catch(()=>({}));
+  if (r.status === 401 && j.login) { SYNC.ok = false; location.reload(); }
   if (r.status === 401 && j.signIn) { LIVE.eclUser = null; refreshEclStatus().then(render); }
   if (!r.ok) throw new Error(j.error || `Server returned ${r.status}`);
   return j;
@@ -1519,6 +1535,7 @@ function bindEclAccount(){
     LIVE.eclUser = null; UI.eclTest = false; UI.ecl.results = null; UI.ecl.report = null; await refreshEclStatus(); refreshEcl(); render(); toast("Signed out of eClaimLink"); };
 }
 async function bootLive(){
+  if (SHARED) await bootShared();
   try {
     const [h, appts, log, cfg] = await Promise.all([api("/health"), api("/appointments"), api("/checks?limit=30"), api("/config").catch(()=>null)]);
     LIVE.cfg = cfg;
@@ -1528,6 +1545,176 @@ async function bootLive(){
     await refreshEcl();
     UI.verifyResult = null; render();
   } catch(e) { toast("Clinic server not reachable: " + e.message); }
+}
+
+/* ---------- shared records ---------- */
+// Only what changed since the last save goes to the server: each claim, patient, remittance, approval and
+// appointment on its own, so two people working on different records never overwrite each other.
+function syncChanges(){
+  const upserts = [], deletes = [], settings = {};
+  for (const c of COLLS){
+    const base = SYNC.base[c] || (SYNC.base[c] = new Map()), seen = new Set();
+    for (const r of S[c] || []){ const id = String(r.id); seen.add(id); const j = JSON.stringify(r); if (base.get(id) !== j) upserts.push({coll:c, id, data:r, j}); }
+    for (const id of base.keys()) if (!seen.has(id)) deletes.push({coll:c, id});
+  }
+  for (const k of Object.keys(S)) if (!COLLS.includes(k) && k !== "log"){ const j = JSON.stringify(S[k]); if (SYNC.set[k] !== j) settings[k] = S[k]; }
+  if (JSON.stringify(PRICES) !== SYNC.prices) settings.prices = PRICES;
+  return {upserts, deletes, settings, log: S.log.filter(l => !SYNC.logs.has(l))};
+}
+const syncPost = (ch, extra = {}) => api("/data", {...extra, upserts: ch.upserts.map(({coll,id,data}) => ({coll,id,data})), deletes: ch.deletes, settings: ch.settings, log: ch.log.map(l => ({...l, _c:CLIENT}))});
+async function syncNow(){
+  if (!SYNC.ready) return;
+  if (SYNC.busy){ SYNC.again = true; return; }
+  SYNC.busy = true; clearTimeout(SYNC.timer);
+  try {
+    if (SYNC.dirty){
+      SYNC.dirty = false;
+      const ch = syncChanges();
+      if (ch.upserts.length || ch.deletes.length || ch.log.length || Object.keys(ch.settings).length){
+        try { await syncPost(ch); } catch(e){ SYNC.dirty = true; throw e; }
+        ch.upserts.forEach(u => SYNC.base[u.coll].set(u.id, u.j));
+        ch.deletes.forEach(d => SYNC.base[d.coll].delete(d.id));
+        for (const k in ch.settings) if (k === "prices") SYNC.prices = JSON.stringify(ch.settings[k]); else SYNC.set[k] = JSON.stringify(ch.settings[k]);
+        ch.log.forEach(l => SYNC.logs.add(l));
+      }
+    }
+    if (await syncPull()) rerender();
+    else if (SYNC.stale) rerender();
+    syncState(true);
+  } catch(e){ syncState(false, e); }
+  SYNC.busy = false;
+  if (SYNC.again || SYNC.dirty){ SYNC.again = false; SYNC.timer = setTimeout(syncNow, SYNC.ok ? 50 : 5000); }
+}
+// Other people's changes. A record edited here and not yet saved keeps this browser's version, which is saved next.
+async function syncPull(){
+  const d = await api("/data?since=" + SYNC.rev);
+  let changed = false;
+  for (const ch of d.changes){
+    const j = ch.data === null ? undefined : JSON.stringify(ch.data);
+    if (ch.coll === "_"){
+      if (ch.id === "prices"){ const dirty = JSON.stringify(PRICES) !== SYNC.prices; SYNC.prices = j; if (!dirty && j){ PRICES = ch.data; priceIdx = null; changed = true; } continue; }
+      const local = JSON.stringify(S[ch.id]), dirty = local !== SYNC.set[ch.id];
+      SYNC.set[ch.id] = j;
+      if (!dirty && local !== j){ if (j === undefined) S[ch.id] = emptyState()[ch.id]; else S[ch.id] = ch.data; if (S[ch.id] === undefined) delete S[ch.id]; changed = true; }
+      continue;
+    }
+    if (!COLLS.includes(ch.coll)) continue;
+    const base = SYNC.base[ch.coll] || (SYNC.base[ch.coll] = new Map()), arr = S[ch.coll], i = arr.findIndex(r => String(r.id) === ch.id);
+    const local = i < 0 ? undefined : JSON.stringify(arr[i]), dirty = local !== base.get(ch.id);
+    if (j === undefined) base.delete(ch.id); else base.set(ch.id, j);
+    if (dirty || local === j) continue;
+    if (j === undefined) arr.splice(i, 1);
+    else if (i >= 0) arr[i] = ch.data;
+    else if (ch.coll === "patients" || ch.coll === "claims") arr.push(ch.data); else arr.unshift(ch.data);
+    changed = true;
+  }
+  for (const l of d.log.slice().reverse()) if (l._c !== CLIENT){ delete l._c; S.log.unshift(l); SYNC.logs.add(l); changed = true; }
+  if (S.log.length > 500) S.log.length = 500;
+  SYNC.rev = d.rev;
+  return changed;
+}
+// Someone else's change shows at once, unless this person is typing or has a window open: then it waits
+function rerender(){
+  const a = document.activeElement;
+  if (dlg.open || (a && a.closest && a.closest("#view") && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName))){ SYNC.stale = true; return; }
+  SYNC.stale = false; render();
+}
+function syncState(ok, err){
+  if (ok === SYNC.ok) return;
+  SYNC.ok = ok;
+  if (!ok) toast("Changes are not saved yet: the clinic server cannot be reached. Retrying…");
+  else toast("Connected to the clinic server again. Changes saved.");
+  renderSync();
+}
+function renderSync(){
+  const el = $("#syncText"); if (!el) return;
+  el.innerHTML = !SHARED ? "All figures in AED. Claims and payments are stored in this browser."
+    : SYNC.ok ? `All figures in AED. Records are saved on the clinic server and shared by all staff.${SYNC.me?` Signed in as <b>${esc(SYNC.me.name||SYNC.me.username)}</b>${SYNC.me.role==="admin"?" (admin)":""}.`:""}`
+    : `<span style="color:var(--bad)">Not saved: the clinic server cannot be reached. Retrying…</span>`;
+}
+async function bootShared(){
+  try { SYNC.me = await api("/me"); } catch(e){ toast("Clinic server not reachable: " + e.message); return; }
+  try { await syncPull(); } catch(e){ toast("Could not load the shared records: " + e.message); return; }
+  SYNC.ready = true; renderSync();
+  // Records this browser kept before they moved to the server: copy across the ones the server does not have yet
+  let asked = null; try { asked = localStorage.getItem(KEY + "-copied"); } catch(e) {}
+  if ((OLD_LOCAL || OLD_PRICES) && !asked){
+    const o = OLD_LOCAL || emptyState();
+    if (confirm(`This browser still has its own copy of the records from before they were shared (${o.claims.length} claims, ${o.ras.length} remittances, ${o.patients.length} patients${OLD_PRICES?", price lists":""}).\n\nCopy the ones that are missing to the clinic server, so all staff see them? Records already on the server are not changed.`)){
+      try {
+        const all = [];
+        for (const c of COLLS) for (const r of o[c] || []) all.push({coll:c, id:String(r.id), data:r});
+        for (let i = 0; i < all.length; i += 300) await api("/data", {onlyNew:true, upserts: all.slice(i, i + 300)});
+        const settings = {}; for (const k of Object.keys(o)) if (!COLLS.includes(k) && k !== "log") settings[k] = o[k];
+        if (OLD_PRICES) settings.prices = OLD_PRICES;
+        await api("/data", {onlyNew:true, settings, log: (o.log || []).slice(0, 200)});
+        await syncPull();
+        try { localStorage.removeItem(KEY); localStorage.removeItem(PRICE_KEY); localStorage.setItem(KEY + "-copied", "yes"); } catch(e) {}
+        toast(`Copied ${all.length} records to the clinic server`);
+      } catch(e){ toast("Copying to the clinic server failed: " + e.message + ". It will be offered again next time."); }
+    } else { try { localStorage.setItem(KEY + "-copied", "declined"); } catch(e) {} }
+  }
+  setInterval(() => { if (!document.hidden) syncNow(); }, 10000);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) syncNow(); });
+  dlg.addEventListener("close", () => { if (SYNC.stale) setTimeout(rerender, 0); });
+  window.addEventListener("beforeunload", e => { if (SYNC.dirty || SYNC.busy){ syncNow(); e.preventDefault(); e.returnValue = ""; } });
+  render();
+}
+
+/* ---------- account and staff (clinic server only) ---------- */
+R.account = () => {
+  const me = SYNC.me || {};
+  return head("Account & staff", `Signed in as <b>${esc(me.name||me.username||"")}</b> <span class="muted mono">${esc(me.username||"")}</span> · ${me.role==="admin"?"Admin":"Staff"}`,
+    `<button class="btn" id="pwBtn" type="button">Change my password</button><button class="btn danger" id="signOutBtn" type="button">Sign out</button>`) +
+  (me.role === "admin" ? `<section class="panel"><div class="panel-head"><div><h2>Staff accounts</h2><p>Each person signs in with their own username and password. Staff can use everything except this list and clearing all data. Disabling an account or setting a new password signs that person out at once.</p></div>
+    <button class="btn primary" id="uAddBtn" type="button">Add an account</button></div>
+    <div class="table-wrap"><table><thead><tr><th>Username</th><th>Name</th><th>Role</th><th>Status</th><th>Last sign-in (UTC)</th><th></th></tr></thead><tbody id="uRows"><tr><td colspan="6" class="empty">Loading…</td></tr></tbody></table></div></section>` : "") +
+  `<section class="panel"><div class="panel-head"><div><h2>Where the records are</h2><p>Claims, remittances, approvals, patients and price lists are saved on the clinic server and shared by everyone who signs in. The server keeps a copy of everything every day for the last 30 days, in the <span class="mono">data\\backups</span> folder on the clinic computer.</p></div></div></section>`;
+};
+async function bindAccount(){
+  const me = SYNC.me || {};
+  $("#signOutBtn").onclick = async () => { try { await fetch("/auth/logout", {method:"POST", credentials:"same-origin", headers:{"content-type":"application/json"}, body:"{}"}); } catch(e) {} location.reload(); };
+  $("#pwBtn").onclick = () => {
+    openDlg(dlgHead("Change my password","At least 8 characters.") + `<div class="dlg-body"><div class="form-grid">
+      <div class="field"><label for="pwCur">Current password</label><input type="password" id="pwCur" autocomplete="current-password"></div>
+      <div class="field"><label for="pwNew">New password</label><input type="password" id="pwNew" autocomplete="new-password"></div>
+      <div class="field"><label for="pwNew2">New password again</label><input type="password" id="pwNew2" autocomplete="new-password"></div>
+    </div><div class="actions"><button class="btn primary" id="pwSave" type="button">Change password</button></div></div>`);
+    $("#pwSave").onclick = async () => {
+      if ($("#pwNew").value !== $("#pwNew2").value) return toast("The two new passwords are different");
+      try { await api("/me/password", {current:$("#pwCur").value, password:$("#pwNew").value}); closeDlg(); toast("Password changed"); } catch(e){ toast(e.message); }
+    };
+  };
+  if (me.role !== "admin") return;
+  let users = [];
+  try { users = await api("/users"); } catch(e){ toast(e.message); return; }
+  if (current !== "account" || !$("#uRows")) return;
+  $("#uRows").innerHTML = users.map(u => `<tr><td class="mono">${esc(u.username)}</td><td>${esc(u.name)}</td><td>${u.role==="admin"?"Admin":"Staff"}</td>
+    <td><span class="pill ${u.active?"p-ok":"p-mute"}">${u.active?"Active":"Disabled"}</span></td><td class="muted mono">${esc(u.lastLogin||"never")}</td>
+    <td><div class="actions" style="justify-content:flex-end"><button class="btn sm" data-uact="pw" data-uid="${u.id}" type="button">Set new password</button>
+    <button class="btn sm" data-uact="role" data-uid="${u.id}" type="button">${u.role==="admin"?"Make staff":"Make admin"}</button>
+    <button class="btn sm ${u.active?"danger":""}" data-uact="active" data-uid="${u.id}" type="button">${u.active?"Disable":"Enable"}</button></div></td></tr>`).join("");
+  const change = async (id, body, msg) => {
+    try { await api(`/users/${id}`, body); toast(msg); if (id === me.id) SYNC.me = await api("/me"); render(); } catch(e){ toast(e.message); }
+  };
+  $("#uRows").querySelectorAll("[data-uact]").forEach(b => b.onclick = () => {
+    const u = users.find(x => x.id === Number(b.dataset.uid)), a = b.dataset.uact;
+    if (a === "pw"){ const pw = prompt(`New password for ${u.username} (at least 8 characters). Tell them the new password; they can change it under Account & staff.`); if (pw) change(u.id, {password:pw}, `New password set for ${u.username}`); }
+    if (a === "role") change(u.id, {role: u.role === "admin" ? "staff" : "admin"}, `${u.username} is now ${u.role === "admin" ? "staff" : "an admin"}`);
+    if (a === "active" && (!u.active || confirm(`Disable ${u.username}? They are signed out and cannot sign in until enabled again.`))) change(u.id, {active: !u.active}, `${u.username} ${u.active ? "disabled" : "enabled"}`);
+  });
+  $("#uAddBtn").onclick = () => {
+    openDlg(dlgHead("Add an account","Give the person their username and password. They can change the password after signing in.") + `<div class="dlg-body"><div class="form-grid">
+      <div class="field"><label for="nuUser">Username</label><input type="text" id="nuUser" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="e.g. reception1"></div>
+      <div class="field"><label for="nuName">Full name</label><input type="text" id="nuName" autocomplete="off"></div>
+      <div class="field"><label for="nuRole">Role</label><select id="nuRole"><option value="staff">Staff</option><option value="admin">Admin</option></select></div>
+      <div class="field"><label for="nuPw">Password (at least 8 characters)</label><input type="text" id="nuPw" autocomplete="off"></div>
+    </div><div class="actions"><button class="btn primary" id="nuSave" type="button">Add account</button></div></div>`);
+    $("#nuSave").onclick = async () => {
+      try { const u = await api("/users", {username:$("#nuUser").value, name:$("#nuName").value, role:$("#nuRole").value, password:$("#nuPw").value}); closeDlg(); toast(`Account ${u.username} added`); render(); }
+      catch(e){ toast(e.message); }
+    };
+  };
 }
 
 /* ---------- facility and getting started ---------- */
@@ -1979,9 +2166,12 @@ function downloadClaimsXml(list){
 const PRICE_KEY = "rcm-prices";
 let PRICES;
 try { PRICES = JSON.parse(localStorage.getItem(PRICE_KEY)) || {lists:{}}; } catch(e) { PRICES = {lists:{}}; }
+const OLD_PRICES = SHARED && Object.keys(PRICES.lists).length ? PRICES : null;
+if (SHARED) PRICES = {lists:{}};
 let priceIdx = null; // payer key -> Map(code -> [price, desc])
 function savePrices(){
   priceIdx = null;
+  if (SHARED){ save(); return true; }
   try { localStorage.setItem(PRICE_KEY, JSON.stringify(PRICES)); return true; }
   catch(e) { toast("The price lists are too large for this browser's storage. Remove an old list or upload fewer columns."); return false; }
 }
@@ -2955,9 +3145,15 @@ const dhpoKey = d => d ? `${d.slice(6,10)}${d.slice(3,5)}${d.slice(0,2)}${d.slic
 $("#facilityBtn").onclick = facilityDlg;
 $("#nav").addEventListener("click", e => { const b = e.target.closest("[data-go]"); if (b) go(b.dataset.go); });
 let resetArm = 0;
-$("#resetBtn").onclick = () => { const b = $("#resetBtn"); if (Date.now()-resetArm < 4000){ S = emptyState(); UI.verifyResult=null; save(); render(); b.textContent="Clear all data"; toast("All records on this computer were cleared"); resetArm=0; } else { resetArm = Date.now(); b.textContent = "Click again to clear everything"; setTimeout(()=>{ b.textContent="Clear all data"; }, 4000); } };
+$("#resetBtn").onclick = async () => { const b = $("#resetBtn");
+  if (SHARED && (!SYNC.me || SYNC.me.role !== "admin")) return toast("Only an admin can clear all data");
+  if (Date.now()-resetArm < 4000){
+    resetArm=0; b.textContent="Clear all data";
+    if (SHARED){ try { await api("/data", {clearAll:true}); } catch(e){ return toast("Not cleared: " + e.message); }
+      S = emptyState(); PRICES = {lists:{}}; priceIdx = null; SYNC.base = {}; SYNC.set = {}; SYNC.prices = undefined; SYNC.dirty = true; SYNC.rev = 0; await syncNow(); UI.verifyResult=null; render(); toast("All records were cleared for everyone. Yesterday's copy is in data\\backups on the clinic computer."); return; }
+    S = emptyState(); UI.verifyResult=null; save(); render(); toast("All records on this computer were cleared"); } else { resetArm = Date.now(); b.textContent = "Click again to clear everything"; setTimeout(()=>{ b.textContent="Clear all data"; }, 4000); } };
 window.addEventListener("hashchange", () => { const h = location.hash.slice(1); if (h && h!==current && R[h]) { current = h; render(); } });
-save(); render();
+save(); render(); renderSync();
 if (API_BASE) bootLive();
 })();
 </script>

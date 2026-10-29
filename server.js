@@ -2,19 +2,24 @@ import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
-import { timingSafeEqual, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { openDb, upsertMember } from "./src/db.js";
 import { checkEligibility, defaultProvider } from "./src/eligibility.js";
 import { importCsv, listAppointments, verifyAll, verifyAppointment, CSV_COLUMNS } from "./src/appointments.js";
 import { loadConfig, today, findPayer, formatEid } from "./src/util.js";
 import * as ecl from "./src/eclaimlink/index.js";
 import { settings, serviceInfo } from "./src/eclaimlink/soap.js";
+import * as auth from "./src/auth.js";
+import * as shared from "./src/shared.js";
 
-const MAX_BODY = 5 * 1024 * 1024;
-const SESSION_IDLE = 2 * 3600e3, SESSION_MAX = 12 * 3600e3, COOKIE = "rcm_ecl";
+const MAX_BODY = 50 * 1024 * 1024;
+const SESSION_IDLE = 2 * 3600e3, SESSION_MAX = 12 * 3600e3, COOKIE = "rcm_ecl", USER_COOKIE = "rcm_user";
 
-export function createApp({ db, cfg, env = process.env, fetchImpl } = {}) {
+// login: false skips website accounts (used by tests that exercise other parts of the API)
+export function createApp({ db, cfg, env = process.env, fetchImpl, login = true } = {}) {
   const ctx = { db, cfg, env, fetchImpl };
+  auth.initAuth(db);
+  shared.initShared(db);
   const appHtml = () => {
     const body = readFileSync(new URL("./public/app-body.html", import.meta.url), "utf8");
     return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -24,7 +29,8 @@ export function createApp({ db, cfg, env = process.env, fetchImpl } = {}) {
   // eClaimLink sign-in: each staff member's own login is held in server memory for the session only,
   // never written to the database or sent back to the browser. The browser gets a random session cookie.
   const sessions = new Map(), failures = new Map();
-  const cookieOf = req => (String(req.headers.cookie || "").match(new RegExp(`(?:^|;\\s*)${COOKIE}=([\\w-]+)`)) || [])[1];
+  const cookieNamed = (req, name) => (String(req.headers.cookie || "").match(new RegExp(`(?:^|;\\s*)${name}=([\\w-]+)`)) || [])[1];
+  const cookieOf = req => cookieNamed(req, COOKIE);
   const sessionOf = req => {
     const id = cookieOf(req), s = id && sessions.get(id), now = Date.now();
     if (!s) return null;
@@ -38,24 +44,53 @@ export function createApp({ db, cfg, env = process.env, fetchImpl } = {}) {
     if (!s) return ctx;
     return { ...ctx, env: { ...env, ECLAIMLINK_MODE: ecl.mode(env) === "off" ? "off" : "live", ECLAIMLINK_LOGIN: s.login, ECLAIMLINK_PASSWORD: s.pwd } };
   };
-  const setCookie = (req, res, value, maxAge) => {
+  const setCookie = (req, res, value, maxAge, name = COOKIE, same = "Strict") => {
     const secure = req.socket.encrypted || req.headers["x-forwarded-proto"] === "https" ? "; Secure" : "";
-    res.setHeader("set-cookie", `${COOKIE}=${value}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${secure}`);
+    res.setHeader("set-cookie", `${name}=${value}; Path=/; HttpOnly; SameSite=${same}; Max-Age=${maxAge}${secure}`);
   };
   const eclStatus = (req, s = sessionOf(req)) => {
     return { ...ecl.status(s ? eclCtx(req, s) : ctx), signedIn: Boolean(s), signedInAs: s?.login || null, canSignIn: ecl.mode(env) !== "off",
       serverLogin: Boolean(env.ECLAIMLINK_LOGIN && env.ECLAIMLINK_PASSWORD) };
   };
 
-  const user = env.APP_USERNAME, pass = env.APP_PASSWORD;
-  const authorized = req => {
-    if (!user || !pass) return true;
-    const h = req.headers.authorization || "";
-    if (!h.startsWith("Basic ")) return false;
-    const given = Buffer.from(Buffer.from(h.slice(6), "base64").toString());
-    const want = Buffer.from(`${user}:${pass}`);
-    return given.length === want.length && timingSafeEqual(given, want);
-  };
+  // Website accounts. A request through Cloudflare Tunnel also arrives from this computer, but carries the visitor's
+  // address in cf-connecting-ip, so it does not count as local.
+  const viaProxy = req => Boolean(req.headers["cf-connecting-ip"] || req.headers["x-forwarded-for"]);
+  const loopback = req => /^(::1|127\.\d+\.\d+\.\d+|::ffff:127\.\d+\.\d+\.\d+)$/.test(req.socket.remoteAddress || "");
+  const isLocal = req => loopback(req) && !viaProxy(req);
+  const clientIp = req => (loopback(req) && String(req.headers["cf-connecting-ip"] || "").trim()) || req.socket.remoteAddress;
+  const userOf = req => login ? auth.sessionUser(db, cookieNamed(req, USER_COOKIE)) : { id: 0, username: "local", name: "", role: "admin" };
+  const loginFails = new Map();
+  const loginPage = mode => readFileSync(new URL("./public/login.html", import.meta.url), "utf8").replace("__MODE__", mode);
+  const needAdmin = u => { if (u.role !== "admin") throw Object.assign(new Error("Only an admin can do this"), { code: 403 }); };
+  const authRoutes = [
+    ["POST", /^\/auth\/login$/, async (req, url, m, res) => {
+      const ip = clientIp(req), now = Date.now();
+      const f = (loginFails.get(ip) || []).filter(t => now - t < 15 * 60e3);
+      if (f.length >= 10) throw Object.assign(new Error("Too many wrong passwords. Wait 15 minutes and try again."), { code: 429 });
+      const b = await readJson(req);
+      const u = auth.checkLogin(db, b.username, b.password);
+      if (!u) { loginFails.set(ip, [...f, now]); throw Object.assign(new Error("Wrong username or password"), { code: 401 }); }
+      loginFails.delete(ip);
+      setCookie(req, res, auth.startSession(db, u.id), auth.SESSION_IDLE / 1000, USER_COOKIE, "Lax");
+      return { ok: true };
+    }],
+    ["POST", /^\/auth\/logout$/, (req, url, m, res) => {
+      auth.endSession(db, cookieNamed(req, USER_COOKIE));
+      setCookie(req, res, "", 0, USER_COOKIE, "Lax");
+      return { ok: true };
+    }],
+    // The first admin account can only be created on the clinic computer itself, never through the web link
+    ["POST", /^\/auth\/setup$/, async (req, url, m, res) => {
+      if (auth.userCount(db) > 0) throw Object.assign(new Error("The admin account already exists. Sign in instead."), { code: 409 });
+      if (!isLocal(req)) throw Object.assign(new Error("Create the admin account on the clinic computer that runs the website."), { code: 403 });
+      const b = await readJson(req);
+      const u = auth.createUser(db, { username: b.username, name: b.name, role: "admin", password: b.password });
+      auth.checkLogin(db, b.username, b.password);
+      setCookie(req, res, auth.startSession(db, u.id), auth.SESSION_IDLE / 1000, USER_COOKIE, "Lax");
+      return { ok: true };
+    }],
+  ];
 
   const send = (res, code, data, type = "application/json; charset=utf-8") => {
     res.writeHead(code, { "content-type": type, "cache-control": "no-store", "x-content-type-options": "nosniff" });
@@ -69,6 +104,29 @@ export function createApp({ db, cfg, env = process.env, fetchImpl } = {}) {
   });
 
   const routes = [
+    ["GET", /^\/api\/me$/, (req, url, m, res, u) => ({ ...u, sessionId: undefined, login })],
+    ["POST", /^\/api\/me\/password$/, async (req, url, m, res, u) => {
+      const b = await readJson(req);
+      auth.changeOwnPassword(db, u.id, b.current, b.password);
+      return { ok: true };
+    }],
+    ["GET", /^\/api\/users$/, (req, url, m, res, u) => { needAdmin(u); return auth.listUsers(db); }],
+    ["POST", /^\/api\/users$/, async (req, url, m, res, u) => { needAdmin(u); return auth.createUser(db, await readJson(req)); }],
+    ["POST", /^\/api\/users\/(\d+)$/, async (req, url, m, res, u) => {
+      needAdmin(u);
+      const b = await readJson(req);
+      return auth.updateUser(db, Number(m[1]), { name: b.name, role: b.role, active: b.active, password: b.password }, u);
+    }],
+    // Shared records: every browser pulls changes since its last revision and pushes its own edits
+    ["GET", /^\/api\/data$/, (req, url) => shared.pull(db, Number(url.searchParams.get("since")) || 0)],
+    ["POST", /^\/api\/data$/, async (req, url, m, res, u) => {
+      const b = await readJson(req);
+      if (b.clearAll) {
+        needAdmin(u);
+        shared.clearAll(db, u.username);
+      }
+      return shared.push(db, b, u.username);
+    }],
     ["GET", /^\/api\/health$/, () => ({ ok: true, provider: defaultProvider(env), eclaimlink: ecl.mode(env), facility: env.FACILITY_LICENSE || null, today: today() })],
     ["GET", /^\/api\/config$/, () => ({ payers: cfg.payers.map(({ code, name, kind, terms, eclaimlinkId }) => ({ code, name, kind, terms, eclaimlinkId })), approvalDepartments: cfg.approvalDepartments, csvColumns: CSV_COLUMNS, provider: defaultProvider(env) })],
     ["POST", /^\/api\/eligibility$/, async req => {
@@ -161,21 +219,30 @@ export function createApp({ db, cfg, env = process.env, fetchImpl } = {}) {
 
   return async (req, res) => {
     try {
-      if (!authorized(req)) {
-        res.writeHead(401, { "www-authenticate": 'Basic realm="Clinic RCM", charset="UTF-8"' });
-        return res.end("Sign-in required");
-      }
       const url = new URL(req.url, "http://localhost");
-      if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) return send(res, 200, appHtml(), "text/html; charset=utf-8");
-      for (const [method, re, fn] of routes) {
+      // Requests that change something must be JSON, which another website cannot send to this one
+      if (req.method !== "GET" && !String(req.headers["content-type"] || "").startsWith("application/json"))
+        throw Object.assign(new Error("Send the request as JSON"), { code: 415 });
+      for (const [method, re, fn] of authRoutes) {
         const m = url.pathname.match(re);
         if (m && req.method === method) return send(res, 200, await fn(req, url, m, res));
+      }
+      const u = userOf(req);
+      const page = url.pathname === "/" || url.pathname === "/index.html";
+      if (!u) {
+        if (req.method === "GET" && page) return send(res, 200, loginPage(auth.userCount(db) ? "login" : isLocal(req) ? "setup" : "closed"), "text/html; charset=utf-8");
+        throw Object.assign(new Error("Your website sign-in has ended. Sign in again."), { code: 401, login: true });
+      }
+      if (req.method === "GET" && page) return send(res, 200, appHtml(), "text/html; charset=utf-8");
+      for (const [method, re, fn] of routes) {
+        const m = url.pathname.match(re);
+        if (m && req.method === method) return send(res, 200, await fn(req, url, m, res, u));
       }
       send(res, 404, { error: "Not found" });
     } catch (e) {
       const code = Number.isInteger(e.code) ? e.code : 500;
       if (code === 500) console.error(e);
-      send(res, code, { error: code === 500 ? "Server error" : e.message, ...(e.signIn && { signIn: true }) });
+      send(res, code, { error: code === 500 ? "Server error" : e.message, ...(e.signIn && { signIn: true }), ...(e.login && { login: true }) });
     }
   };
 }
@@ -184,12 +251,16 @@ export function createApp({ db, cfg, env = process.env, fetchImpl } = {}) {
 const samePath = (a, b) => process.platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b;
 if (process.argv[1] && samePath(fileURLToPath(import.meta.url), resolve(process.argv[1]))) {
   const env = process.env;
-  const db = openDb(env.DATABASE_FILE || "data/rcm.sqlite");
+  const dbFile = env.DATABASE_FILE || "data/rcm.sqlite";
+  const db = openDb(dbFile);
   const cfg = loadConfig();
   const port = Number(env.PORT) || 3000;
   const host = env.HOST || "127.0.0.1";
-  if (!env.APP_USERNAME || !env.APP_PASSWORD) console.warn("APP_USERNAME / APP_PASSWORD are not set: anyone who can reach this server can use it. Set them before exposing it beyond this computer.");
-  createServer(createApp({ db, cfg, env }))
+  const app = createApp({ db, cfg, env });
+  const daily = () => { try { const f = shared.backup(db, dbFile); if (f) console.log(`Backup: ${f}`); } catch (e) { console.error("Backup failed:", e.message); } };
+  daily(); setInterval(daily, 3600e3).unref();
+  if (!auth.userCount(db)) console.log(`No accounts yet: open http://127.0.0.1:${port} on this computer to create the admin account.`);
+  createServer(app)
     .on("error", e => {
       if (e.code !== "EADDRINUSE") throw e;
       console.error(`\nClinic RCM is already running on port ${port} (another window, or the copy that starts with Windows).\n` +

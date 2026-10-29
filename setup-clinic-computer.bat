@@ -12,21 +12,6 @@ if errorlevel 1 (
 echo.
 echo Setting up this computer to run Clinic RCM for the staff.
 echo.
-if exist staff-login.env goto login_ok
-echo First choose the username and password your staff will type to open the website.
-echo This is a website login, not your eClaimLink password.
-echo.
-set /p APP_USERNAME=Username for staff: 
-set /p APP_PASSWORD=Password for staff: 
-if "%APP_PASSWORD%"=="" (
-  echo The password cannot be empty.
-  pause
-  exit /b 1
-)
-> staff-login.env echo APP_USERNAME=%APP_USERNAME%
->> staff-login.env echo APP_PASSWORD=%APP_PASSWORD%
-echo Saved in staff-login.env.
-:login_ok
 REM 1. Start with Windows: a minimised shortcut to start-for-staff.bat in this user's Startup folder
 powershell -NoProfile -Command "$s=(New-Object -ComObject WScript.Shell).CreateShortcut([Environment]::GetFolderPath('Startup')+'\Clinic RCM.lnk'); $s.TargetPath='%~dp0start-for-staff.bat'; $s.WorkingDirectory='%~dp0'; $s.WindowStyle=7; $s.Save()"
 if errorlevel 1 (
@@ -46,6 +31,9 @@ echo Done. Staff can open the website at:
 echo     http://%COMPUTERNAME%:3000
 for /f "tokens=2 delims=:" %%i in ('ipconfig ^| findstr /c:"IPv4"') do for /f "tokens=*" %%j in ("%%i") do echo     http://%%j:3000
 echo The first address keeps working even if the numbers change.
+echo.
+echo FIRST TIME ONLY: the website opens on this computer and asks you to create the admin account.
+echo Then add an account for each member of staff under "Account ^& staff".
 echo To stop it starting by itself, double-click remove-autostart.bat.
 echo.
 echo Starting Clinic RCM now...

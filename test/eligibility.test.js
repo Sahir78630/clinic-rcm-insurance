@@ -89,13 +89,31 @@ test("CSV import adds members, skips bad rows and verifies everyone", async () =
   assert.equal(list[0].result.plan, "Gold");
 });
 
-test("HTTP API: basic auth, import and walk-in check", async () => {
+test("HTTP API: website accounts, import and walk-in check", async () => {
   const db = fresh();
-  const srv = createServer(createApp({ db, cfg, env: { ELIGIBILITY_PROVIDER: "mock", APP_USERNAME: "desk", APP_PASSWORD: "pw" } })).listen(0);
+  const srv = createServer(createApp({ db, cfg, env: { ELIGIBILITY_PROVIDER: "mock" } })).listen(0);
   await new Promise(r => srv.once("listening", r));
   const base = `http://127.0.0.1:${srv.address().port}`;
-  const auth = { authorization: "Basic " + Buffer.from("desk:pw").toString("base64"), "content-type": "application/json" };
+  const json = { "content-type": "application/json" };
   assert.equal((await fetch(base + "/api/health")).status, 401);
+  // No accounts yet: the clinic computer itself is offered the admin set-up, a visitor through the tunnel is not
+  assert.match(await (await fetch(base + "/")).text(), /const MODE = "setup"/);
+  assert.match(await (await fetch(base + "/", { headers: { "cf-connecting-ip": "5.6.7.8" } })).text(), /const MODE = "closed"/);
+  assert.equal((await fetch(base + "/auth/setup", { method: "POST", headers: { ...json, "cf-connecting-ip": "5.6.7.8" }, body: JSON.stringify({ username: "owner", password: "longpassword" }) })).status, 403);
+  const setup = await fetch(base + "/auth/setup", { method: "POST", headers: json, body: JSON.stringify({ username: "owner", name: "Owner", password: "longpassword" }) });
+  assert.equal(setup.status, 200);
+  const admin = { ...json, cookie: setup.headers.get("set-cookie").split(";")[0] };
+  assert.equal((await fetch(base + "/auth/setup", { method: "POST", headers: json, body: JSON.stringify({ username: "x", password: "longpassword" }) })).status, 409);
+  assert.equal((await (await fetch(base + "/api/me", { headers: admin })).json()).role, "admin");
+  // The admin adds a staff account; staff can work but cannot manage accounts
+  assert.equal((await fetch(base + "/api/users", { method: "POST", headers: admin, body: JSON.stringify({ username: "desk", name: "Front desk", role: "staff", password: "deskpassword" }) })).status, 200);
+  assert.equal((await fetch(base + "/auth/login", { method: "POST", headers: json, body: JSON.stringify({ username: "desk", password: "wrong-one" }) })).status, 401);
+  const li = await fetch(base + "/auth/login", { method: "POST", headers: json, body: JSON.stringify({ username: "DESK", password: "deskpassword" }) });
+  assert.equal(li.status, 200);
+  const auth = { ...json, cookie: li.headers.get("set-cookie").split(";")[0] };
+  assert.equal((await fetch(base + "/api/users", { headers: auth })).status, 403);
+  // A form post from another website is refused
+  assert.equal((await fetch(base + "/api/eligibility", { method: "POST", headers: { cookie: auth.cookie, "content-type": "text/plain" }, body: "{}" })).status, 415);
   const home = await fetch(base + "/", { headers: auth });
   assert.match(await home.text(), /name="rcm-api"/);
   const imp = await (await fetch(base + "/api/appointments/import", { method: "POST", headers: auth,
@@ -106,5 +124,13 @@ test("HTTP API: basic auth, import and walk-in check", async () => {
   assert.equal(walk.status, "Eligible");
   const log = await (await fetch(base + "/api/checks", { headers: auth })).json();
   assert.equal(log.length, 2);
+  // Disabling the account signs that person out
+  const users = await (await fetch(base + "/api/users", { headers: admin })).json();
+  await fetch(base + `/api/users/${users.find(x => x.username === "desk").id}`, { method: "POST", headers: admin, body: JSON.stringify({ active: false }) });
+  const after = await fetch(base + "/api/checks", { headers: auth });
+  assert.equal(after.status, 401);
+  assert.equal((await after.json()).login, true);
+  // The only admin cannot remove their own admin role
+  assert.equal((await fetch(base + `/api/users/${users.find(x => x.username === "owner").id}`, { method: "POST", headers: admin, body: JSON.stringify({ role: "staff" }) })).status, 400);
   srv.close();
 });

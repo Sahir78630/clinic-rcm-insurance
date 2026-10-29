@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Clinic RCM sign in</title>
+<style>
+:root{--bg:#F3F6F5;--surface:#FFFFFF;--ink:#13201E;--muted:#5A6B67;--line:#D8E1DE;--accent:#0D6B61;--accent-ink:#FFFFFF;--bad:#B0281F;--bad-soft:#FBE3E0;--r:8px;
+  --body:"Segoe UI",system-ui,-apple-system,sans-serif}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--bg:#0E1413;--surface:#151D1B;--ink:#E3ECE9;--muted:#93A4A0;--line:#27332F;--accent:#4CC2AE;--accent-ink:#04201B;--bad:#F27D70;--bad-soft:#3E1D1A;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#0E1413;--surface:#151D1B;--ink:#E3ECE9;--muted:#93A4A0;--line:#27332F;--accent:#4CC2AE;--accent-ink:#04201B;--bad:#F27D70;--bad-soft:#3E1D1A;color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;display:grid;place-items:center;background:var(--bg);color:var(--ink);font:15px/1.45 var(--body);padding:16px}
+main{width:100%;max-width:380px;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:28px 24px}
+h1{font-size:20px;margin:0 0 4px}
+p{margin:0 0 18px;color:var(--muted)}
+label{display:block;font-weight:600;font-size:13px;margin:14px 0 6px}
+input{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:var(--r);background:var(--bg);color:var(--ink);font:inherit}
+input:focus{outline:2px solid var(--accent);outline-offset:1px}
+button{width:100%;margin-top:20px;padding:11px;border:0;border-radius:var(--r);background:var(--accent);color:var(--accent-ink);font:600 15px var(--body);cursor:pointer}
+button:disabled{opacity:.6}
+.err{margin-top:14px;padding:10px 12px;border-radius:var(--r);background:var(--bad-soft);color:var(--bad);font-size:14px}
+.note{margin-top:16px;font-size:13px;color:var(--muted)}
+</style>
+</head>
+<body>
+<main>
+  <form id="f" autocomplete="on">
+    <h1 id="t">Sign in</h1>
+    <p id="d">Clinic insurance revenue cycle</p>
+    <div id="nameRow" hidden><label for="name">Your name</label><input id="name" autocomplete="name"></div>
+    <label for="u">Username</label><input id="u" autocomplete="username" required autocapitalize="none" spellcheck="false">
+    <label for="p">Password</label><input id="p" type="password" autocomplete="current-password" required>
+    <div id="p2Row" hidden><label for="p2">Type the password again</label><input id="p2" type="password" autocomplete="new-password"></div>
+    <button id="b" type="submit">Sign in</button>
+    <div class="err" id="e" role="alert" hidden></div>
+    <div class="note" id="n">Forgot your password? Ask the admin to set a new one.</div>
+  </form>
+</main>
+<script>
+// MODE is "login", "setup" (no accounts yet, on the clinic computer) or "closed" (no accounts yet, from elsewhere)
+const MODE = "__MODE__";
+const $ = id => document.getElementById(id);
+if (MODE === "setup") {
+  $("t").textContent = "Create the admin account";
+  $("d").textContent = "This is the first account. It can add and remove staff accounts. Use at least 8 characters for the password.";
+  $("nameRow").hidden = false; $("p2Row").hidden = false; $("p2").required = true;
+  $("p").autocomplete = "new-password"; $("b").textContent = "Create admin account"; $("n").hidden = true;
+}
+if (MODE === "closed") {
+  $("t").textContent = "Not set up yet";
+  $("d").textContent = "Open this website on the clinic computer that runs it to create the admin account first.";
+  $("f").querySelectorAll("label,input,button,#n").forEach(x => x.hidden = true);
+}
+$("f").onsubmit = async ev => {
+  ev.preventDefault();
+  const e = $("e"); e.hidden = true;
+  if (MODE === "setup" && $("p").value !== $("p2").value) { e.textContent = "The two passwords are different."; e.hidden = false; return; }
+  $("b").disabled = true;
+  try {
+    const r = await fetch(MODE === "setup" ? "/auth/setup" : "/auth/login", { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ username: $("u").value, password: $("p").value, name: $("name").value }) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || "Sign-in failed (" + r.status + ")");
+    location.replace("/" + location.hash);
+  } catch (err) { e.textContent = err.message === "Failed to fetch" ? "The clinic server could not be reached. Check that it is running." : err.message; e.hidden = false; $("b").disabled = false; }
+};
+</script>
+</body>
+</html>

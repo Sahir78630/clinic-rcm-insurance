@@ -28,7 +28,7 @@ test("staff sign in with their own eClaimLink login and browse files in their se
   const { srv: dhpo, calls } = fakeDhpo();
   await new Promise(r => dhpo.listen(0, r));
   const env = { ECLAIMLINK_URL: `http://127.0.0.1:${dhpo.address().port}/ValidateTransactions.asmx` };
-  const app = createServer(createApp({ db: openDb(":memory:"), cfg: loadConfig(), env }));
+  const app = createServer(createApp({ db: openDb(":memory:"), cfg: loadConfig(), login: false, env }));
   await new Promise(r => app.listen(0, r));
   const base = `http://127.0.0.1:${app.address().port}/api/eclaimlink`;
   const post = (p, body, cookie) => fetch(base + p, { method: "POST", headers: { "content-type": "application/json", ...(cookie && { cookie }) }, body: JSON.stringify(body) });
@@ -68,9 +68,9 @@ test("staff sign in with their own eClaimLink login and browse files in their se
 test("sign-in is throttled after five wrong passwords", async () => {
   const { srv: dhpo } = fakeDhpo();
   await new Promise(r => dhpo.listen(0, r));
-  const app = createServer(createApp({ db: openDb(":memory:"), cfg: loadConfig(), env: { ECLAIMLINK_URL: `http://127.0.0.1:${dhpo.address().port}/x.asmx` } }));
+  const app = createServer(createApp({ db: openDb(":memory:"), cfg: loadConfig(), login: false, env: { ECLAIMLINK_URL: `http://127.0.0.1:${dhpo.address().port}/x.asmx` } }));
   await new Promise(r => app.listen(0, r));
-  const login = pwd => fetch(`http://127.0.0.1:${app.address().port}/api/eclaimlink/login`, { method: "POST", body: JSON.stringify({ login: "nurse1", pwd }) });
+  const login = pwd => fetch(`http://127.0.0.1:${app.address().port}/api/eclaimlink/login`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ login: "nurse1", pwd }) });
   try {
     for (let i = 0; i < 5; i++) assert.equal((await login("nope")).status, 401);
     assert.equal((await login("s3cret")).status, 429);
@@ -78,7 +78,7 @@ test("sign-in is throttled after five wrong passwords", async () => {
 });
 
 test("an ended session is reported instead of falling back to test mode", async () => {
-  const app = createServer(createApp({ db: openDb(":memory:"), cfg: loadConfig(), env: {} }));
+  const app = createServer(createApp({ db: openDb(":memory:"), cfg: loadConfig(), login: false, env: {} }));
   await new Promise(r => app.listen(0, r));
   try {
     const r = await fetch(`http://127.0.0.1:${app.address().port}/api/eclaimlink/files`, { headers: { cookie: "rcm_ecl=expired-or-unknown" } });
