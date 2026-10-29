@@ -40,15 +40,25 @@ goto found
 
 :notfound
 echo Cloudflare Tunnel (cloudflared) was not found on this computer.
+echo Downloading it from Cloudflare (about 20 MB)...
+set "MSI=%TEMP%\cloudflared-windows-amd64.msi"
+powershell -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol='Tls12'; $ProgressPreference='SilentlyContinue'; Invoke-WebRequest -UseBasicParsing 'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.msi' -OutFile (Join-Path $env:TEMP 'cloudflared-windows-amd64.msi')"
+if exist "%MSI%" (
+  echo Installing...
+  msiexec /i "%MSI%" /passive /norestart
+)
+if exist "%ProgramFiles(x86)%\cloudflared\cloudflared.exe" set "CF=%ProgramFiles(x86)%\cloudflared\cloudflared.exe"
+if not defined CF if exist "%ProgramFiles%\cloudflared\cloudflared.exe" set "CF=%ProgramFiles%\cloudflared\cloudflared.exe"
+if defined CF goto found
 echo Trying to install it with winget...
-winget install --id Cloudflare.cloudflared -e --accept-source-agreements --accept-package-agreements
+winget install --id Cloudflare.cloudflared -e --accept-source-agreements --accept-package-agreements 2>nul
 if exist "%ProgramFiles(x86)%\cloudflared\cloudflared.exe" set "CF=%ProgramFiles(x86)%\cloudflared\cloudflared.exe"
 if not defined CF if exist "%ProgramFiles%\cloudflared\cloudflared.exe" set "CF=%ProgramFiles%\cloudflared\cloudflared.exe"
 if defined CF goto found
 echo.
-echo Could not install it automatically. Download cloudflared-windows-amd64.msi from
-echo     https://github.com/cloudflare/cloudflared/releases/latest
-echo into your Downloads folder, then double-click this file again.
+echo Could not install it automatically. Open this link in the browser to download the installer:
+echo     https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.msi
+echo Keep it in the Downloads folder, then double-click this file again.
 pause
 exit /b 1
 
