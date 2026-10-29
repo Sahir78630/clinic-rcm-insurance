@@ -2290,9 +2290,35 @@ function repBar(kind){
 }
 const repEmpty = kind => `<section class="panel"><div class="empty">${ECL() && !(kind === "both" ? UI.rep.sub && UI.rep.ra : UI.rep[kind]) ? "Load the report to see it here." : "Nothing in this period."}</div></section>`;
 const repDl = id => `<button class="btn" id="${id}" type="button">Download Excel (CSV)</button><button class="btn" id="repPdf" type="button">Download PDF</button>`;
+// A resubmitted claim appears in several files, so these count each claim once.
+// Remittances: the amount claimed is the largest claimed for that claim in the period's remittances (the original
+// claim, not original + resubmission), paid adds up every payment, and denied is what is still unpaid after them.
+function raClaims(rows){
+  if (!rows) return null;
+  const m = new Map();
+  for (const r of rows.slice().sort((a,b) => (a.at||a.date||"").localeCompare(b.at||b.date||""))){
+    const e = m.get(r.claim);
+    if (!e){ m.set(r.claim, {...r, codes:[...(r.codes||[])], files:[r.file], refs:[r.paymentRef].filter(Boolean), remits:1}); continue; }
+    if (r.net > e.net){ e.net = r.net; e.copay = r.copay; }
+    e.paid = r2(e.paid + r.paid); e.remits++; e.date = r.date; e.at = r.at; e.settlement = r.settlement || e.settlement;
+    for (const k of r.codes||[]) if (!e.codes.includes(k)) e.codes.push(k);
+    if (!e.files.includes(r.file)) e.files.push(r.file);
+    if (r.paymentRef && !e.refs.includes(r.paymentRef)) e.refs.push(r.paymentRef);
+    if ((!e.docs || !e.docs.length) && r.docs && r.docs.length) e.docs = r.docs;
+  }
+  return [...m.values()].map(e => ({...e, file:e.files.join(", "), paymentRef:e.refs.join(", "), denied:r2(Math.max(0, e.net - e.paid))}));
+}
+// Submissions: a claim's amount is its original submission's; resubmissions are counted and added up separately
+function subClaims(rows){
+  const orig = new Map(), resubs = [];
+  for (const r of (rows||[]).slice().sort((a,b) => (a.at||a.date||"").localeCompare(b.at||b.date||""))){
+    if (r.resub) resubs.push(r); else if (!orig.has(r.claim)) orig.set(r.claim, r);
+  }
+  return {orig:[...orig.values()], resubs};
+}
 function repByPayer(rows){
   const m = {};
-  for (const r of rows){ const p = m[r.payer] ||= {payer:r.payer, files:new Set(), claims:0, net:0, paid:0, denied:0, rejected:0}; p.files.add(r.file); p.claims++; p.net += r.net; p.paid += r.paid; p.denied += r.denied; if (r.denied > 0) p.rejected++; }
+  for (const r of rows){ const p = m[r.payer] ||= {payer:r.payer, files:new Set(), claims:0, net:0, paid:0, denied:0, rejected:0}; (r.files || [r.file]).forEach(f => p.files.add(f)); p.claims++; p.net += r.net; p.paid += r.paid; p.denied += r.denied; if (r.denied > 0) p.rejected++; }
   return Object.values(m).sort((a,b) => b.paid - a.paid);
 }
 function reasons(rows){
@@ -2340,15 +2366,15 @@ function reconTable(list, cols){
 const reconMatch = r => { const q = UI.rep.q.toLowerCase(); return !q || r.claim.toLowerCase().includes(q) || r.member.toLowerCase().includes(q) || r.codes.join(" ").toLowerCase().includes(q) || (r.comment||"").toLowerCase().includes(q); };
 
 R["rep-remit"] = () => {
-  const rows = repRows("ra"), head0 = head("Remittance summary","Total paid and denied in eClaimLink remittance advice, by payer and by payment reference.", rows&&rows.length?repDl("repDl"):"");
+  const raw = repRows("ra"), rows = raClaims(raw), head0 = head("Remittance summary","Total paid and denied in eClaimLink remittance advice, by payer and by payment reference. A claim remitted again after a resubmission counts once: its claimed amount is the original claim, and all its payments are added up.", rows&&rows.length?repDl("repDl"):"");
   if (!rows || !rows.length) return head0 + repBar("ra") + repEmpty("ra");
   const t = rows.reduce((a,r)=>({net:a.net+r.net, paid:a.paid+r.paid, denied:a.denied+r.denied}),{net:0,paid:0,denied:0});
   const bp = repByPayer(rows), refs = {};
-  rows.forEach(r => { const k = (r.paymentRef||"—")+"|"+r.payer; const e = refs[k] ||= {ref:r.paymentRef||"—", payer:r.payer, date:r.settlement||r.date, claims:0, paid:0}; e.claims++; e.paid += r.paid; });
+  raw.forEach(r => { const k = (r.paymentRef||"—")+"|"+r.payer; const e = refs[k] ||= {ref:r.paymentRef||"—", payer:r.payer, date:r.settlement||r.date, claims:0, paid:0}; e.claims++; e.paid += r.paid; });
   const refList = Object.values(refs).sort((a,b)=>(b.date||"").localeCompare(a.date||""));
   return head0 + repBar("ra") + `<div class="kpis">
     <div class="kpi"><span class="eyebrow">Total remitted (paid)</span><span class="v">${aed(t.paid)}<small>AED</small></span><span class="s">${rows.length} claims</span></div>
-    <div class="kpi"><span class="eyebrow">Claimed in remittances</span><span class="v">${aed(t.net)}<small>AED</small></span><span class="s">${new Set(rows.map(r=>r.file)).size} files</span></div>
+    <div class="kpi"><span class="eyebrow">Claimed in remittances</span><span class="v">${aed(t.net)}<small>AED</small></span><span class="s">${new Set(raw.map(r=>r.file)).size} files${raw.length > rows.length ? ` · ${raw.length - rows.length} repeat remittances counted once` : ""}</span></div>
     <div class="kpi ${t.net&&t.denied/t.net>0.1?"alert":""}"><span class="eyebrow">Denied</span><span class="v">${aed(t.denied)}<small>AED</small></span><span class="s">${t.net?(100*t.denied/t.net).toFixed(1):"0.0"}% of claimed · ${rows.filter(r=>r.denied>0).length} claims</span></div>
   </div>
   <div class="grid2">
@@ -2357,15 +2383,15 @@ R["rep-remit"] = () => {
   </div>
   <section class="panel"><div class="panel-head"><div><h2>By payer</h2></div></div><div class="table-wrap"><table><thead><tr><th>Payer code</th><th>Payer name</th><th class="num">Files</th><th class="num">Claims</th><th class="num">Claimed AED</th><th class="num">Paid AED</th><th class="num">Denied AED</th><th class="num">Rejected claims</th><th class="num">Denial rate</th></tr></thead><tbody>
     ${bp.map(p=>`<tr><td class="mono"><b>${esc(p.payer||"–")}</b></td><td>${esc(payerName(p.payer)||"–")}</td><td class="num">${p.files.size}</td><td class="num">${p.claims}</td><td class="num">${aed(p.net)}</td><td class="num">${aed(p.paid)}</td><td class="num">${aed(p.denied)}</td><td class="num">${p.rejected}</td><td class="num">${p.net?(100*p.denied/p.net).toFixed(1)+"%":"–"}</td></tr>`).join("")}
-    </tbody><tfoot><tr><td colspan="2">All payers</td><td class="num">${new Set(rows.map(r=>r.file)).size}</td><td class="num">${rows.length}</td><td class="num">${aed(t.net)}</td><td class="num">${aed(t.paid)}</td><td class="num">${aed(t.denied)}</td><td class="num">${rows.filter(r=>r.denied>0).length}</td><td class="num">${t.net?(100*t.denied/t.net).toFixed(1)+"%":"–"}</td></tr></tfoot></table></div></section>
+    </tbody><tfoot><tr><td colspan="2">All payers</td><td class="num">${new Set(raw.map(r=>r.file)).size}</td><td class="num">${rows.length}</td><td class="num">${aed(t.net)}</td><td class="num">${aed(t.paid)}</td><td class="num">${aed(t.denied)}</td><td class="num">${rows.filter(r=>r.denied>0).length}</td><td class="num">${t.net?(100*t.denied/t.net).toFixed(1)+"%":"–"}</td></tr></tfoot></table></div></section>
   <section class="panel"><div class="panel-head"><div><h2>By payment reference</h2><p>Match these to bank deposits</p></div></div><div class="table-wrap"><table><thead><tr><th>Payment reference</th><th>Payer code</th><th>Payer name</th><th>Settled</th><th class="num">Claims</th><th class="num">Paid AED</th></tr></thead><tbody>
     ${refList.map(e=>`<tr><td class="mono">${esc(e.ref)}</td><td class="mono">${esc(e.payer||"–")}</td><td>${esc(payerName(e.payer)||"–")}</td><td class="muted">${fmtD(e.date)}</td><td class="num">${e.claims}</td><td class="num">${aed(e.paid)}</td></tr>`).join("")}
     </tbody></table></div></section>`;
 };
 R["rep-rejections"] = () => {
-  const all = repRows("ra"), q = UI.rep.q.toLowerCase();
+  const all = raClaims(repRows("ra")), q = UI.rep.q.toLowerCase();
   const rej = all ? all.filter(r => r.denied > 0).sort((a,b)=>b.denied-a.denied) : null;
-  const head0 = head("Rejections","Every claim with a denied amount in eClaimLink remittance advice, with its denial codes.", rej&&rej.length?repDl("repDl"):"");
+  const head0 = head("Rejections","Every claim not fully paid in eClaimLink remittance advice, with its denial codes. A claim remitted again after a resubmission counts once, with all its payments.", rej&&rej.length?repDl("repDl"):"");
   if (!rej || !rej.length) return head0 + repBar("ra") + repEmpty("ra");
   const list = rej.filter(r => !q || r.claim.toLowerCase().includes(q) || r.codes.join(" ").toLowerCase().includes(q));
   const full = rej.filter(r => r.paid <= 0.009).length, den = rej.reduce((a,r)=>a+r.denied,0);
@@ -2375,12 +2401,12 @@ R["rep-rejections"] = () => {
     <div class="kpi"><span class="eyebrow">Fully rejected</span><span class="v">${full}</span><span class="s">${rej.length-full} partially paid</span></div>
   </div>
   <section class="panel"><div class="filters" style="margin:0 0 10px"><input type="text" id="repQ" placeholder="Search claim or denial code" value="${esc(UI.rep.q)}" style="flex:1 1 220px"></div>
-  <div class="table-wrap"><table><thead><tr><th>Claim</th><th>Payer code</th><th>Payer name</th><th>TPA</th><th>Doctor</th><th>Visit</th><th>Settled</th><th class="num">Co-pay</th><th class="num">Claimed</th><th class="num">Paid</th><th class="num">Denied</th><th>Denial codes</th><th>File</th><th>In my records</th></tr></thead><tbody>
-    ${list.slice(0,1000).map(r=>`<tr ${claimById(r.claim)?`class="click" data-claim="${esc(r.claim)}"`:""}><td class="mono">${esc(r.claim)}</td><td class="mono">${esc(r.payer||"–")}</td><td>${esc(payerName(r.payer)||"–")}</td><td>${esc(r.tpa && r.tpa !== r.payer ? payerText(r.tpa) : "–")}</td><td class="wrap-cell">${esc((r.docs||[]).map(docText).join(", ")||"–")}</td><td class="muted">${r.visit?fmtD(r.visit):"–"}</td><td class="muted">${fmtD(r.settlement||r.date)}</td><td class="num">${aed(r.copay||0)}</td><td class="num">${aed(r.net)}</td><td class="num">${aed(r.paid)}</td><td class="num">${aed(r.denied)}</td><td class="wrap-cell">${r.codes.map(k=>`<span class="code" title="${esc(DENIALS[k]||"")}">${esc(k)}</span>`).join(" ")||"–"}</td><td class="mono muted">${esc(r.file)}</td><td>${inRecords(r.claim)}</td></tr>`).join("") || `<tr><td colspan="14" class="empty">No rejections match this search.</td></tr>`}
+  <div class="table-wrap"><table><thead><tr><th>Claim</th><th>Payer code</th><th>Payer name</th><th>TPA</th><th>Doctor</th><th>Visit</th><th>Settled</th><th class="num">Co-pay</th><th class="num">Claimed</th><th class="num">Paid</th><th class="num">Denied</th><th class="num">Remittances</th><th>Denial codes</th><th>File</th><th>In my records</th></tr></thead><tbody>
+    ${list.slice(0,1000).map(r=>`<tr ${claimById(r.claim)?`class="click" data-claim="${esc(r.claim)}"`:""}><td class="mono">${esc(r.claim)}</td><td class="mono">${esc(r.payer||"–")}</td><td>${esc(payerName(r.payer)||"–")}</td><td>${esc(r.tpa && r.tpa !== r.payer ? payerText(r.tpa) : "–")}</td><td class="wrap-cell">${esc((r.docs||[]).map(docText).join(", ")||"–")}</td><td class="muted">${r.visit?fmtD(r.visit):"–"}</td><td class="muted">${fmtD(r.settlement||r.date)}</td><td class="num">${aed(r.copay||0)}</td><td class="num">${aed(r.net)}</td><td class="num">${aed(r.paid)}</td><td class="num">${aed(r.denied)}</td><td class="num">${r.remits||1}</td><td class="wrap-cell">${r.codes.map(k=>`<span class="code" title="${esc(DENIALS[k]||"")}">${esc(k)}</span>`).join(" ")||"–"}</td><td class="mono muted">${esc(r.file)}</td><td>${inRecords(r.claim)}</td></tr>`).join("") || `<tr><td colspan="15" class="empty">No rejections match this search.</td></tr>`}
     </tbody></table></div>${list.length>1000?`<p class="muted">First 1,000 of ${list.length} shown; the download has all of them.</p>`:""}</section>`;
 };
 R["rep-reasons"] = () => {
-  const all = repRows("ra"), rs = all ? reasons(all) : null;
+  const all = raClaims(repRows("ra")), rs = all ? reasons(all) : null;
   const head0 = head("Rejection reasons","Denial codes from eClaimLink remittance advice, by denied amount, with what each code means and which payers use it.", rs&&rs.length?repDl("repDl"):"");
   if (!rs || !rs.length) return head0 + repBar("ra") + (all && all.length ? `<section class="panel"><div class="empty">No rejections in this period.</div></section>` : repEmpty("ra"));
   const tot = rs.reduce((a,e)=>a+e.denied,0), cols = ["--s1","--s2","--s3","--s4","--b3","--b5"];
@@ -2395,29 +2421,34 @@ R["rep-reasons"] = () => {
     </tbody></table></div><p class="muted" style="font-size:12px">A claim with several codes counts under each, with its denied amount split between them.</p></section>`;
 };
 R["rep-submissions"] = () => {
-  const rows = repRows("sub"), head0 = head("Submission report","Claims sent to payers in eClaimLink claim submission files, by payer and by month.", rows&&rows.length?repDl("repDl"):"");
-  if (!rows || !rows.length) return head0 + repBar("sub") + repEmpty("sub");
-  const t = rows.reduce((a,r)=>({gross:a.gross+r.gross, net:a.net+r.net, copay:a.copay+(r.copay||0)}),{gross:0,net:0,copay:0}), resub = rows.filter(r=>r.resub).length;
-  const bp = {}; rows.forEach(r => { const p = bp[r.payer] ||= {payer:r.payer, files:new Set(), claims:0, net:0, resub:0}; p.files.add(r.file); p.claims++; p.net += r.net; p.copay = (p.copay||0) + (r.copay||0); if (r.resub) p.resub++; });
+  const all = repRows("sub"), head0 = head("Submission report","Claims sent to payers in eClaimLink claim submission files, by payer and by month. Each claim counts once at its original amount; resubmissions are counted and totalled separately.", all&&all.length?repDl("repDl"):"");
+  if (!all || !all.length) return head0 + repBar("sub") + repEmpty("sub");
+  const {orig:rows, resubs} = subClaims(all), rsAmt = r2(resubs.reduce((a,r)=>a+r.net,0));
+  const t = rows.reduce((a,r)=>({gross:a.gross+r.gross, net:a.net+r.net, copay:a.copay+(r.copay||0)}),{gross:0,net:0,copay:0}), resub = resubs.length;
+  const bp = {}, pOf = r => bp[r.payer] ||= {payer:r.payer, files:new Set(), claims:0, net:0, copay:0, resub:0, rsAmt:0};
+  rows.forEach(r => { const p = pOf(r); p.files.add(r.file); p.claims++; p.net += r.net; p.copay += r.copay||0; });
+  resubs.forEach(r => { const p = pOf(r); p.files.add(r.file); p.resub++; p.rsAmt += r.net; });
   const pl = Object.values(bp).sort((a,b)=>b.net-a.net);
-  const bm = {}; rows.forEach(r => { const k = (repDate(r)||"").slice(0,7); const m = bm[k] ||= {k, claims:0, net:0, resub:0}; m.claims++; m.net += r.net; m.copay = (m.copay||0) + (r.copay||0); if (r.resub) m.resub++; });
+  const bm = {}, mOf = r => { const k = (repDate(r)||"").slice(0,7); return bm[k] ||= {k, claims:0, net:0, copay:0, resub:0, rsAmt:0}; };
+  rows.forEach(r => { const m = mOf(r); m.claims++; m.net += r.net; m.copay += r.copay||0; });
+  resubs.forEach(r => { const m = mOf(r); m.resub++; m.rsAmt += r.net; });
   const ml = Object.values(bm).sort((a,b)=>a.k.localeCompare(b.k));
   const mLabel = k => k ? new Date(k+"-01T00:00:00").toLocaleDateString("en-GB",{month:"short",year:"2-digit"}) : "–";
   const by = UI.rep.basis === "visit" ? "visit month" : "month sent";
   return head0 + repBar("sub") + `<div class="kpis">
-    <div class="kpi"><span class="eyebrow">Claims submitted</span><span class="v">${rows.length}</span><span class="s">in ${new Set(rows.map(r=>r.file)).size} files</span></div>
+    <div class="kpi"><span class="eyebrow">Claims submitted</span><span class="v">${rows.length}</span><span class="s">in ${new Set(all.map(r=>r.file)).size} files, each claim once</span></div>
     <div class="kpi"><span class="eyebrow">Net submitted</span><span class="v">${aed(t.net)}<small>AED</small></span><span class="s">gross AED ${aed(t.gross)} · co-pay AED ${aed(t.copay)}</span></div>
-    <div class="kpi"><span class="eyebrow">Resubmissions</span><span class="v">${resub}</span><span class="s">${(100*resub/rows.length).toFixed(1)}% of claims sent</span></div>
+    <div class="kpi"><span class="eyebrow">Resubmissions</span><span class="v">${resub}</span><span class="s">AED ${aed(rsAmt)} resubmitted · not added to net submitted</span></div>
   </div>
   <div class="grid2">
     <section class="panel"><div class="panel-head"><div><h2>Net submitted by ${by}</h2><p>AED</p></div></div>${vbars(ml.map(m=>({label:mLabel(m.k), series:[{v:r2(m.net-0), color:"--s1", name:"Net submitted"}]})),{label:"Net submitted by "+by})}</section>
     <section class="panel"><div class="panel-head"><div><h2>Net submitted by payer</h2><p>AED</p></div></div>${hbars(pl.map(p=>({label:payerText(p.payer), v:r2(p.net), color:"--s1"})),{label:"Net submitted by payer"})}</section>
   </div>
-  <section class="panel"><div class="panel-head"><div><h2>By payer</h2></div></div><div class="table-wrap"><table><thead><tr><th>Payer code</th><th>Payer name</th><th class="num">Files</th><th class="num">Claims</th><th class="num">Resubmissions</th><th class="num">Co-pay AED</th><th class="num">Net AED</th></tr></thead><tbody>
-    ${pl.map(p=>`<tr><td class="mono"><b>${esc(p.payer||"–")}</b></td><td>${esc(payerName(p.payer)||"–")}</td><td class="num">${p.files.size}</td><td class="num">${p.claims}</td><td class="num">${p.resub}</td><td class="num">${aed(p.copay||0)}</td><td class="num">${aed(p.net)}</td></tr>`).join("")}
-    </tbody><tfoot><tr><td colspan="2">All payers</td><td class="num">${new Set(rows.map(r=>r.file)).size}</td><td class="num">${rows.length}</td><td class="num">${resub}</td><td class="num">${aed(t.copay)}</td><td class="num">${aed(t.net)}</td></tr></tfoot></table></div></section>
-  <section class="panel"><div class="panel-head"><div><h2>By ${by}</h2></div></div><div class="table-wrap"><table><thead><tr><th>Month</th><th class="num">Claims</th><th class="num">Resubmissions</th><th class="num">Co-pay AED</th><th class="num">Net AED</th></tr></thead><tbody>
-    ${ml.map(m=>`<tr><td>${mLabel(m.k)}</td><td class="num">${m.claims}</td><td class="num">${m.resub}</td><td class="num">${aed(m.copay||0)}</td><td class="num">${aed(m.net)}</td></tr>`).join("")}</tbody></table></div></section>`;
+  <section class="panel"><div class="panel-head"><div><h2>By payer</h2></div></div><div class="table-wrap"><table><thead><tr><th>Payer code</th><th>Payer name</th><th class="num">Files</th><th class="num">Claims</th><th class="num">Co-pay AED</th><th class="num">Net AED</th><th class="num">Resubmissions</th><th class="num">Resubmitted AED</th></tr></thead><tbody>
+    ${pl.map(p=>`<tr><td class="mono"><b>${esc(p.payer||"–")}</b></td><td>${esc(payerName(p.payer)||"–")}</td><td class="num">${p.files.size}</td><td class="num">${p.claims}</td><td class="num">${aed(p.copay)}</td><td class="num">${aed(p.net)}</td><td class="num">${p.resub}</td><td class="num">${aed(p.rsAmt)}</td></tr>`).join("")}
+    </tbody><tfoot><tr><td colspan="2">All payers</td><td class="num">${new Set(all.map(r=>r.file)).size}</td><td class="num">${rows.length}</td><td class="num">${aed(t.copay)}</td><td class="num">${aed(t.net)}</td><td class="num">${resub}</td><td class="num">${aed(rsAmt)}</td></tr></tfoot></table></div></section>
+  <section class="panel"><div class="panel-head"><div><h2>By ${by}</h2></div></div><div class="table-wrap"><table><thead><tr><th>Month</th><th class="num">Claims</th><th class="num">Co-pay AED</th><th class="num">Net AED</th><th class="num">Resubmissions</th><th class="num">Resubmitted AED</th></tr></thead><tbody>
+    ${ml.map(m=>`<tr><td>${mLabel(m.k)}</td><td class="num">${m.claims}</td><td class="num">${aed(m.copay)}</td><td class="num">${aed(m.net)}</td><td class="num">${m.resub}</td><td class="num">${aed(m.rsAmt)}</td></tr>`).join("")}</tbody></table></div></section>`;
 };
 R["rep-recon"] = () => {
   const u = UI.rep, all = recon(), head0 = head("Reconciliation","Each claim sent in the period, matched with its resubmissions and every remittance: paid, partly paid, rejected, resubmitted and still waiting, or never processed.", all&&all.length?repDl("repDl"):"");
@@ -2679,21 +2710,23 @@ function repSummary(page = current){
     }
     return out;
   }
-  const rows = repRows(REP_PAGES[page][0]); if (!rows || !rows.length) return [];
+  let rows = repRows(REP_PAGES[page][0]); if (!rows || !rows.length) return [];
+  if (REP_PAGES[page][0] === "ra") rows = raClaims(rows);
   if (page === "rep-submissions"){
-    const net = rows.reduce((a,r)=>a+r.net,0), gross = rows.reduce((a,r)=>a+r.gross,0), rs = rows.filter(r=>r.resub).length;
-    out.push(`${rows.length} claims were sent in ${new Set(rows.map(r=>r.file)).size} files, ${rs} of them resubmissions (${pct(rs, rows.length)}).`);
-    out.push(`Net submitted ${A(net)}, gross ${A(gross)}, patient co-payment ${A(rows.reduce((a,r)=>a+(r.copay||0),0))}.`);
+    const all = rows, {orig, resubs} = subClaims(all); rows = orig;
+    const net = rows.reduce((a,r)=>a+r.net,0), gross = rows.reduce((a,r)=>a+r.gross,0), rs = resubs.length;
+    out.push(`${rows.length} claims were sent in ${new Set(all.map(r=>r.file)).size} files, plus ${rs} resubmissions for ${A(resubs.reduce((a,r)=>a+r.net,0))}, which are not added to the totals below.`);
+    out.push(`Net submitted ${A(net)}, gross ${A(gross)}, patient co-payment ${A(rows.reduce((a,r)=>a+(r.copay||0),0))}, each claim counted once at its original amount.`);
     const t = top(rows, "payer", r => r.net); if (t) out.push(`The largest payer is ${payerText(t[0])} with ${A(t[1])} net (${pct(t[1], net)}).`);
     const m = top(rows.map(r => ({...r, m:(repDate(r)||"").slice(0,7)})), "m", r => r.net); if (m && m[0]) out.push(`The busiest month was ${new Date(m[0]+"-01T00:00:00").toLocaleDateString("en-GB",{month:"long",year:"numeric"})} with ${A(m[1])} net.`);
     return out;
   }
   const net = rows.reduce((a,r)=>a+r.net,0), paid = rows.reduce((a,r)=>a+r.paid,0), denied = rows.reduce((a,r)=>a+r.denied,0), rej = rows.filter(r=>r.denied>0);
   if (page === "rep-remit"){
-    out.push(`${A(paid)} was remitted for ${rows.length} claims in ${new Set(rows.map(r=>r.file)).size} remittance files.`);
+    out.push(`${A(paid)} was remitted for ${rows.length} claims in ${new Set(rows.flatMap(r=>r.files||[r.file])).size} remittance files; a claim remitted more than once is counted once.`);
     out.push(`${A(net)} was claimed in these remittances and ${A(denied)} was denied (${pct(denied, net)}) on ${rej.length} claims.`);
     const t = top(rows, "payer", r => r.paid); if (t) out.push(`The largest payer was ${payerText(t[0])} with ${A(t[1])} paid.`);
-    out.push(`${new Set(rows.map(r => r.paymentRef||"—")).size} payment references to match with bank deposits.`);
+    out.push(`${new Set(rows.flatMap(r => r.refs && r.refs.length ? r.refs : ["—"])).size} payment references to match with bank deposits.`);
   } else if (page === "rep-rejections"){
     if (!rej.length) return ["No claims were rejected in this period."];
     const full = rej.filter(r => r.paid <= 0.009).length;
@@ -2715,13 +2748,13 @@ const repSummaryHtml = () => { const l = repSummary(); return `<div class="print
 // Claims and amounts by doctor; a claim with several doctors counts under each
 function byDoctor(page = current){
   const both = REP_PAGES[page][0] === "both", ra = REP_PAGES[page][0] === "ra";
-  let rows = both ? recon() : repRows(REP_PAGES[page][0]); if (!rows || !rows.length) return null;
+  let rows = both ? recon() : ra ? raClaims(repRows("ra")) : subClaims(repRows("sub") || []).orig.concat(subClaims(repRows("sub") || []).resubs); if (!rows || !rows.length) return null;
   if (page === "rep-unprocessed") rows = rows.filter(r => r.status === "unprocessed" || r.status === "awaiting");
   if (page === "rep-resubdue") { rows = resubDue() || []; if (!rows.length) return null; }
   if (page === "rep-rejections" || page === "rep-reasons") rows = rows.filter(r => r.denied > 0);
   const m = {};
   for (const r of rows) for (const d of (both ? r.docs : docsOf(r)).length ? (both ? r.docs : docsOf(r)) : ["(not given)"]){
-    const e = m[d] ||= {doc:d, claims:new Set(), net:0, paid:0, other:0}; e.claims.add(r.claim); e.net += r.net; e.paid += r.paid || 0; e.other += both ? r.balance : ra ? r.denied : (r.resub ? 1 : 0); }
+    const e = m[d] ||= {doc:d, claims:new Set(), net:0, paid:0, other:0}; e.claims.add(r.claim); e.net += (!both && !ra && r.resub) ? 0 : r.net; e.paid += r.paid || 0; e.other += both ? r.balance : ra ? r.denied : (r.resub ? 1 : 0); }
   const cols = both ? ["Net AED","Paid AED","Outstanding AED"] : ra ? ["Claimed AED","Paid AED","Denied AED"] : ["Net AED",null,"Resubmissions"];
   return {cols, list:Object.values(m).map(e => ({...e, claims:e.claims.size})).sort((a,b) => b.net - a.net)};
 }
@@ -2751,11 +2784,11 @@ function repCsv(){
     return [csvRow(["Claim","TPA","Payer code","Payer name","Doctor","Member","Visit","Submission date","1st rejection","1st resubmission","2nd rejection","Times rejected","Resubmissions","Last sent","Days since last sent","Remittances","Last remittance","Co-pay AED","Net AED","Paid AED","Outstanding AED","Status","Denial codes","Resubmission type","Resubmission comment","In my records"]),
       ...rows.map(r=>csvRow([r.claim,payerText(r.tpa),r.payer,payerName(r.payer),(r.docs||docsOf(r)).map(docText).join("; "),r.member,r.visit,r.submitted,...journey(r),(r.rejections||[]).length,r.resubs,r.lastSent,r.days,r.remits,r.lastRemit,r.copay||0,r.net,r.paid,r.balance,RECON[r.status][0],r.codes.join(" "),r.resubType,r.comment,inRecords(r.claim)]))].join("\n");
   }
-  const k = REP_PAGES[current][0], rows = repRows(k) || [];
+  const k = REP_PAGES[current][0], rows = (k === "ra" ? raClaims(repRows(k)) : repRows(k)) || [];
   if (current === "rep-submissions") return [csvRow(["Claim","TPA","Payer code","Payer name","Doctor","Member","Visit","Submitted","File","Gross AED","Co-pay AED","Net AED","Activities","Resubmission","Resubmission comment"]), ...rows.map(r=>csvRow([r.claim,payerText(r.tpa),r.payer,payerName(r.payer),(r.docs||docsOf(r)).map(docText).join("; "),r.member,r.visit,r.date,r.file,r.gross,r.copay||0,r.net,r.activities,r.resub,r.comment]))].join("\n");
   if (current === "rep-reasons") return [csvRow(["Code","Meaning","Claims","Denied AED","Payers"]), ...reasons(rows).map(e=>csvRow([e.code,DENIALS[e.code]||"",e.claims,r2(e.denied),Object.entries(e.payers).map(([p,n])=>`${payerText(p)} (${n})`).join("; ")]))].join("\n");
   const list = current === "rep-rejections" ? rows.filter(r=>r.denied>0) : rows;
-  return [csvRow(["Claim","TPA","Payer code","Payer name","Doctor","Visit","Settled","Payment reference","File","Co-pay AED","Claimed AED","Paid AED","Denied AED","Denial codes"]), ...list.map(r=>csvRow([r.claim,payerText(r.tpa),r.payer,payerName(r.payer),(r.docs||docsOf(r)).map(docText).join("; "),r.visit,r.settlement||r.date,r.paymentRef,r.file,r.copay||0,r.net,r.paid,r.denied,r.codes.join(" ")]))].join("\n");
+  return [csvRow(["Claim","TPA","Payer code","Payer name","Doctor","Visit","Settled","Payment reference","File","Remittances","Co-pay AED","Claimed AED","Paid AED","Denied AED","Denial codes"]), ...list.map(r=>csvRow([r.claim,payerText(r.tpa),r.payer,payerName(r.payer),(r.docs||docsOf(r)).map(docText).join("; "),r.visit,r.settlement||r.date,r.paymentRef,r.file,r.remits||1,r.copay||0,r.net,r.paid,r.denied,r.codes.join(" ")]))].join("\n");
 }
 function bindReports(){
   const u = UI.rep, f = $("#repForm");
