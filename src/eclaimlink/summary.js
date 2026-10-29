@@ -19,7 +19,7 @@ export function summarize(xml) {
       const actNet = r2(acts.reduce((s, a) => s + num(txt(a, "Net")), 0));
       const enc = tag(own, "Encounter") || "";
       const ps = tag(own, "PatientShare") !== null ? num(txt(own, "PatientShare")) : r2(acts.reduce((s, a) => s + num(txt(a, "PatientShare")), 0));
-      return { id: txt(own, "ID"), payer: txt(own, "PayerID"), member: txt(own, "MemberID"), visit: txt(enc, "Start") || txt(acts[0] || "", "Start"), clinicians: [...new Set(acts.map(a => txt(a, "Clinician")).filter(Boolean))], gross: num(txt(own, "Gross")) || actNet,
+      return { id: txt(own, "ID"), payer: txt(own, "PayerID"), member: txt(own, "MemberID"), visit: txt(enc, "Start") || txt(acts[0] || "", "Start"), clinicians: [...new Set(acts.map(a => txt(a, "Clinician")).filter(Boolean))], gross: r2((tag(own, "Net") !== null ? num(txt(own, "Net")) : actNet) + ps), // gross = claim amount (net) + co-pay, not the file's <Gross>
         patientShare: ps, net: tag(own, "Net") !== null ? num(txt(own, "Net")) : actNet,
         activities: acts.length,
         // Each activity as [code, type, quantity, net, patient share (the claim's share split by net)], for the CPT report
