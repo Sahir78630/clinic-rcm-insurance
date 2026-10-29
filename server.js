@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 import { randomBytes } from "node:crypto";
+import { networkInterfaces } from "node:os";
 import { openDb, upsertMember } from "./src/db.js";
 import { checkEligibility, defaultProvider } from "./src/eligibility.js";
 import { importCsv, listAppointments, verifyAll, verifyAppointment, CSV_COLUMNS } from "./src/appointments.js";
@@ -57,7 +58,10 @@ export function createApp({ db, cfg, env = process.env, fetchImpl, login = true 
   // address in cf-connecting-ip, so it does not count as local.
   const viaProxy = req => Boolean(req.headers["cf-connecting-ip"] || req.headers["x-forwarded-for"]);
   const loopback = req => /^(::1|127\.\d+\.\d+\.\d+|::ffff:127\.\d+\.\d+\.\d+)$/.test(req.socket.remoteAddress || "");
-  const isLocal = req => loopback(req) && !viaProxy(req);
+  // The clinic computer may also open its own network address (http://COMPUTERNAME:3000 or 192.168.x.x)
+  const ownAddress = req => { const a = String(req.socket.remoteAddress || "").replace(/^::ffff:/, "");
+    return Object.values(networkInterfaces()).flat().some(i => i && i.address === a); };
+  const isLocal = req => (loopback(req) || ownAddress(req)) && !viaProxy(req);
   const clientIp = req => (loopback(req) && String(req.headers["cf-connecting-ip"] || "").trim()) || req.socket.remoteAddress;
   const userOf = req => login ? auth.sessionUser(db, cookieNamed(req, USER_COOKIE)) : { id: 0, username: "local", name: "", role: "admin" };
   const loginFails = new Map();

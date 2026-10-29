@@ -49,7 +49,7 @@ if (MODE === "setup") {
 }
 if (MODE === "closed") {
   $("t").textContent = "Not set up yet";
-  $("d").textContent = "Open this website on the clinic computer that runs it to create the admin account first.";
+  $("d").textContent = "The admin account has not been created yet. On the clinic computer that runs the website, open http://127.0.0.1:3000 to create it.";
   $("f").querySelectorAll("label,input,button,#n").forEach(x => x.hidden = true);
 }
 $("f").onsubmit = async ev => {
