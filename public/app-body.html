@@ -390,7 +390,7 @@ const VIEWS = [
   ["Front office", [["eligibility","Eligibility & access"],["approvals","Prior approvals"]]],
   ["Billing", [["claims","Claims"],["remittance","Remittance & reconciliation"],["denials","Denials"],["resubmissions","Resubmissions"],["rep-resubdue","Resubmission due dates"],["eclaimlink","eClaimLink files"]]],
   ["Finance", [["receivables","Insurance receivables"]]],
-  ["Reports", [["rep-remit","Remittance summary"],["rep-rejections","Rejections"],["rep-reasons","Rejection reasons"],["rep-submissions","Submissions"],["rep-recon","Reconciliation"],["rep-unprocessed","Unprocessed claims"],["rep-cpt","Revenue by CPT"]]],
+  ["Reports", [["rep-remit","Remittance summary"],["rep-rejections","Rejections"],["rep-reasons","Rejection reasons"],["rep-submissions","Submissions"],["rep-recon","Reconciliation"],["rep-unprocessed","Unprocessed claims"],["rep-cpt","Revenue by CPT"],["rep-lab","Lab revenue by insurance"]]],
   ["Price list", [["prices","Payer price lists"]]]
 ];
 let current = (location.hash||"").slice(1);
@@ -2383,7 +2383,7 @@ function payerNamesDlg(kind){
 // (remittance advice received, claim submissions sent); without it they use the records in this browser.
 UI.rep = {from:addDays(TODAY,-30), to:TODAY, basis:"tx", tpa:"", payer:"", doctor:"", q:"", status:"", busy:"", progress:"", ra:null, sub:null, raWin:null, subWin:null, raFiles:0, subFiles:0, errors:[]};
 const REP_PAGES = {"rep-remit":["ra","Remittance summary"],"rep-rejections":["ra","Rejections"],"rep-reasons":["ra","Rejection reasons"],"rep-submissions":["sub","Submission report"],
-  "rep-recon":["both","Reconciliation"],"rep-unprocessed":["both","Unprocessed claims"],"rep-resubdue":["both","Resubmission due dates"],"rep-cpt":["both","Revenue by CPT code"]};
+  "rep-recon":["both","Reconciliation"],"rep-unprocessed":["both","Unprocessed claims"],"rep-resubdue":["both","Resubmission due dates"],"rep-cpt":["both","Revenue by CPT code"],"rep-lab":["both","Lab revenue by insurance"]};
 const repKinds = () => REP_PAGES[current][0] === "both" ? ["sub","ra"] : [REP_PAGES[current][0]];
 // The eClaimLink files each report needs. A visit is always before its claim file, so a visit-date report also
 // searches files sent up to 120 days (claims) or received up to 180 days (remittances) after the end date.
@@ -2821,12 +2821,13 @@ function cptData(){
   }
   return out;
 }
+const revBlank = () => ({claims:new Set(), qty:0, net:0, ps:0, paid:0, denied:0, awaiting:0, den:new Set()});
+const revAdd = (e, l) => { e.claims.add(l.claim); e.qty += l.qty; e.net += l.net; e.ps += l.ps; e.paid += l.paid; e.denied += l.denied; e.awaiting += l.awaiting; l.den.forEach(k => e.den.add(k)); return e; };
 function cptGroups(){
   const all = cptData(); if (!all) return null;
   const q = UI.rep.q.trim().toLowerCase(), descs = codeDescs(), desc = c => descs.get(c) || "";
   const lines = q ? all.filter(l => l.code.toLowerCase().includes(q) || desc(l.code).toLowerCase().includes(q) || shortName(l.code, desc(l.code)).toLowerCase().includes(q)) : all;
-  const blank = () => ({claims:new Set(), qty:0, net:0, ps:0, paid:0, denied:0, awaiting:0, den:new Set()});
-  const add = (e, l) => { e.claims.add(l.claim); e.qty += l.qty; e.net += l.net; e.ps += l.ps; e.paid += l.paid; e.denied += l.denied; e.awaiting += l.awaiting; l.den.forEach(k => e.den.add(k)); return e; };
+  const blank = revBlank, add = revAdd;
   const bc = {}, bm = {}; lines.forEach(l => { add(bc[l.code] ||= {...blank(), code:l.code, type:l.type, desc:desc(l.code), short:shortName(l.code, desc(l.code))}, l); add(bm[l.month] ||= {...blank(), k:l.month}, l); });
   return {all, lines, codes:Object.values(bc).sort((a,b) => b.net - a.net), months:Object.values(bm).sort((a,b) => a.k.localeCompare(b.k)), t:lines.reduce(add, blank())};
 }
@@ -2859,6 +2860,68 @@ R["rep-cpt"] = () => {
     ${months.map(m=>`<tr><td>${monthLabel(m.k)}</td>${cells(m)}</tr>`).join("")}
     </tbody><tfoot><tr><td>Total</td>${cells(t)}</tr></tfoot></table></div></section>`;
 };
+
+/* ---------- lab revenue by insurance ---------- */
+// Lab tests are CPT 80047 to 89398 (pathology and laboratory), plus any codes the clinic adds under Lab codes
+const LAB_FROM = 80047, LAB_TO = 89398;
+const isLabLine = l => { const c = String(l.code).trim().toUpperCase();
+  if ((S.labCodes||[]).includes(c)) return true;
+  return /^\d{5}$/.test(c) && +c >= LAB_FROM && +c <= LAB_TO && l.type !== "Drug" && l.type !== "Dental"; };
+function labGroups(){
+  const all = cptData(); if (!all) return null;
+  const u = UI.rep, descs = codeDescs(), desc = c => descs.get(c) || "";
+  const labs = all.filter(isLabLine), totalBy = {}, bp = {}, bm = {};
+  all.forEach(l => totalBy[l.payer] = (totalBy[l.payer]||0) + l.net);
+  labs.forEach(l => { const p = bp[l.payer] ||= {...revBlank(), payer:l.payer, m:{}}; revAdd(p, l); revAdd(p.m[l.month] ||= revBlank(), l); revAdd(bm[l.month] ||= revBlank(), l); });
+  const sel = u.labPayer && bp[u.labPayer] ? u.labPayer : "", bc = {};
+  labs.filter(l => !sel || l.payer === sel).forEach(l => revAdd(bc[l.code] ||= {...revBlank(), code:l.code, desc:desc(l.code), short:shortName(l.code, desc(l.code))}, l));
+  return {all, labs, sel, bm, months:Object.keys(bm).sort(), totalNet:r2(all.reduce((a,l) => a + l.net, 0)),
+    payers:Object.values(bp).map(p => ({...p, total:r2(totalBy[p.payer]||0)})).sort((a,b) => b.net - a.net),
+    codes:Object.values(bc).sort((a,b) => b.net - a.net), t:labs.reduce(revAdd, revBlank())};
+}
+const LAB_METRICS = {net:["Billed net AED", e => aed(e.net)], paid:["Paid AED", e => aed(e.paid)], gross:["Gross AED", e => aed(e.net + e.ps)], tests:["Tests", e => r2(e.qty)]};
+R["rep-lab"] = () => {
+  const u = UI.rep, g = labGroups(), head0 = head("Lab revenue by insurance",`Lab tests billed in the period by insurance company: CPT ${LAB_FROM} to ${LAB_TO}${(S.labCodes||[]).length?` plus ${S.labCodes.length} codes you added`:""}. Tests, amount billed, co-pay, paid, denied, and the lab share of each insurer's revenue.`,
+    `<button class="btn sm" id="labCodes" type="button">Lab codes</button>` + (g&&g.labs.length?repDl("repDl"):""));
+  const monthPick = `<section class="panel"><div class="filters" style="margin:0;align-items:center"><label class="muted" style="display:flex;gap:6px;align-items:center;font-size:12.5px">Whole month <input type="month" id="cptMonth" value="${u.from.slice(0,7)}" max="${TODAY.slice(0,7)}"></label><span class="muted" style="font-size:12px">Sets the dates above to that month. Choose any dates above for a longer period, then press Load from eClaimLink.</span></div></section>`;
+  if (!g || !g.labs.length) return head0 + repBar("both") + monthPick + (g ? `<section class="panel"><div class="empty">No lab tests billed in this period.</div></section>` : repEmpty("both"));
+  const {payers, codes, months, bm, t, sel} = g, metric = LAB_METRICS[u.labMetric] ? u.labMetric : "net", [mLabel, mVal] = LAB_METRICS[metric];
+  const cells = e => `<td class="num">${r2(e.qty)}</td><td class="num">${aed(e.net)}</td><td class="num">${aed(e.ps)}</td><td class="num">${aed(e.net + e.ps)}</td><td class="num">${aed(e.paid)}</td><td class="num">${aed(e.denied)}</td><td class="num">${aed(e.awaiting)}</td><td class="num">${pctOf(e.paid, e.net - e.awaiting)}</td>`;
+  const heads = `<th class="num">Tests</th><th class="num">Billed net AED</th><th class="num">Co-pay AED</th><th class="num">Gross AED</th><th class="num">Paid AED</th><th class="num">Denied AED</th><th class="num">Awaiting AED</th><th class="num">Collected</th>`;
+  const selName = sel ? payerText(sel) : "all insurance companies";
+  return head0 + repBar("both") + monthPick + `<div class="kpis">
+    <div class="kpi"><span class="eyebrow">Lab billed net</span><span class="v">${aed(t.net)}<small>AED</small></span><span class="s">${pctOf(t.net, g.totalNet)} of all billed · co-pay AED ${aed(t.ps)}</span></div>
+    <div class="kpi"><span class="eyebrow">Lab tests</span><span class="v">${r2(t.qty)}</span><span class="s">on ${t.claims.size} claims · ${payers.length} insurance companies</span></div>
+    <div class="kpi"><span class="eyebrow">Paid</span><span class="v">${aed(t.paid)}<small>AED</small></span><span class="s">${pctOf(t.paid, t.net - t.awaiting)} of remitted amounts</span></div>
+    <div class="kpi ${t.denied?"alert":""}"><span class="eyebrow">Denied</span><span class="v">${aed(t.denied)}<small>AED</small></span><span class="s">by the payer on remittance</span></div>
+    <div class="kpi"><span class="eyebrow">Awaiting payment</span><span class="v">${aed(t.awaiting)}<small>AED</small></span><span class="s">no remittance yet</span></div>
+  </div>
+  <div class="grid2">
+    <section class="panel"><div class="panel-head"><div><h2>Lab billed by insurance</h2><p>AED, net</p></div></div>${hbars(payers.slice(0,10).map(p=>({label:payerName(p.payer)||p.payer, v:r2(p.net), color:"--s1"})),{label:"Lab billed by insurance",pl:190})}</section>
+    <section class="panel"><div class="panel-head"><div><h2>Lab billed and paid by month</h2><p>AED · ${u.basis==="visit"?"visit month":"month sent"}</p></div></div>${vbars(months.map(k=>({label:monthLabel(k), series:[{v:r2(bm[k].net),color:"--s1",name:"Billed"},{v:r2(bm[k].paid),color:"--s3",name:"Paid"}]})),{label:"Lab billed and paid by month"})}
+      <div class="legend"><span><i style="background:var(--s1)"></i>Billed net</span><span><i style="background:var(--s3)"></i>Paid</span></div></section>
+  </div>
+  <section class="panel"><div class="panel-head"><div><h2>By insurance</h2><p>Click an insurance company to see its lab tests by CPT code below. Lab share is lab billed as a part of everything billed to that insurer in the period.</p></div></div>
+    <div class="table-wrap"><table><thead><tr><th>Payer code</th><th>Insurance</th><th class="num">Lab claims</th>${heads}<th class="num">All billed AED</th><th class="num">Lab share</th></tr></thead><tbody>
+    ${payers.map(p=>`<tr class="click" data-labpayer="${esc(p.payer)}" ${p.payer===sel?'aria-current="true" style="background:var(--accent-soft)"':""}><td class="mono">${esc(p.payer||"–")}</td><td><b>${esc(payerName(p.payer)||"–")}</b></td><td class="num">${p.claims.size}</td>${cells(p)}<td class="num">${aed(p.total)}</td><td class="num">${pctOf(p.net, p.total)}</td></tr>`).join("")}
+    </tbody><tfoot><tr><td colspan="2">${payers.length} insurance companies</td><td class="num">${t.claims.size}</td>${cells(t)}<td class="num">${aed(g.totalNet)}</td><td class="num">${pctOf(t.net, g.totalNet)}</td></tr></tfoot></table></div></section>
+  <section class="panel"><div class="panel-head"><div><h2>Month by month</h2><p>${esc(mLabel)} for lab tests, by ${u.basis==="visit"?"visit month":"month sent"}</p></div>
+    <select id="labMetric" aria-label="Figure to compare">${Object.entries(LAB_METRICS).map(([k,[l]])=>`<option value="${k}" ${k===metric?"selected":""}>${esc(l)}</option>`).join("")}</select></div>
+    <div class="table-wrap"><table><thead><tr><th>Insurance</th>${months.map(k=>`<th class="num">${monthLabel(k)}</th>`).join("")}<th class="num">Total</th></tr></thead><tbody>
+    ${payers.map(p=>`<tr class="click" data-labpayer="${esc(p.payer)}"><td>${esc(payerText(p.payer))}</td>${months.map(k=>`<td class="num">${p.m[k]?mVal(p.m[k]):"–"}</td>`).join("")}<td class="num"><b>${mVal(p)}</b></td></tr>`).join("")}
+    </tbody><tfoot><tr><td>Total</td>${months.map(k=>`<td class="num">${mVal(bm[k])}</td>`).join("")}<td class="num">${mVal(t)}</td></tr></tfoot></table></div></section>
+  <section class="panel"><div class="panel-head"><div><h2>Lab tests by CPT code · ${esc(selName)}</h2><p>${sel?"":"Click an insurance company above to see only its tests. "}Short names are built in for common codes; change them with Code names.</p></div>
+    <div class="actions">${sel?`<button class="btn sm" id="labAll" type="button">All insurance companies</button>`:""}<button class="btn sm" id="cptNames" type="button">Code names</button></div></div>
+    <div class="table-wrap"><table><thead><tr><th>Code</th><th>Short name</th><th>Description</th><th class="num">Claims</th>${heads}<th class="num">Avg paid per test</th><th>Denial codes</th></tr></thead><tbody>
+    ${codes.map(c=>`<tr data-cptq="${esc(c.code)}"><td class="mono"><b>${esc(c.code)}</b></td><td><b>${esc(c.short||"–")}</b></td><td class="wrap-cell">${esc(c.desc||"–")}</td><td class="num">${c.claims.size}</td>${cells(c)}<td class="num">${c.qty && c.paid ? aed(c.paid/c.qty) : "–"}</td><td class="wrap-cell">${[...c.den].map(k=>`<span class="code" title="${esc(DENIALS[k]||"")}">${esc(k)}</span>`).join(" ")||"–"}</td></tr>`).join("")}
+    </tbody></table></div></section>`;
+};
+function labCodesDlg(){
+  openDlg(dlgHead("Lab codes",`CPT ${LAB_FROM} to ${LAB_TO} always count as lab tests. Add any other codes your clinic uses for lab work, such as in-house service codes, separated by commas or one per line.`,
+    `<button class="btn sm primary" id="lcSave" type="button">Save</button>`) +
+    `<div class="dlg-body"><textarea id="lcText" rows="8" style="width:100%;font-family:var(--mono,monospace)" placeholder="LAB-001, 36415">${esc((S.labCodes||[]).join("\n"))}</textarea></div>`);
+  $("#lcSave").onclick = () => { S.labCodes = [...new Set($("#lcText").value.split(/[\s,;]+/).map(x => x.trim().toUpperCase()).filter(Boolean))]; save(); dlg.close(); render(); toast(`${S.labCodes.length} extra lab codes saved`); };
+}
 // A few sentences at the top of every report (and of its downloads) with the main figures
 function repSummary(page = current){
   const u = UI.rep, pct = (a,b) => b ? (100*a/b).toFixed(1)+"%" : "0.0%", A = v => "AED " + aed(v), out = [];
@@ -2874,6 +2937,16 @@ function repSummary(page = current){
       out.push(`${A(t.paid)} has been paid (${pctOf(t.paid, t.net - t.awaiting)} of remitted amounts), ${A(t.denied)} was denied and ${A(t.awaiting)} has no remittance yet.`);
       if (top) out.push(`The largest code is ${top.code}${top.short || top.desc ? " (" + (top.short || top.desc) + ")" : ""} with ${A(top.net)} billed (${pctOf(top.net, t.net)}) and ${A(top.paid)} paid.`);
       if (months.length > 1 && best) out.push(`The highest month was ${monthLabel(best.k)} with ${A(best.net)} billed.`);
+      return out;
+    }
+    if (page === "rep-lab"){
+      const g = labGroups(); if (!g || !g.labs.length) return [];
+      const {t, payers, codes} = g, p = payers[0], c = codes[0], hi = payers.filter(x => x.total).sort((a,b) => b.net/b.total - a.net/a.total)[0];
+      out.push(`${r2(t.qty)} lab tests were billed on ${t.claims.size} claims to ${payers.length} insurance companies: ${A(t.net)} net (${pctOf(t.net, g.totalNet)} of everything billed), with ${A(t.ps)} patient co-pay.`);
+      out.push(`${A(t.paid)} has been paid (${pctOf(t.paid, t.net - t.awaiting)} of remitted amounts), ${A(t.denied)} was denied and ${A(t.awaiting)} has no remittance yet.`);
+      if (p) out.push(`The most lab revenue came from ${payerText(p.payer)}: ${A(p.net)} (${pctOf(p.net, t.net)} of lab).`);
+      if (hi && payers.length > 1) out.push(`Lab is the largest part of revenue for ${payerText(hi.payer)}, at ${pctOf(hi.net, hi.total)} of what was billed to them.`);
+      if (c && !g.sel) out.push(`The top lab test is ${c.code}${c.short || c.desc ? " (" + (c.short || c.desc) + ")" : ""} with ${A(c.net)} billed.`);
       return out;
     }
     if (page === "rep-resubdue"){
@@ -2949,7 +3022,7 @@ function byDoctor(page = current){
   return {cols, list:Object.values(m).map(e => ({...e, claims:e.claims.size})).sort((a,b) => b.net - a.net)};
 }
 function byDoctorHtml(){
-  if (current === "rep-cpt") return "";
+  if (current === "rep-cpt" || current === "rep-lab") return "";
   const b = byDoctor(); if (!b || (b.list.length < 2 && b.list[0] && b.list[0].doc === "(not given)")) return "";
   return `<section class="panel"><div class="panel-head"><div><h2>By doctor</h2><p>Clinician on the claim's activities. Choose a doctor above to see only their claims.</p></div></div><div class="table-wrap"><table><thead><tr><th>Doctor licence</th><th>Doctor name</th><th class="num">Claims</th>${b.cols.map(c => c ? `<th class="num">${c}</th>` : "").join("")}</tr></thead><tbody>
     ${b.list.map(e => `<tr><td class="mono">${esc(e.doc)}</td><td>${esc(docName(e.doc)||"–")}</td><td class="num">${e.claims}</td><td class="num">${aed(e.net)}</td>${b.cols[1]?`<td class="num">${aed(e.paid)}</td>`:""}<td class="num">${b.cols[2]==="Resubmissions"?e.other:aed(e.other)}</td></tr>`).join("")}
@@ -2958,6 +3031,15 @@ function byDoctorHtml(){
 Object.keys(REP_PAGES).forEach(p => { const page = R[p]; R[p] = () => page().replace("<!--repbar-->", repSummaryHtml()) + byDoctorHtml(); });
 const csvSummary = () => [csvRow([REP_PAGES[current][1]]), csvRow([repPeriod()]), ...repSummary().map(x => csvRow([x])), ""];
 function repCsv(){
+  if (current === "rep-lab"){
+    const g = labGroups(); if (!g) return "";
+    const f = e => [r2(e.qty), r2(e.net), r2(e.ps), r2(e.net + e.ps), r2(e.paid), r2(e.denied), r2(e.awaiting), pctOf(e.paid, e.net - e.awaiting)];
+    const h = ["Tests","Billed net AED","Co-pay AED","Gross AED","Paid AED","Denied AED","Awaiting AED","Collected"], [ml, mv] = LAB_METRICS[LAB_METRICS[UI.rep.labMetric] ? UI.rep.labMetric : "net"];
+    return [csvRow(["Payer code","Insurance","Lab claims",...h,"All billed AED","Lab share"]), ...g.payers.map(p => csvRow([p.payer, payerName(p.payer), p.claims.size, ...f(p), p.total, pctOf(p.net, p.total)])), "",
+      csvRow([`Month by month: ${ml}`]), csvRow(["Insurance", ...g.months.map(monthLabel), "Total"]), ...g.payers.map(p => csvRow([payerText(p.payer), ...g.months.map(k => p.m[k] ? String(mv(p.m[k])).replace(/,/g,"") : ""), String(mv(p)).replace(/,/g,"")])), "",
+      csvRow([`Lab tests by code: ${g.sel ? payerText(g.sel) : "all insurance companies"}`]), csvRow(["Code","Short name","Description","Claims",...h,"Avg paid per test","Denial codes"]),
+      ...g.codes.map(c => csvRow([c.code, c.short, c.desc, c.claims.size, ...f(c), c.qty && c.paid ? r2(c.paid/c.qty) : "", [...c.den].join(" ")]))].join("\n");
+  }
   if (current === "rep-cpt"){
     const g = cptGroups() || {codes:[], months:[]}, f = e => [e.claims.size, r2(e.qty), r2(e.net), r2(e.ps), r2(e.paid), r2(e.denied), r2(e.awaiting), pctOf(e.paid, e.net - e.awaiting)];
     return [csvRow(["Code","Short name","Type","Description","Claims","Quantity","Billed net AED","Co-pay AED","Paid AED","Denied AED","Awaiting AED","Collected","Avg paid per unit","Denial codes"]),
@@ -2994,8 +3076,12 @@ function bindReports(){
   const rd = $("#rdDays"); if (rd) rd.onchange = () => { const n = Math.round(+rd.value); if (n > 0) { S.resubDays = n; save(); } render(); };
   const rp = $("#rdPayers"); if (rp) rp.onclick = resubPayerDlg;
   const cm = $("#cptMonth"); if (cm) cm.onchange = () => { if (!cm.value) return; const a = cm.value + "-01", e = addDays(addDays(a, 32).slice(0,7) + "-01", -1); u.from = a; u.to = e < TODAY ? e : TODAY; render(); };
-  document.querySelectorAll("[data-cptq]").forEach(r => r.onclick = () => { u.q = r.dataset.cptq; render(); window.scrollTo(0, 0); });
+  if (current === "rep-cpt") document.querySelectorAll("[data-cptq]").forEach(r => r.onclick = () => { u.q = r.dataset.cptq; render(); window.scrollTo(0, 0); });
   const ca = $("#cptAll"); if (ca) ca.onclick = () => { u.q = ""; render(); };
+  document.querySelectorAll("[data-labpayer]").forEach(r => r.onclick = () => { u.labPayer = u.labPayer === r.dataset.labpayer ? "" : r.dataset.labpayer; render(); const c = $("#cptNames"); if (c) c.closest("section").scrollIntoView({block:"start"}); });
+  const la = $("#labAll"); if (la) la.onclick = () => { u.labPayer = ""; render(); };
+  const lm = $("#labMetric"); if (lm) lm.onchange = () => { u.labMetric = lm.value; render(); };
+  const lc = $("#labCodes"); if (lc) lc.onclick = labCodesDlg;
   const cn = $("#cptNames"); if (cn) cn.onclick = () => codeNamesDlg([...document.querySelectorAll("[data-cptq]")].map(r => r.dataset.cptq));
   const q = $("#repQ"); if (q) q.oninput = () => { u.q = q.value; const pos = q.selectionStart; render(); const n = $("#repQ"); n.focus(); n.setSelectionRange(pos,pos); };
   const dl = $("#repDl"); if (dl) dl.onclick = () => downloadFile(`${current.replace("rep-","")}_${u.basis==="visit"?"visits_":""}${u.from}_to_${u.to}${u.payer?"_"+u.payer:""}.csv`, [...csvSummary(), repCsv()].join("\n"));
