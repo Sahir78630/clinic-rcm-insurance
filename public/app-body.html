@@ -323,7 +323,7 @@ function status(c){
   if (t.outstanding < 0.01) return t.wo > 0 ? "Closed" : "Paid";
   return t.paid === 0 ? "Rejected" : "Partially paid";
 }
-const STATUS_PILL = {"Draft":"p-mute","Submitted":"p-info","Resubmitted":"p-info","Paid":"p-ok","Closed":"p-mute","Partially paid":"p-warn","Rejected":"p-bad",
+const STATUS_PILL = {"Draft":"p-mute","Not submitted":"p-mute","Submitted":"p-info","Resubmitted":"p-info","Paid":"p-ok","Closed":"p-mute","Partially paid":"p-warn","Rejected":"p-bad",
   "Eligible":"p-ok","Not eligible":"p-bad","Inactive":"p-bad","Not found":"p-bad","Not verified":"p-mute","Check failed":"p-bad","Approval needed":"p-warn",
   "Pending":"p-info","New":"p-info","Downloaded":"p-mute","Accepted":"p-ok","Accepted with warnings":"p-warn","Posted":"p-ok","Waiting":"p-info","Awaiting payer":"p-info","Recovered":"p-ok","Partially recovered":"p-warn","Denied again":"p-bad","Approved":"p-ok","Partially approved":"p-warn","Reconciled":"p-ok","Unreconciled":"p-warn","Variance":"p-bad","Awaiting deposit":"p-info","Ready":"p-ok","Warnings":"p-warn","Errors":"p-bad","Report missing":"p-info","Dx mismatch":"p-dx"};
 const pill = s => `<span class="pill ${STATUS_PILL[s]||"p-mute"}">${esc(s)}</span>`;
@@ -390,7 +390,7 @@ const VIEWS = [
   ["Front office", [["eligibility","Eligibility & access"],["approvals","Prior approvals"]]],
   ["Billing", [["claims","Claims"],["remittance","Remittance & reconciliation"],["denials","Denials"],["resubmissions","Resubmissions"],["rep-resubdue","Resubmission due dates"],["eclaimlink","eClaimLink files"]]],
   ["Finance", [["receivables","Insurance receivables"]]],
-  ["Reports", [["rep-remit","Remittance summary"],["rep-rejections","Rejections"],["rep-reasons","Rejection reasons"],["rep-submissions","Submissions"],["rep-recon","Reconciliation"],["rep-unprocessed","Unprocessed claims"],["rep-cpt","Revenue by CPT"],["rep-lab","Lab revenue by insurance"]]],
+  ["Reports", [["rep-remit","Remittance summary"],["rep-rejections","Rejections"],["rep-reasons","Rejection reasons"],["rep-submissions","Submissions"],["rep-recon","Reconciliation"],["rep-unprocessed","Unprocessed claims"],["rep-cpt","Revenue by CPT"],["rep-lab","Lab revenue by insurance"],["outlab","Removed outsourced lab"]]],
   ["Price list", [["prices","Payer price lists"]]]
 ];
 let current = (location.hash||"").slice(1);
@@ -659,9 +659,10 @@ R.claims = () => {
   const sum = list.reduce((s,c)=>{const t=totals(c);s.ps+=t.ps;s.net+=t.net;s.paid+=t.paid;s.out+=t.outstanding;return s;},{ps:0,net:0,paid:0,out:0});
   const drafts = S.claims.filter(c=>c.status==="Draft");
   const ready = drafts.filter(c=>!blocked(c)), nBlocked = drafts.length - ready.length;
-  const STS = ["Draft","Submitted","Resubmitted","Paid","Partially paid","Rejected","Closed"];
+  const STS = ["Draft","Not submitted","Submitted","Resubmitted","Paid","Partially paid","Rejected","Closed"];
+  const nOut = S.claims.filter(c => outLabActs(c).length).length;
   return head("Claims","Every insurance claim from encounter to settlement. Open a claim to see activities, payer decisions and history.",
-    `<button class="btn" id="importClaims" type="button">Import claims</button><button class="btn" id="checkAll" type="button" ${S.claims.length?"":"disabled"}>Check all claims</button><button class="btn" id="claimsXml" type="button" ${list.length?"":"disabled"} title="The claims shown, as eClaimLink XML">Download XML (${list.length})</button><button class="btn primary" id="submitDrafts" type="button" ${ready.length?"":"disabled"}>Submit ${ready.length} checked claim${ready.length===1?"":"s"}</button>`) +
+    `<button class="btn" id="importClaims" type="button">Import claims</button><button class="btn" id="outLabSet" type="button" title="TPAs and insurance companies whose lab tests are outsourced">Outsourced lab</button>${nOut?`<button class="btn" id="outLabBulk" type="button" style="color:var(--bad)">Remove outsourced lab (${nOut})</button>`:""}<button class="btn" id="checkAll" type="button" ${S.claims.length?"":"disabled"}>Check all claims</button><button class="btn" id="claimsXml" type="button" ${list.length?"":"disabled"} title="The claims shown, as eClaimLink XML">Download XML (${list.length})</button><button class="btn primary" id="submitDrafts" type="button" ${ready.length?"":"disabled"}>Submit ${ready.length} checked claim${ready.length===1?"":"s"}</button>`) +
   (drafts.length ? `<div class="result ${nBlocked?"warn":"ok"}" style="margin-bottom:12px"><div><b>Claim check:</b> ${ready.length} of ${drafts.length} draft claims are ready to submit${nBlocked?`. ${nBlocked} ha${nBlocked===1?"s":"ve"} errors and will not be sent until fixed. <button class="btn sm" id="showBlocked" type="button">Show them</button>`:"."}</div></div>` : "") +
   `<div class="filters">
     <input type="text" id="fq" placeholder="Search claim, patient or card" value="${esc(UI.claimQ)}" style="flex:1 1 220px">
@@ -1037,6 +1038,8 @@ function checkClaim(c){
     if (a.ps > a.gross) err("",`${tag}: patient share is more than the gross amount.`);
   });
   priceIssues(c).forEach(i => out.push(i));
+  const ol = outLabActs(c);
+  if (ol.length) err("", `${ol.length} lab test${ol.length===1?"":"s"} (${ol.map(a => a.code).join(", ")}, AED ${aed(ol.reduce((x,a) => x + a.net, 0))}) ${ol.length===1?"is":"are"} outsourced for ${payerText(outLabRule(c))}. Remove ${ol.length===1?"it":"them"} with Remove outsourced lab before submitting.`);
   // Lab tests (CPT 80000–89999) carry their result as an <Observation> in the claim file.
   // Results are required for the tests in RESULT_REQUIRED; for other lab tests a missing result is a warning.
   c.acts.filter(a => Array.isArray(a.obs) && /^8\d{4}$/.test(a.code || "")).forEach(a => {
@@ -1107,6 +1110,7 @@ function claimDlg(id){
       <div class="field" style="grid-column:span 2"><label for="woReason">Write-off reason</label><select id="woReason"><option>Contractual / non-recoverable</option><option>Resubmission time limit passed</option><option>Transfer to patient responsibility</option><option>Small balance</option></select></div>
       <div class="field"><button class="btn danger" data-act="writeoff" type="button">Write off AED ${aed(t.outstanding)}</button></div>
     </div>`;
+  if (c.status === "Not submitted") act = `<span class="muted">Every activity on this claim was outsourced lab, so it is not sent to the payer. Restore the lab tests to send it.</span>`;
   if (c.status === "Submitted" || c.status === "Resubmitted") act = `<span class="muted">Awaiting remittance from ${esc(payer(c.payer).name)}. Payments post when the remittance file is imported.</span>`;
   if (c.status === "Resubmitted") act += ` <button class="btn sm" data-act="resubXml" type="button">View resubmission file</button>`;
   const resubHist = c.resubs.length ? `<div><span class="eyebrow">Resubmissions</span><div class="table-wrap" style="margin-top:6px"><table><thead><tr><th>#</th><th>Date</th><th>Type</th><th>Correction</th><th class="num">Amount</th><th>Outcome</th><th class="num">Recovered</th></tr></thead><tbody>
@@ -1119,6 +1123,8 @@ function claimDlg(id){
     ${c.acts.map(a=>`<tr><td class="mono muted">${a.aid}</td><td><span class="code">${esc(a.code)}</span></td><td>${esc(a.desc)}${(a.obs||[]).filter(o=>o.value).map(o=>`<div class="muted" style="font-size:12px">${esc(o.type||"Result")}${o.code?" "+esc(o.code):""}: ${esc(o.value.length>80?o.value.slice(0,80)+"…":o.value)}${o.unit?" "+esc(o.unit):""}</div>`).join("")}</td><td class="num">${a.qty}</td><td class="num">${aed(a.gross)}</td><td class="num">${aed(a.ps)}</td><td class="num">${aed(a.net)}</td><td class="num">${c.status==="Draft"||c.status==="Submitted"&&!c.remits.length?"–":aed(a.paid)}</td><td>${a.denial?`<span class="code" title="${esc(DENIALS[a.denial]||"")}">${a.denial}</span>`:""}</td></tr>`).join("")}
     </tbody><tfoot><tr><td colspan="4">Totals</td><td class="num">${aed(t.gross)}</td><td class="num">${aed(t.ps)}</td><td class="num">${aed(t.net)}</td><td class="num">${aed(t.paid)}</td><td>${t.outstanding?`Due ${aed(t.outstanding)}`:""}</td></tr></tfoot></table></div>
     ${c.status==="Draft"||c.status==="Rejected"||status(c)==="Rejected"||status(c)==="Partially paid"?checkHtml(c):""}
+    ${outLabActs(c).length?`<div class="result warn"><div><b>Outsourced lab:</b> ${outLabActs(c).map(a=>`<span class="code">${esc(a.code)}</span>`).join(" ")} for ${esc(payerText(outLabRule(c)))}. Removing them also removes their share of the co-pay.</div><div class="actions"><button class="btn sm primary" data-act="outLabRemove" type="button">Remove outsourced lab</button></div></div>`:""}
+    ${(c.outLab||[]).length?`<div class="result"><div><b>Removed as outsourced lab:</b> ${c.outLab.map(a=>`<span class="code">${esc(a.code)}</span> AED ${aed(a.net)} (co-pay ${aed(a.ps)})`).join(", ")} · by ${esc(c.outLab[0].by||"–")} on ${fmtD(c.outLab[0].on)}</div>${c.status==="Draft"||c.status==="Not submitted"?`<div class="actions"><button class="btn sm" data-act="outLabRestore" type="button">Restore lab tests</button></div>`:""}</div>`:""}
     ${c.acts.some(a=>a.denial)?`<div class="result bad">${[...new Set(c.acts.filter(a=>a.denial).map(a=>a.denial))].map(k=>`<div><span class="code">${k}</span> ${esc(DENIALS[k]||"")}</div>`).join("")}</div>`:""}
     ${resubHist}
     <div class="actions">${act}</div>
@@ -1255,6 +1261,8 @@ function bindDlg(){
         .catch(e=>{ toast(e.message); claimDlg(c.id); }); return; }
     if (a==="submit"){ submitClaim(claimById(dlg.dataset.claim)); done("Claim submitted"); claimDlg(dlg.dataset.claim); }
     if (a==="labs"){ labDlg(dlg.dataset.claim); return; }
+    if (a==="outLabRemove"){ const c=claimById(dlg.dataset.claim), r=removeOutLab(c); done(`Removed ${r.n} outsourced lab test${r.n===1?"":"s"} (AED ${aed(r.net)}, co-pay AED ${aed(r.ps)})`); claimDlg(c.id); return; }
+    if (a==="outLabRestore"){ const c=claimById(dlg.dataset.claim), n=restoreOutLab(c); done(`Restored ${n} lab test${n===1?"":"s"}`); claimDlg(c.id); return; }
     if (a==="correct"){ correctDlg(dlg.dataset.claim); return; }
     if (a==="dlxml"){ downloadClaimsXml([claimById(dlg.dataset.claim)]); return; }
     if (a==="resubXml"){ const c=claimById(dlg.dataset.claim); const last=c.resubs[c.resubs.length-1]; const x=c.srcXml&&last?claimFileXml([c],{resub:last}):resubXml(c);
@@ -1351,6 +1359,7 @@ function importRa(xml, opts={}){
 function bindView(){
   const v = $("#view");
   if (current === "account" && SHARED && SYNC.ready) bindAccount();
+  if (current === "outlab") bindOutLab();
   const am = $("#actMonths"); if (am) am.onchange = () => { UI.actMonths = Number(am.value); render(); };
   v.querySelectorAll("[data-go]").forEach(b=>b.onclick=()=>{ if (b.dataset.status){ UI.claimStatus=b.dataset.status; UI.claimPayer=""; UI.claimTpa=""; UI.claimQ=""; UI.claimDept=""; UI.claimFrom=""; UI.claimTo=""; } go(b.dataset.go); });
   v.querySelectorAll("[data-claim]").forEach(el=>{ el.onclick=()=>claimDlg(el.dataset.claim); el.onkeydown=e=>{ if(e.key==="Enter") claimDlg(el.dataset.claim); }; });
@@ -1382,6 +1391,8 @@ function bindView(){
     const fdc=$("#fdclear"); if (fdc) fdc.onclick=()=>{UI.claimFrom="";UI.claimTo="";render();};
     $("#importClaims").onclick=claimsImportDlg;
     $("#checkAll").onclick=checkAllDlg;
+    $("#outLabSet").onclick=outLabSetDlg;
+    const olb=$("#outLabBulk"); if (olb) olb.onclick=()=>outLabBulkDlg();
     $("#claimsXml").onclick=()=>downloadClaimsXml((UI.claimList||[]).map(claimById).filter(Boolean));
     const sb=$("#showBlocked"); if (sb) sb.onclick=()=>{ UI.claimStatus="Draft"; UI.claimPayer=""; UI.claimTpa=""; UI.claimQ=""; UI.claimDept=""; UI.claimFrom=""; UI.claimTo=""; render(); };
     $("#submitDrafts").onclick=async e=>{ const d=S.claims.filter(c=>c.status==="Draft"&&!blocked(c));
@@ -2860,6 +2871,131 @@ R["rep-cpt"] = () => {
     ${months.map(m=>`<tr><td>${monthLabel(m.k)}</td>${cells(m)}</tr>`).join("")}
     </tbody><tfoot><tr><td>Total</td>${cells(t)}</tr></tfoot></table></div></section>`;
 };
+
+
+/* ---------- outsourced lab ---------- */
+// Lab tests for chosen TPAs or insurance companies are done by an outside lab, so they are removed from the claim
+// before it is sent. Staff remove them with a button; the removed tests stay on the claim (outLab) for the report.
+const labAct = a => isLabLine({code:a.code, type:ACT_TYPES[a.type] || a.type || "–"});
+const outLabRule = c => { const r = S.outLab || {}; return (r.tpas||[]).includes(c.tpa) ? c.tpa : (r.payers||[]).includes(c.payer) ? c.payer : ""; };
+const outLabActs = c => c.status === "Draft" && outLabRule(c) ? c.acts.filter(labAct) : [];
+const whoAmI = () => SYNC.me ? (SYNC.me.name || SYNC.me.username) : "this computer";
+function removeOutLab(c){
+  const acts = outLabActs(c); if (!acts.length) return {n:0, net:0, ps:0};
+  const rule = outLabRule(c), by = whoAmI();
+  c.outLab = [...(c.outLab||[]), ...acts.map(a => ({...a, rule, by, on:TODAY}))];
+  c.acts = c.acts.filter(a => !acts.includes(a));
+  c.corrected = true;
+  const net = r2(acts.reduce((x,a) => x + a.net, 0)), ps = r2(acts.reduce((x,a) => x + a.ps, 0));
+  if (!c.acts.length) c.status = "Not submitted";
+  c.events.push({d:TODAY, t:`Outsourced lab removed for ${payerText(rule)}: ${acts.map(a => a.code).join(", ")} (AED ${aed(net)}, co-pay AED ${aed(ps)}) by ${by}`});
+  return {n:acts.length, net, ps};
+}
+function restoreOutLab(c){
+  const back = c.outLab || []; if (!back.length) return 0;
+  const order = a => { const m = String(a.aid).match(/(\d+)$/); return m ? +m[1] : 0; };
+  c.acts = [...c.acts, ...back.map(({rule, by, on, ...a}) => a)].sort((a,b) => order(a) - order(b));
+  c.outLab = []; if (c.status === "Not submitted") c.status = "Draft";
+  c.events.push({d:TODAY, t:`Outsourced lab restored: ${back.map(a => a.code).join(", ")} by ${whoAmI()}`});
+  return back.length;
+}
+function outLabSetDlg(){
+  const r = S.outLab || {tpas:[], payers:[]};
+  const tpas = [...new Set([...S.claims.map(c => c.tpa), ...(r.tpas||[])].filter(Boolean))].sort((a,b) => payerText(a).localeCompare(payerText(b)));
+  const payers = [...new Set([...S.claims.map(c => c.payer), ...(r.payers||[])].filter(Boolean))].sort((a,b) => payerText(a).localeCompare(payerText(b)));
+  const box = (cls, k, on) => `<label style="display:flex;gap:8px;align-items:center;padding:4px 0"><input type="checkbox" class="${cls}" value="${esc(k)}" ${on?"checked":""}> ${esc(payerText(k))}</label>`;
+  openDlg(dlgHead("Outsourced lab", `Lab tests (CPT ${LAB_FROM} to ${LAB_TO}, plus your Lab codes) on draft claims for the TPAs and insurance companies ticked here are flagged in the claim check, and staff remove them with Remove outsourced lab before sending. Their share of the co-pay comes off the claim too.`,
+    `<button class="btn sm primary" id="olSave" type="button">Save</button>`) +
+  `<div class="dlg-body"><div class="grid2">
+    <div><span class="eyebrow">TPAs (every insurance company under them)</span><div style="margin-top:6px;max-height:340px;overflow:auto">${tpas.map(k => box("olT", k, (r.tpas||[]).includes(k))).join("") || `<p class="muted">No TPAs on the claims yet. Import claims first.</p>`}</div></div>
+    <div><span class="eyebrow">Or single insurance companies</span><div style="margin-top:6px;max-height:340px;overflow:auto">${payers.map(k => box("olP", k, (r.payers||[]).includes(k))).join("") || `<p class="muted">No insurance companies on the claims yet.</p>`}</div></div>
+  </div><p class="muted" style="font-size:12.5px">Names come from Payer names on the report pages. Add a lab code your clinic uses under Reports → Lab revenue by insurance → Lab codes.</p></div>`);
+  $("#olSave").onclick = () => {
+    S.outLab = {tpas:[...$("#dlgInner").querySelectorAll(".olT:checked")].map(x => x.value), payers:[...$("#dlgInner").querySelectorAll(".olP:checked")].map(x => x.value)};
+    save(); dlg.close(); render();
+    const n = S.claims.filter(c => outLabActs(c).length).length;
+    toast(`Saved: ${S.outLab.tpas.length} TPAs, ${S.outLab.payers.length} insurance companies. ${n} draft claim${n===1?" has":"s have"} outsourced lab tests to remove.`);
+  };
+}
+function outLabBulkDlg(){
+  const list = S.claims.filter(c => outLabActs(c).length);
+  const rows = list.map(c => ({c, acts:outLabActs(c)})), net = r2(rows.reduce((x,r) => x + r.acts.reduce((y,a) => y + a.net, 0), 0)), ps = r2(rows.reduce((x,r) => x + r.acts.reduce((y,a) => y + a.ps, 0), 0));
+  const whole = rows.filter(r => r.acts.length === r.c.acts.length).length;
+  openDlg(dlgHead("Remove outsourced lab", `${rows.reduce((x,r) => x + r.acts.length, 0)} lab tests on ${rows.length} draft claims · AED ${aed(net)} net · co-pay AED ${aed(ps)}${whole?` · ${whole} claim${whole===1?" has":"s have"} only lab tests and will not be sent`:""}. Check the list, then remove.`,
+    `<button class="btn sm primary" id="olGo" type="button">Remove from ${rows.length} claim${rows.length===1?"":"s"}</button>`) +
+  `<div class="dlg-body"><div class="table-wrap"><table><thead><tr><th>Claim</th><th>Patient</th><th>TPA / insurance</th><th>Visit</th><th>Lab tests to remove</th><th class="num">Net AED</th><th class="num">Co-pay AED</th><th class="num">Claim net after</th></tr></thead><tbody>
+    ${rows.map(({c,acts}) => { const n = r2(acts.reduce((x,a) => x + a.net, 0)); return `<tr><td class="mono">${esc(c.id)}</td><td>${esc(patient(c.patient).name)}</td><td>${esc(payerText(outLabRule(c)))}</td><td class="muted">${fmtD(c.enc)}</td><td>${acts.map(a => `<span class="code">${esc(a.code)}</span> ${esc(shortName(a.code, a.desc||""))}`).join("<br>")}</td><td class="num">${aed(n)}</td><td class="num">${aed(acts.reduce((x,a) => x + a.ps, 0))}</td><td class="num">${acts.length === c.acts.length ? "not sent" : aed(totals(c).net - n)}</td></tr>`; }).join("")}
+    </tbody></table></div></div>`);
+  $("#olGo").onclick = () => { let n = 0; rows.forEach(r => n += removeOutLab(r.c).n); dlg.close(); done(`Removed ${n} outsourced lab tests from ${rows.length} claims (AED ${aed(net)}, co-pay AED ${aed(ps)}). See Reports → Removed outsourced lab.`); };
+}
+UI.ol = {from:addDays(TODAY,-30), to:TODAY, basis:"removed", rule:"", q:""};
+function outLabRows(){
+  const u = UI.ol, out = [];
+  for (const c of S.claims) for (const a of c.outLab || []){
+    const d = u.basis === "visit" ? c.enc : a.on;
+    if (d < u.from || d > u.to || (u.rule && a.rule !== u.rule)) continue;
+    const r = {claim:c.id, patient:patient(c.patient).name, card:c.card, visit:c.enc, tpa:c.tpa||"", payer:c.payer, rule:a.rule, doctor:c.doctor, code:a.code, name:shortName(a.code, a.desc||""), qty:a.qty, gross:a.gross, ps:a.ps, net:a.net, by:a.by, on:a.on, status:status(c)};
+    if (u.q && !`${r.claim} ${r.patient} ${r.card} ${r.code} ${r.name}`.toLowerCase().includes(u.q.toLowerCase())) continue;
+    out.push(r);
+  }
+  return out.sort((a,b) => b.on.localeCompare(a.on) || a.claim.localeCompare(b.claim));
+}
+function outLabGroups(rows, key){
+  const m = {}; for (const r of rows){ const e = m[r[key]] ||= {k:r[key], claims:new Set(), tests:0, net:0, ps:0, gross:0}; e.claims.add(r.claim); e.tests += r.qty; e.net += r.net; e.ps += r.ps; e.gross += r.gross; }
+  return Object.values(m).sort((a,b) => b.net - a.net);
+}
+R.outlab = () => {
+  const u = UI.ol, rows = outLabRows(), byRule = outLabGroups(rows, "rule"), byCode = outLabGroups(rows, "code"), t = outLabGroups(rows.map(r => ({...r, all:1})), "all")[0];
+  const rules = [...new Set(S.claims.flatMap(c => (c.outLab||[]).map(a => a.rule)))].sort();
+  const period = `${u.basis==="visit"?"Visits":"Removed"} ${fmtD(u.from)} to ${fmtD(u.to)}${u.rule?` · ${payerText(u.rule)}`:" · All TPAs and insurance companies"}`;
+  const gcells = e => `<td class="num">${e.claims.size}</td><td class="num">${r2(e.tests)}</td><td class="num">${aed(e.gross)}</td><td class="num">${aed(e.ps)}</td><td class="num">${aed(e.net)}</td>`;
+  const gheads = `<th class="num">Claims</th><th class="num">Tests</th><th class="num">Gross AED</th><th class="num">Co-pay AED</th><th class="num">Net AED</th>`;
+  return head("Removed outsourced lab","Lab tests removed from claims before submission because the TPA's or insurer's lab work is outsourced. Choose the TPAs and insurance companies on the Claims page with Outsourced lab.",
+    `<button class="btn" id="olCsv" type="button" ${rows.length?"":"disabled"}>Download Excel (CSV)</button><button class="btn" id="olPdf" type="button" ${rows.length?"":"disabled"}>Download PDF</button>`) +
+  `<div class="print-only" style="margin-bottom:6px"><b>${esc((S.facility && S.facility.name) || "Polyclinic")}</b> · Removed outsourced lab · ${esc(period)} · Printed ${fmtD(TODAY)}</div>
+  <section class="panel rep-bar"><div class="filters" style="margin:0">
+    <label class="muted" style="display:flex;gap:6px;align-items:center;font-size:12.5px">By <select id="olBasis"><option value="removed" ${u.basis==="removed"?"selected":""}>Date removed</option><option value="visit" ${u.basis==="visit"?"selected":""}>Visit date</option></select></label>
+    <label class="muted" style="display:flex;gap:6px;align-items:center;font-size:12.5px">From <input type="date" id="olFrom" value="${u.from}"> to <input type="date" id="olTo" value="${u.to}"></label>
+    <label class="muted" style="display:flex;gap:6px;align-items:center;font-size:12.5px">Whole month <input type="month" id="olMonth" value="${u.from.slice(0,7)}" max="${TODAY.slice(0,7)}"></label>
+    <select id="olRule"><option value="">All TPAs and insurance companies</option>${rules.map(k => `<option value="${esc(k)}" ${u.rule===k?"selected":""}>${esc(payerText(k))}</option>`).join("")}</select>
+    <input type="text" id="olQ" placeholder="Search claim, patient, card or code" value="${esc(u.q)}" style="flex:1 1 200px">
+  </div></section>` +
+  (!rows.length ? `<section class="panel"><div class="empty">No outsourced lab tests were removed in this period.</div></section>` : `<div class="kpis">
+    <div class="kpi"><span class="eyebrow">Lab tests removed</span><span class="v">${r2(t.tests)}</span><span class="s">on ${t.claims.size} claims</span></div>
+    <div class="kpi"><span class="eyebrow">Net removed</span><span class="v">${aed(t.net)}<small>AED</small></span><span class="s">not billed to the payer</span></div>
+    <div class="kpi"><span class="eyebrow">Co-pay removed</span><span class="v">${aed(t.ps)}<small>AED</small></span><span class="s">patient share of those tests</span></div>
+    <div class="kpi"><span class="eyebrow">Gross removed</span><span class="v">${aed(t.gross)}<small>AED</small></span><span class="s">net plus co-pay</span></div>
+  </div>
+  <section class="panel"><div class="panel-head"><div><h2>Summary</h2><p>${esc(period)}</p></div></div><ul style="margin:0;padding-left:20px;line-height:1.7">
+    <li>${r2(t.tests)} outsourced lab tests were removed from ${t.claims.size} claims: AED ${aed(t.net)} net and AED ${aed(t.ps)} co-pay (AED ${aed(t.gross)} gross).</li>
+    ${byRule[0]?`<li>The most was for ${esc(payerText(byRule[0].k))}: AED ${aed(byRule[0].net)} net on ${byRule[0].claims.size} claims.</li>`:""}
+    ${byCode[0]?`<li>The most removed test was ${esc(byCode[0].k)}${shortName(byCode[0].k,"")?` (${esc(shortName(byCode[0].k,""))})`:""}: ${r2(byCode[0].tests)} test${byCode[0].tests===1?"":"s"}, AED ${aed(byCode[0].net)} net.</li>`:""}
+    ${rows.filter(r => r.status === "Not submitted").length?`<li>${((n) => `${n} claim${n===1?"":"s"} had only lab tests and ${n===1?"was":"were"} not sent.`)(new Set(rows.filter(r => r.status === "Not submitted").map(r => r.claim)).size)}</li>`:""}
+  </ul></section>
+  <div class="grid2">
+    <section class="panel"><div class="panel-head"><div><h2>By TPA / insurance</h2><p>The rule that removed the tests</p></div></div><div class="table-wrap"><table><thead><tr><th>TPA / insurance</th>${gheads}</tr></thead><tbody>
+      ${byRule.map(e => `<tr><td>${esc(payerText(e.k))}</td>${gcells(e)}</tr>`).join("")}</tbody><tfoot><tr><td>Total</td>${gcells(t)}</tr></tfoot></table></div></section>
+    <section class="panel"><div class="panel-head"><div><h2>By CPT code</h2><p>Tests removed</p></div></div><div class="table-wrap"><table><thead><tr><th>Code</th><th>Short name</th>${gheads}</tr></thead><tbody>
+      ${byCode.map(e => `<tr><td class="mono"><b>${esc(e.k)}</b></td><td>${esc(shortName(e.k,"")||"–")}</td>${gcells(e)}</tr>`).join("")}</tbody></table></div></section>
+  </div>
+  <section class="panel"><div class="panel-head"><div><h2>Every removed test</h2><p>Click a row to open the claim</p></div></div><div class="table-wrap"><table><thead><tr><th>Claim</th><th>Patient</th><th>Member card</th><th>Visit</th><th>TPA</th><th>Insurance</th><th>Doctor</th><th>Code</th><th>Short name</th><th class="num">Qty</th><th class="num">Gross AED</th><th class="num">Co-pay AED</th><th class="num">Net AED</th><th>Removed by</th><th>Removed on</th><th>Claim status</th></tr></thead><tbody>
+    ${rows.map(r => `<tr class="click" data-claim="${esc(r.claim)}"><td class="mono">${esc(r.claim)}</td><td>${esc(r.patient)}</td><td class="mono">${esc(r.card||"–")}</td><td class="muted">${fmtD(r.visit)}</td><td>${esc(r.tpa?payerText(r.tpa):"–")}</td><td>${esc(payerText(r.payer))}</td><td>${esc(docLabel(r.doctor))}</td><td class="mono">${esc(r.code)}</td><td>${esc(r.name||"–")}</td><td class="num">${r2(r.qty)}</td><td class="num">${aed(r.gross)}</td><td class="num">${aed(r.ps)}</td><td class="num">${aed(r.net)}</td><td>${esc(r.by||"–")}</td><td class="muted">${fmtD(r.on)}</td><td>${pill(r.status)}</td></tr>`).join("")}
+    </tbody><tfoot><tr><td colspan="9">${rows.length} tests</td><td class="num">${r2(t.tests)}</td><td class="num">${aed(t.gross)}</td><td class="num">${aed(t.ps)}</td><td class="num">${aed(t.net)}</td><td colspan="3"></td></tr></tfoot></table></div></section>`);
+};
+function bindOutLab(){
+  const u = UI.ol;
+  const set = () => { u.from = $("#olFrom").value || u.from; u.to = $("#olTo").value || u.to; if (u.from > u.to) [u.from, u.to] = [u.to, u.from]; render(); };
+  $("#olFrom").onchange = $("#olTo").onchange = set;
+  $("#olBasis").onchange = e => { u.basis = e.target.value; render(); };
+  $("#olRule").onchange = e => { u.rule = e.target.value; render(); };
+  $("#olMonth").onchange = e => { if (!e.target.value) return; const a = e.target.value + "-01", end = addDays(addDays(a, 32).slice(0,7) + "-01", -1); u.from = a; u.to = end < TODAY ? end : TODAY; render(); };
+  const q = $("#olQ"); q.oninput = () => { u.q = q.value; const pos = q.selectionStart; render(); const n = $("#olQ"); n.focus(); n.setSelectionRange(pos, pos); };
+  $("#olCsv").onclick = () => { const rows = outLabRows();
+    downloadFile(`outsourced_lab_removed_${u.from}_to_${u.to}.csv`, [csvRow(["Removed outsourced lab"]), csvRow([`${u.basis==="visit"?"Visits":"Removed"} ${fmtD(u.from)} to ${fmtD(u.to)}${u.rule?" · "+payerText(u.rule):""}`]), "",
+      csvRow(["Claim","Patient","Member card","Visit","TPA","Insurance code","Insurance name","Removed for","Doctor","Code","Short name","Quantity","Gross AED","Co-pay AED","Net AED","Removed by","Removed on","Claim status"]),
+      ...rows.map(r => csvRow([r.claim, r.patient, r.card, r.visit, r.tpa ? payerText(r.tpa) : "", r.payer, payerName(r.payer), payerText(r.rule), docLabel(r.doctor), r.code, r.name, r.qty, r.gross, r.ps, r.net, r.by, r.on, r.status]))].join("\n")); };
+  $("#olPdf").onclick = () => { document.body.dataset.print = "rep"; const t = document.title; document.title = `Removed outsourced lab ${u.from} to ${u.to}`; window.print(); document.title = t; delete document.body.dataset.print; };
+}
 
 /* ---------- lab revenue by insurance ---------- */
 // Lab tests are CPT 80047 to 89398 (pathology and laboratory), plus any codes the clinic adds under Lab codes
