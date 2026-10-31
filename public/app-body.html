@@ -661,8 +661,9 @@ R.claims = () => {
   const ready = drafts.filter(c=>!blocked(c)), nBlocked = drafts.length - ready.length;
   const STS = ["Draft","Not submitted","Submitted","Resubmitted","Paid","Partially paid","Rejected","Closed"];
   const nOut = S.claims.filter(c => outLabActs(c).length).length;
+  const shownDrafts = list.filter(c => c.status === "Draft" || c.status === "Not submitted").length;
   return head("Claims","Every insurance claim from encounter to settlement. Open a claim to see activities, payer decisions and history.",
-    `<button class="btn" id="importClaims" type="button">Import claims</button><button class="btn" id="paRulesBtn" type="button" title="Payers that need an approval code on their claims">Approval rules</button><button class="btn" id="outLabSet" type="button" title="TPAs and insurance companies whose lab tests are outsourced">Outsourced lab</button>${nOut?`<button class="btn" id="outLabBulk" type="button" style="color:var(--bad)">Remove outsourced lab (${nOut})</button>`:""}<button class="btn" id="checkAll" type="button" ${S.claims.length?"":"disabled"}>Check all claims</button><button class="btn" id="claimsXml" type="button" ${list.length?"":"disabled"} title="The claims shown, as eClaimLink XML">Download XML (${list.length})</button><button class="btn primary" id="submitDrafts" type="button" ${ready.length?"":"disabled"}>Submit ${ready.length} checked claim${ready.length===1?"":"s"}</button>`) +
+    `<button class="btn" id="importClaims" type="button">Import claims</button>${drafts.length && LIVE.on?`<button class="btn" id="dupCheck" type="button" title="Look for the draft claims on eClaimLink, so claims already sent are not sent twice">${UI.dupBusy?esc(UI.rep.progress||UI.dupBusy):`Check eClaimLink for ${drafts.length} draft${drafts.length===1?"":"s"}`}</button>`:""}${shownDrafts?`<button class="btn" id="rmDrafts" type="button" style="color:var(--bad)" title="Remove the draft claims in the list below">Remove ${shownDrafts} draft${shownDrafts===1?"":"s"}</button>`:""}<button class="btn" id="paRulesBtn" type="button" title="Payers that need an approval code on their claims">Approval rules</button><button class="btn" id="outLabSet" type="button" title="TPAs and insurance companies whose lab tests are outsourced">Outsourced lab</button>${nOut?`<button class="btn" id="outLabBulk" type="button" style="color:var(--bad)">Remove outsourced lab (${nOut})</button>`:""}<button class="btn" id="checkAll" type="button" ${S.claims.length?"":"disabled"}>Check all claims</button><button class="btn" id="claimsXml" type="button" ${list.length?"":"disabled"} title="The claims shown, as eClaimLink XML">Download XML (${list.length})</button><button class="btn primary" id="submitDrafts" type="button" ${ready.length?"":"disabled"}>Submit ${ready.length} checked claim${ready.length===1?"":"s"}</button>`) +
   (drafts.length ? `<div class="result ${nBlocked?"warn":"ok"}" style="margin-bottom:12px"><div><b>Claim check:</b> ${ready.length} of ${drafts.length} draft claims are ready to submit${nBlocked?`. ${nBlocked} ha${nBlocked===1?"s":"ve"} errors and will not be sent until fixed. <button class="btn sm" id="showBlocked" type="button">Show them</button>`:"."}</div></div>` : "") +
   `<div class="filters">
     <input type="text" id="fq" placeholder="Search claim, patient or card" value="${esc(UI.claimQ)}" style="flex:1 1 220px">
@@ -674,7 +675,7 @@ R.claims = () => {
     ${UI.claimFrom||UI.claimTo?`<button class="btn sm" id="fdclear" type="button">Clear dates</button>`:""}
   </div>
   <div class="table-wrap"><table><thead><tr><th>Claim</th><th>Patient</th><th>Payer / TPA</th><th>Doctor</th><th>Department</th><th>Encounter</th><th>Submitted</th><th class="num">Co-pay</th><th class="num">Net AED</th><th class="num">Paid</th><th class="num">Outstanding</th><th>Status</th><th>Check</th></tr></thead><tbody>
-  ${list.map(c=>{const t=totals(c);return `<tr class="click" data-claim="${c.id}" tabindex="0"><td class="mono">${c.id}</td><td>${esc(patient(c.patient).name)}</td><td>${esc(payer(c.payer).name)}${tpaLine(c)}</td><td>${esc(docLabel(c.doctor))}</td><td>${esc(c.dept)}</td><td class="muted">${fmtD(c.enc)}</td><td class="muted">${fmtD(c.submitted)}</td><td class="num">${aed(t.ps)}</td><td class="num">${aed(t.net)}</td><td class="num">${aed(t.paid)}</td><td class="num">${t.outstanding?aed(t.outstanding):"–"}</td><td>${pill(status(c))}</td><td>${c.status==="Draft"?pill(checkState(c)):""}</td></tr>`}).join("") || `<tr><td colspan="13" class="empty">No claims match these filters.</td></tr>`}
+  ${list.map(c=>{const t=totals(c);return `<tr class="click" data-claim="${c.id}" tabindex="0"><td class="mono">${c.id}</td><td>${esc(patient(c.patient).name)}</td><td>${esc(payer(c.payer).name)}${tpaLine(c)}</td><td>${esc(docLabel(c.doctor))}</td><td>${esc(c.dept)}</td><td class="muted">${fmtD(c.enc)}</td><td class="muted">${fmtD(c.submitted)}</td><td class="num">${aed(t.ps)}</td><td class="num">${aed(t.net)}</td><td class="num">${aed(t.paid)}</td><td class="num">${t.outstanding?aed(t.outstanding):"–"}</td><td>${pill(status(c))}${c.alreadySent?`<div class="muted" style="font-size:11.5px">already on eClaimLink ${fmtD(c.alreadySent.date)}</div>`:""}</td><td>${c.status==="Draft"?pill(checkState(c)):""}</td></tr>`}).join("") || `<tr><td colspan="13" class="empty">No claims match these filters.</td></tr>`}
   </tbody><tfoot><tr><td colspan="7">${list.length} claims</td><td class="num">${aed(sum.ps)}</td><td class="num">${aed(sum.net)}</td><td class="num">${aed(sum.paid)}</td><td class="num">${aed(sum.out)}</td><td></td><td></td></tr></tfoot></table></div>`;
 };
 
@@ -1398,6 +1399,8 @@ function bindView(){
     $("#checkAll").onclick=checkAllDlg;
     $("#outLabSet").onclick=outLabSetDlg;
     $("#paRulesBtn").onclick=paRulesDlg;
+    const dc=$("#dupCheck"); if (dc) dc.onclick=()=>checkDraftsSent();
+    const rd=$("#rmDrafts"); if (rd) rd.onclick=removeDraftsDlg;
     const olb=$("#outLabBulk"); if (olb) olb.onclick=()=>outLabBulkDlg();
     $("#claimsXml").onclick=()=>downloadClaimsXml((UI.claimList||[]).map(claimById).filter(Boolean));
     const sb=$("#showBlocked"); if (sb) sb.onclick=()=>{ UI.claimStatus="Draft"; UI.claimPayer=""; UI.claimTpa=""; UI.claimQ=""; UI.claimDept=""; UI.claimFrom=""; UI.claimTo=""; render(); };
@@ -2882,6 +2885,40 @@ R["rep-cpt"] = () => {
 };
 
 
+
+
+/* ---------- drafts: already sent? and clearing them ---------- */
+// Looks for every draft claim in the claim files sent on eClaimLink (from the earliest visit to today).
+// A draft found there was already submitted: it becomes Submitted with the date and file, so it is not sent twice.
+async function checkDraftsSent(){
+  const drafts = S.claims.filter(c => c.status === "Draft"); if (!drafts.length) return;
+  if (!ECL()) return toast("Sign in to eClaimLink on the eClaimLink files page first");
+  const a = drafts.reduce((m,c) => c.enc && c.enc < m ? c.enc : m, TODAY);
+  UI.dupBusy = "Searching eClaimLink…"; render();
+  try {
+    const r = await loadRepRows("sub", {a: addDays(a, -1) , b: TODAY});
+    const first = new Map(); for (const x of r.rows) if (x.claim && (!first.has(x.claim) || x.date < first.get(x.claim).date)) first.set(x.claim, x);
+    let n = 0;
+    for (const c of drafts){ const x = first.get(c.id); if (!x) continue;
+      c.status = "Submitted"; c.submitted = x.date || TODAY; c.alreadySent = {date:x.date, file:x.file};
+      c.events.push({d:TODAY, t:`Found on eClaimLink: already submitted ${fmtD(x.date)} in ${x.file}${LIVE.ecl==="live"?"":" (test mode)"}; not sent again`}); n++; }
+    UI.dupBusy = ""; UI.rep.progress = ""; save(); render();
+    toast(`Searched ${r.files} claim files sent on eClaimLink since ${fmtD(a)}. ${n} of ${drafts.length} drafts were already submitted and are now marked Submitted; ${drafts.length - n} were not found and stay as drafts.` + (r.errors.length ? ` ${r.errors.length} files could not be opened.` : ""));
+  } catch(e){ UI.dupBusy = ""; render(); toast("Checking eClaimLink failed: " + e.message); }
+}
+// Removes the drafts in the list shown (use the filters to choose which), after confirmation. Sent claims are never removed.
+function removeDraftsDlg(){
+  const list = (UI.claimList || []).map(claimById).filter(c => c && (c.status === "Draft" || c.status === "Not submitted"));
+  if (!list.length) return;
+  const net = r2(list.reduce((x,c) => x + totals(c).net, 0)), files = [...new Set(list.map(c => c.srcFile).filter(Boolean))];
+  openDlg(dlgHead("Remove draft claims", `${list.length} draft claim${list.length===1?"":"s"} in the list below (AED ${aed(net)} net) will be removed from this system, for everyone. Claims already submitted are not touched. Narrow the list first with the filters (TPA, payer, visit dates) to remove only some of them.`,
+    `<button class="btn sm danger" id="rdGo" type="button">Remove ${list.length} draft${list.length===1?"":"s"}</button>`) +
+  `<div class="dlg-body">${files.length?`<p class="muted" style="font-size:12.5px">From ${files.length} imported file${files.length===1?"":"s"}: ${files.slice(0,6).map(esc).join(", ")}${files.length>6?"…":""}</p>`:""}
+    <div class="table-wrap" style="max-height:340px"><table><thead><tr><th>Claim</th><th>Patient</th><th>Payer / TPA</th><th>Visit</th><th class="num">Net AED</th><th>Status</th></tr></thead><tbody>
+    ${list.slice(0,500).map(c => `<tr><td class="mono">${esc(c.id)}</td><td>${esc(patient(c.patient).name)}</td><td>${esc(payer(c.payer).name)}${tpaLine(c)}</td><td class="muted">${fmtD(c.enc)}</td><td class="num">${aed(totals(c).net)}</td><td>${pill(status(c))}</td></tr>`).join("")}
+    </tbody></table></div>${list.length>500?`<p class="muted">Showing the first 500.</p>`:""}</div>`);
+  $("#rdGo").onclick = () => { const ids = new Set(list.map(c => c.id)); S.claims = S.claims.filter(c => !ids.has(c.id)); dlg.close(); done(`Removed ${ids.size} draft claim${ids.size===1?"":"s"}`); };
+}
 
 /* ---------- approval code rules ---------- */
 // Some payers need an approval code on every claim (consultations too), others only on dental claims.
