@@ -2620,7 +2620,9 @@ function recon(){
     else status = paid >= net - 0.01 ? "paid" : paid > 0 ? "partial" : "rejected";
     out.push({claim:id, payer:first.payer, tpa:first.tpa||"", docs:docsOf(first), member:first.member||"", visit:first.visit||"", submitted:first.date, resubs, firstResub: rs.length ? rs[0].date : "", rejections: g.ra.filter(r => r.denied > 0).map(r => r.date), copay:first.copay||0, lastSent:last.date, remits:g.ra.length, lastRemit:lastRa ? lastRa.date : "",
       net, paid, balance:r2(Math.max(0, net - paid)), codes:[...new Set(g.ra.flatMap(r => r.codes||[]))], status, days:diff(last.date, TODAY), comment, resubType,
-      subFid:first.fid||"", subFile:first.file||"", raFids:[...new Set(g.ra.map(r => r.fid).filter(Boolean))]});
+      subFid:first.fid||"", subFile:first.file||"", raFids:[...new Set(g.ra.map(r => r.fid).filter(Boolean))],
+      hist:[...g.sub.map(x => ({k:x.resub ? "Resubmission sent" : "Claim sent", at:when(x), file:x.file, net:x.net, note:x.comment||""})),
+        ...g.ra.map(x => ({k:"Remittance received", at:when(x), file:x.file, paid:x.paid, denied:x.denied, note:(x.codes||[]).join(" ")}))].sort((a,b) => a.at.localeCompare(b.at))});
   }
   return out.sort((a,b) => (a.submitted||"").localeCompare(b.submitted||""));
 }
@@ -2786,11 +2788,14 @@ function resubDue(){
   const out = [];
   for (const r of rc){
     if (!r.lastRemit || (remitBasis() && (r.lastRemit < UI.rep.from || r.lastRemit > UI.rep.to))) continue;
-    const pending = r.status === "partial" || r.status === "rejected", done = r.status === "awaiting" && r.remits > 0;
+    const mark = (S.resubMarks || {})[r.claim], marked = mark && mark.d >= r.lastRemit && (r.status === "partial" || r.status === "rejected");
+    const pending = !marked && (r.status === "partial" || r.status === "rejected"), done = marked || (r.status === "awaiting" && r.remits > 0);
     if (!pending && !done) continue;
-    const days = resubWin(r.payer), due = addDays(r.lastRemit, days), left = diff(TODAY, due);
-    const st = pending ? (left < 0 ? "overdue" : left <= 7 ? "soon" : "open") : (r.lastSent <= due ? "ontime" : "late");
-    out.push({...r, window:days, due, left, resubOn: done ? r.lastSent : "", st});
+    const days = resubWin(r.payer), due = addDays(r.lastRemit, days), left = diff(TODAY, due), sentOn = marked ? mark.d : r.lastSent;
+    const st = pending ? (left < 0 ? "overdue" : left <= 7 ? "soon" : "open") : (sentOn <= due ? "ontime" : "late");
+    // Resubmitted before, then rejected again: due again, counted from the latest rejection
+    const again = pending && r.resubs > 0;
+    out.push({...r, window:days, due, left, resubOn: done ? sentOn : "", st, marked: marked ? mark : null, again});
   }
   return out.sort((a,b) => (a.resubOn ? 1 : 0) - (b.resubOn ? 1 : 0) || a.due.localeCompare(b.due));
 }
@@ -2822,7 +2827,7 @@ R["rep-resubdue"] = () => {
   <section class="panel"><div class="filters" style="margin:0 0 10px"><select id="repStatus"><option value="">All (${all.length})</option>${Object.keys(RESUB_ST).map(k => `<option value="${k}" ${u.status===k?"selected":""}>${RESUB_ST[k][0]} (${of(k).length})</option>`).join("")}</select>
     <input type="text" id="repQ" placeholder="Search claim, member or denial code" value="${esc(u.q)}" style="flex:1 1 220px"></div>
   <div class="table-wrap"><table><thead><tr><th>Claim</th><th>Payer code</th><th>Payer name</th><th>TPA</th><th>Doctor</th><th>Visit</th><th>Submission date</th>${JOURNEY_TH}<th class="num">Times rejected</th><th>Last rejection</th><th>Denial codes</th><th class="num">Not paid AED</th><th>Resubmit by</th><th class="num">Days left</th><th>Last resubmission</th><th>Status</th><th></th><th>In my records</th></tr></thead><tbody>
-    ${list.slice(0,1000).map(r => `<tr ${claimById(r.claim)?`class="click" data-claim="${esc(r.claim)}"`:""}><td class="mono">${esc(r.claim)}</td><td class="mono">${esc(r.payer||"–")}</td><td>${esc(payerName(r.payer)||"–")}</td><td>${esc(r.tpa && r.tpa !== r.payer ? payerText(r.tpa) : "–")}</td><td class="wrap-cell">${esc((r.docs||[]).map(docText).join(", ")||"–")}</td><td class="muted">${fmtD(r.visit)}</td><td class="muted">${fmtD(r.submitted)}</td>${journeyCells(r)}<td class="num">${(r.rejections||[]).length}</td><td class="muted">${fmtD(r.lastRemit)}</td><td class="wrap-cell">${r.codes.map(k=>`<span class="code" title="${esc(DENIALS[k]||"")}">${esc(k)}</span>`).join(" ")||"–"}</td><td class="num">${aed(r.resubOn ? r2(r.net - r.paid) : r.balance)}</td><td><b>${fmtD(r.due)}</b></td><td class="num" style="${!r.resubOn && r.left < 0 ? "color:var(--bad);font-weight:600" : ""}">${r.resubOn ? "–" : r.left}</td><td class="muted">${r.resubOn ? fmtD(r.resubOn) : "–"}</td><td><span class="pill" style="color:var(${RESUB_ST[r.st][1]})">${RESUB_ST[r.st][0]}</span></td><td>${r.resubOn ? (claimById(r.claim) ? `<button class="btn sm" type="button" data-resub="${esc(r.claim)}">Open</button>` : "") : `<button class="btn sm primary" type="button" data-resub="${esc(r.claim)}" title="Open the claim to correct it, enter lab results, add attachments and resubmit">Resubmit</button>`}</td><td>${inRecords(r.claim)}</td></tr>`).join("") || `<tr><td colspan="20" class="empty">No claims match.</td></tr>`}
+    ${list.slice(0,1000).map(r => `<tr ${claimById(r.claim)?`class="click" data-claim="${esc(r.claim)}"`:""}><td class="mono">${esc(r.claim)}</td><td class="mono">${esc(r.payer||"–")}</td><td>${esc(payerName(r.payer)||"–")}</td><td>${esc(r.tpa && r.tpa !== r.payer ? payerText(r.tpa) : "–")}</td><td class="wrap-cell">${esc((r.docs||[]).map(docText).join(", ")||"–")}</td><td class="muted">${fmtD(r.visit)}</td><td class="muted">${fmtD(r.submitted)}</td>${journeyCells(r)}<td class="num">${(r.rejections||[]).length}</td><td class="muted">${fmtD(r.lastRemit)}</td><td class="wrap-cell">${r.codes.map(k=>`<span class="code" title="${esc(DENIALS[k]||"")}">${esc(k)}</span>`).join(" ")||"–"}</td><td class="num">${aed(r.resubOn ? r2(r.net - r.paid) : r.balance)}</td><td><b>${fmtD(r.due)}</b></td><td class="num" style="${!r.resubOn && r.left < 0 ? "color:var(--bad);font-weight:600" : ""}">${r.resubOn ? "–" : r.left}</td><td class="muted">${r.resubOn ? fmtD(r.resubOn) : "–"}</td><td><span class="pill" style="color:var(${RESUB_ST[r.st][1]})">${RESUB_ST[r.st][0]}</span>${r.again?`<div style="font-size:11.5px;color:var(--bad)">Rejected again after the resubmission of ${fmtD(r.lastSent)}</div>`:""}${r.marked?`<div class="muted" style="font-size:11.5px">Marked by ${esc(r.marked.by||"–")}: resubmitted on the portal</div>`:""}</td><td style="white-space:nowrap">${r.resubOn ? (claimById(r.claim) ? `<button class="btn sm" type="button" data-resub="${esc(r.claim)}">Open</button> ` : "") + (r.marked ? `<button class="btn sm" type="button" data-unmark="${esc(r.claim)}">Undo mark</button> ` : "") : `<button class="btn sm primary" type="button" data-resub="${esc(r.claim)}" title="Open the claim to correct it, enter lab results, add attachments and resubmit">Resubmit</button> <button class="btn sm" type="button" data-mark="${esc(r.claim)}" title="Resubmitted on the eClaimLink portal, but the file was not found">Already resubmitted</button> `}<button class="btn sm" type="button" data-rhist="${esc(r.claim)}" title="The eClaimLink files found for this claim">Files</button></td><td>${inRecords(r.claim)}</td></tr>`).join("") || `<tr><td colspan="20" class="empty">No claims match.</td></tr>`}
     </tbody></table></div>${list.length > 1000 ? `<p class="muted">Showing the first 1,000 of ${list.length}. Download the CSV for all of them.</p>` : ""}</section>`;
 };
 // Resubmit from the due dates page: a claim not in the records yet is copied in from its eClaimLink submission file,
@@ -2848,6 +2853,23 @@ async function openForResub(id, btn){
   } catch(e){ if (btn){ btn.disabled = false; btn.textContent = "Resubmit"; } return toast(e.message); }
   if (r && !r.resubOn) UI.forceResub = id;
   render(); claimDlg(id);
+}
+// Every eClaimLink file found for one claim, in order, to see why it shows as due
+function resubHistDlg(id){
+  const r = (resubDue() || []).find(x => x.claim === id); if (!r) return;
+  const w = UI.rep.subWin || {}, wr = UI.rep.raWin || {};
+  openDlg(dlgHead(`Files for <span class="mono">${esc(id)}</span>`, `Claim files searched ${w.a?fmtD(w.a):"–"} to ${w.b?fmtD(w.b):"–"}, remittances ${wr.a?fmtD(wr.a):"–"} to ${wr.b?fmtD(wr.b):"–"}.`) +
+  `<div class="dlg-body"><div class="table-wrap"><table><thead><tr><th>Date and time</th><th>What</th><th>File</th><th class="num">Net AED</th><th class="num">Paid</th><th class="num">Denied</th><th>Codes / comment</th></tr></thead><tbody>
+    ${(r.hist||[]).map(h => `<tr><td class="mono muted">${esc(fmtD(h.at.slice(0,10)) + h.at.slice(10,16))}</td><td>${h.k === "Resubmission sent" ? `<b>${h.k}</b>` : h.k}</td><td class="mono" style="font-size:12px">${esc(h.file||"–")}</td><td class="num">${h.net!=null?aed(h.net):"–"}</td><td class="num">${h.paid!=null?aed(h.paid):"–"}</td><td class="num">${h.denied!=null?aed(h.denied):"–"}</td><td class="wrap-cell">${esc(h.note||"–")}</td></tr>`).join("")}
+  </tbody></table></div>
+  <p class="muted" style="font-size:12.5px">${r.again ? "This claim was resubmitted and then rejected again, so it is due again from the latest rejection." : r.resubs ? "" : `No resubmission file for this claim was found in these dates. If it was resubmitted on the eClaimLink portal, make sure the end date is today and click Search eClaimLink again; files sent on the portal more than a few months ago may only be in the eClaimLink archive. You can also mark it with Already resubmitted.`}</p></div>`);
+}
+function resubMarkDlg(id){
+  openDlg(dlgHead(`Already resubmitted · <span class="mono">${esc(id)}</span>`, "For a claim resubmitted on the eClaimLink portal whose file was not found. It then counts as resubmitted on this page, for everyone.") +
+  `<div class="dlg-body"><div class="form-grid"><div class="field"><label for="rmDate">Resubmitted on</label><input type="date" id="rmDate" value="${TODAY}" max="${TODAY}"></div></div>
+   <div class="actions"><button class="btn" type="button" data-close>Cancel</button><button class="btn primary" id="rmSave" type="button">Mark as resubmitted</button></div></div>`);
+  $("#rmSave").onclick = () => { const d = $("#rmDate").value; if (!d) return toast("Choose the date");
+    S.resubMarks = {...(S.resubMarks||{}), [id]: {d, by: whoAmI()}}; closeDlg(); done(`${id} marked as resubmitted on ${fmtD(d)}`); };
 }
 function resubPayerDlg(){
   const cur = Object.entries(S.resubDaysPayer||{}).map(([k,v]) => `${k}, ${v}`).join("\n");
@@ -3444,6 +3466,9 @@ function bindReports(){
     u.busy = ""; u.progress = ""; render(); };
   $("#repNames").onclick = () => payerNamesDlg("payer"); $("#repDocNames").onclick = () => payerNamesDlg("doctor");
   document.querySelectorAll("#view [data-resub]").forEach(b => b.onclick = e => { e.stopPropagation(); openForResub(b.dataset.resub, b); });
+  document.querySelectorAll("#view [data-rhist]").forEach(b => b.onclick = e => { e.stopPropagation(); resubHistDlg(b.dataset.rhist); });
+  document.querySelectorAll("#view [data-mark]").forEach(b => b.onclick = e => { e.stopPropagation(); resubMarkDlg(b.dataset.mark); });
+  document.querySelectorAll("#view [data-unmark]").forEach(b => b.onclick = e => { e.stopPropagation(); const m = {...(S.resubMarks||{})}; delete m[b.dataset.unmark]; S.resubMarks = m; done(`${b.dataset.unmark} is no longer marked as resubmitted`); });
   const st = $("#repStatus"); if (st) st.onchange = () => { u.status = st.value; render(); };
   const rd = $("#rdDays"); if (rd) rd.onchange = () => { const n = Math.round(+rd.value); if (n > 0) { S.resubDays = n; save(); } render(); };
   const rp = $("#rdPayers"); if (rp) rp.onclick = resubPayerDlg;
