@@ -662,7 +662,7 @@ R.claims = () => {
   const STS = ["Draft","Not submitted","Submitted","Resubmitted","Paid","Partially paid","Rejected","Closed"];
   const nOut = S.claims.filter(c => outLabActs(c).length).length;
   return head("Claims","Every insurance claim from encounter to settlement. Open a claim to see activities, payer decisions and history.",
-    `<button class="btn" id="importClaims" type="button">Import claims</button><button class="btn" id="outLabSet" type="button" title="TPAs and insurance companies whose lab tests are outsourced">Outsourced lab</button>${nOut?`<button class="btn" id="outLabBulk" type="button" style="color:var(--bad)">Remove outsourced lab (${nOut})</button>`:""}<button class="btn" id="checkAll" type="button" ${S.claims.length?"":"disabled"}>Check all claims</button><button class="btn" id="claimsXml" type="button" ${list.length?"":"disabled"} title="The claims shown, as eClaimLink XML">Download XML (${list.length})</button><button class="btn primary" id="submitDrafts" type="button" ${ready.length?"":"disabled"}>Submit ${ready.length} checked claim${ready.length===1?"":"s"}</button>`) +
+    `<button class="btn" id="importClaims" type="button">Import claims</button><button class="btn" id="paRulesBtn" type="button" title="Payers that need an approval code on their claims">Approval rules</button><button class="btn" id="outLabSet" type="button" title="TPAs and insurance companies whose lab tests are outsourced">Outsourced lab</button>${nOut?`<button class="btn" id="outLabBulk" type="button" style="color:var(--bad)">Remove outsourced lab (${nOut})</button>`:""}<button class="btn" id="checkAll" type="button" ${S.claims.length?"":"disabled"}>Check all claims</button><button class="btn" id="claimsXml" type="button" ${list.length?"":"disabled"} title="The claims shown, as eClaimLink XML">Download XML (${list.length})</button><button class="btn primary" id="submitDrafts" type="button" ${ready.length?"":"disabled"}>Submit ${ready.length} checked claim${ready.length===1?"":"s"}</button>`) +
   (drafts.length ? `<div class="result ${nBlocked?"warn":"ok"}" style="margin-bottom:12px"><div><b>Claim check:</b> ${ready.length} of ${drafts.length} draft claims are ready to submit${nBlocked?`. ${nBlocked} ha${nBlocked===1?"s":"ve"} errors and will not be sent until fixed. <button class="btn sm" id="showBlocked" type="button">Show them</button>`:"."}</div></div>` : "") +
   `<div class="filters">
     <input type="text" id="fq" placeholder="Search claim, patient or card" value="${esc(UI.claimQ)}" style="flex:1 1 220px">
@@ -1038,6 +1038,8 @@ function checkClaim(c){
     if (a.ps > a.gross) err("",`${tag}: patient share is more than the gross amount.`);
   });
   priceIssues(c).forEach(i => out.push(i));
+  const pr = paRule(c);
+  if (pr && !c.pa) err("AUTH-001", `${payerText(pr.k)} needs an approval code on ${pr.scope === "dental" ? "dental claims" : "every claim, including consultations"}. Enter it below or with Correct claim.`);
   const ol = outLabActs(c);
   if (ol.length) err("", `${ol.length} lab test${ol.length===1?"":"s"} (${ol.map(a => a.code).join(", ")}, AED ${aed(ol.reduce((x,a) => x + a.net, 0))}) ${ol.length===1?"is":"are"} outsourced for ${payerText(outLabRule(c))}. Remove ${ol.length===1?"it":"them"} with Remove outsourced lab before submitting.`);
   // Lab tests (CPT 80000–89999) carry their result as an <Observation> in the claim file.
@@ -1053,7 +1055,7 @@ function checkClaim(c){
   if (dup) err("DUPL-002",`Claim ${dup.id} already bills the same service for this patient on ${fmtD(c.enc)}.`);
   if (paDepartments().includes(c.dept)) {
     const pa = c.pa && S.auths.find(x => x.id === c.pa);
-    if (!c.pa) err("AUTH-001",`${c.dept} usually needs prior approval, and no approval number is on the claim.`);
+    if (!c.pa){ if (!paRule(c)) err("AUTH-001",`${c.dept} usually needs prior approval, and no approval number is on the claim.`); }
     else if (pa && /Rejected/.test(pa.status)) err("AUTH-001",`Prior approval ${c.pa} was rejected.`);
     else if (pa && pa.status === "Pending") warn("AUTH-001",`Prior approval ${c.pa} is still waiting for the payer.`);
     else if (pa && pa.validTo && c.enc > pa.validTo) err("AUTH-003",`Prior approval ${c.pa} expired ${fmtD(pa.validTo)}.`);
@@ -1123,6 +1125,7 @@ function claimDlg(id){
     ${c.acts.map(a=>`<tr><td class="mono muted">${a.aid}</td><td><span class="code">${esc(a.code)}</span></td><td>${esc(a.desc)}${(a.obs||[]).filter(o=>o.value).map(o=>`<div class="muted" style="font-size:12px">${esc(o.type||"Result")}${o.code?" "+esc(o.code):""}: ${esc(o.value.length>80?o.value.slice(0,80)+"…":o.value)}${o.unit?" "+esc(o.unit):""}</div>`).join("")}</td><td class="num">${a.qty}</td><td class="num">${aed(a.gross)}</td><td class="num">${aed(a.ps)}</td><td class="num">${aed(a.net)}</td><td class="num">${c.status==="Draft"||c.status==="Submitted"&&!c.remits.length?"–":aed(a.paid)}</td><td>${a.denial?`<span class="code" title="${esc(DENIALS[a.denial]||"")}">${a.denial}</span>`:""}</td></tr>`).join("")}
     </tbody><tfoot><tr><td colspan="4">Totals</td><td class="num">${aed(t.gross)}</td><td class="num">${aed(t.ps)}</td><td class="num">${aed(t.net)}</td><td class="num">${aed(t.paid)}</td><td>${t.outstanding?`Due ${aed(t.outstanding)}`:""}</td></tr></tfoot></table></div>
     ${c.status==="Draft"||c.status==="Rejected"||status(c)==="Rejected"||status(c)==="Partially paid"?checkHtml(c):""}
+    ${(c.status==="Draft"||st==="Rejected"||st==="Partially paid") && paRule(c) && !c.pa?`<div class="result bad"><div><b>Approval code needed</b> for ${esc(payerText(paRule(c).k))}${paRule(c).scope==="dental"?" (dental claim)":""}. It is written on every activity in the claim file.</div><div class="actions"><input type="text" id="paQuick" placeholder="Approval code" style="width:200px" autocomplete="off"><button class="btn sm primary" data-act="paQuick" type="button">Save approval code</button></div></div>`:""}
     ${outLabActs(c).length?`<div class="result warn"><div><b>Outsourced lab:</b> ${outLabActs(c).map(a=>`<span class="code">${esc(a.code)}</span>`).join(" ")} for ${esc(payerText(outLabRule(c)))}. Removing them also removes their share of the co-pay.</div><div class="actions"><button class="btn sm primary" data-act="outLabRemove" type="button">Remove outsourced lab</button></div></div>`:""}
     ${(c.outLab||[]).length?`<div class="result"><div><b>Removed as outsourced lab:</b> ${c.outLab.map(a=>`<span class="code">${esc(a.code)}</span> AED ${aed(a.net)} (co-pay ${aed(a.ps)})`).join(", ")} · by ${esc(c.outLab[0].by||"–")} on ${fmtD(c.outLab[0].on)}</div>${c.status==="Draft"||c.status==="Not submitted"?`<div class="actions"><button class="btn sm" data-act="outLabRestore" type="button">Restore lab tests</button></div>`:""}</div>`:""}
     ${c.acts.some(a=>a.denial)?`<div class="result bad">${[...new Set(c.acts.filter(a=>a.denial).map(a=>a.denial))].map(k=>`<div><span class="code">${k}</span> ${esc(DENIALS[k]||"")}</div>`).join("")}</div>`:""}
@@ -1261,6 +1264,8 @@ function bindDlg(){
         .catch(e=>{ toast(e.message); claimDlg(c.id); }); return; }
     if (a==="submit"){ submitClaim(claimById(dlg.dataset.claim)); done("Claim submitted"); claimDlg(dlg.dataset.claim); }
     if (a==="labs"){ labDlg(dlg.dataset.claim); return; }
+    if (a==="paQuick"){ const c=claimById(dlg.dataset.claim), v=$("#paQuick").value.trim(); if (!v) return toast("Enter the approval code first");
+      c.pa=v; c.corrected=true; c.events.push({d:TODAY,t:`Approval code ${v} entered by ${whoAmI()}`}); done(`Approval code ${v} saved`); claimDlg(c.id); return; }
     if (a==="outLabRemove"){ const c=claimById(dlg.dataset.claim), r=removeOutLab(c); done(`Removed ${r.n} outsourced lab test${r.n===1?"":"s"} (AED ${aed(r.net)}, co-pay AED ${aed(r.ps)})`); claimDlg(c.id); return; }
     if (a==="outLabRestore"){ const c=claimById(dlg.dataset.claim), n=restoreOutLab(c); done(`Restored ${n} lab test${n===1?"":"s"}`); claimDlg(c.id); return; }
     if (a==="correct"){ correctDlg(dlg.dataset.claim); return; }
@@ -1392,6 +1397,7 @@ function bindView(){
     $("#importClaims").onclick=claimsImportDlg;
     $("#checkAll").onclick=checkAllDlg;
     $("#outLabSet").onclick=outLabSetDlg;
+    $("#paRulesBtn").onclick=paRulesDlg;
     const olb=$("#outLabBulk"); if (olb) olb.onclick=()=>outLabBulkDlg();
     $("#claimsXml").onclick=()=>downloadClaimsXml((UI.claimList||[]).map(claimById).filter(Boolean));
     const sb=$("#showBlocked"); if (sb) sb.onclick=()=>{ UI.claimStatus="Draft"; UI.claimPayer=""; UI.claimTpa=""; UI.claimQ=""; UI.claimDept=""; UI.claimFrom=""; UI.claimTo=""; render(); };
@@ -2112,7 +2118,10 @@ function applyCorrections(doc, ce, c){
     if (!a) { const p = el.previousSibling; if (p && p.nodeType === 3 && !p.textContent.trim()) p.remove(); el.remove(); continue; }
     setText(el, "Code", a.code); setText(el, "Quantity", String(a.qty)); setText(el, "Net", r2(a.net).toFixed(2)); newDate(el);
     if (c.doctor) setText(el, "Clinician", c.doctor);
-    if (c.pa && !setText(el, "PriorAuthorizationID", c.pa)) { const x = doc.createElement("PriorAuthorizationID"); x.textContent = c.pa; el.insertBefore(doc.createTextNode(ind + "  "), el.lastChild); el.insertBefore(x, el.lastChild); }
+    // DHA order: ... Clinician, PriorAuthorizationID, Observation
+    if (c.pa && !setText(el, "PriorAuthorizationID", c.pa)) { const x = doc.createElement("PriorAuthorizationID"); x.textContent = c.pa;
+      const ref = kids(el, "Observation")[0] || (kids(el, "Clinician")[0] || {}).nextSibling || null;
+      el.insertBefore(doc.createTextNode(ind + "  "), ref); el.insertBefore(x, ref); }
   }
   let after = kids(ce, "Activity").pop() || null;
   for (const a of c.acts.filter(a => !els.some(el => idOf(el) === a.aid))) {
@@ -2872,6 +2881,42 @@ R["rep-cpt"] = () => {
     </tbody><tfoot><tr><td>Total</td>${cells(t)}</tr></tfoot></table></div></section>`;
 };
 
+
+
+/* ---------- approval code rules ---------- */
+// Some payers need an approval code on every claim (consultations too), others only on dental claims.
+// Until rules are saved, payers are matched by name: NextCare, Lifeline and eCare on every claim, Oman on dental claims.
+const PA_DEFAULTS = [[/next\s*care/i, "all"], [/life\s*line/i, "all"], [/\be[\s-]?care\b/i, "all"], [/\boman\b/i, "dental"]];
+const isDentalAct = a => String(a.type) === "6" || /^D\d{4}$/i.test(a.code || "");
+function paRules(){
+  if (S.paRules) return S.paRules;
+  const out = {}, keys = new Set([...S.claims.flatMap(c => [c.tpa, c.payer]), ...Object.keys(S.payerNames || {})].filter(Boolean));
+  for (const k of keys){ const name = `${k} ${payerName(k)}`, hit = PA_DEFAULTS.find(([re]) => re.test(name)); if (hit) out[k] = hit[1]; }
+  return out;
+}
+// The rule for a claim: its TPA's or its payer's ("all" wins over "dental"); dental rules apply only to claims with dental work
+function paRule(c){
+  const r = paRules(), hits = [c.tpa, c.payer].filter(k => k && r[k]).map(k => ({k, scope:r[k]}));
+  const all = hits.find(h => h.scope === "all"); if (all) return all;
+  const dent = hits.find(h => h.scope === "dental");
+  return dent && (c.acts.some(isDentalAct) || /dent/i.test(c.dept || "")) ? dent : null;
+}
+function paRulesDlg(){
+  const r = paRules(), keys = [...new Set([...S.claims.flatMap(c => [c.tpa, c.payer]), ...Object.keys(r)].filter(Boolean))].sort((a,b) => payerText(a).localeCompare(payerText(b)));
+  const opt = (v, label, cur) => `<option value="${v}" ${cur===v?"selected":""}>${label}</option>`;
+  openDlg(dlgHead("Approval rules", `Claims for the TPAs and insurance companies set here need an approval code. A claim without one shows an error in the claim check and is not sent until the code is entered.${S.paRules ? "" : " Suggested from the names: NextCare, Lifeline and eCare on every claim, Oman on dental claims. Check them and save."}`,
+    `<button class="btn sm primary" id="prSave" type="button">Save</button>`) +
+  `<div class="dlg-body">${keys.length ? `<div class="table-wrap"><table><thead><tr><th>TPA / insurance</th><th>Approval code needed on</th></tr></thead><tbody>
+    ${keys.map(k => `<tr><td>${esc(payerText(k))}</td><td><select class="prSel" data-k="${esc(k)}">${opt("", "Not needed", r[k]||"")}${opt("all", "Every claim, including consultations", r[k])}${opt("dental", "Dental claims only", r[k])}</select></td></tr>`).join("")}
+    </tbody></table></div>` : `<p class="muted">No TPAs or insurance companies on the claims yet. Import claims first.</p>`}
+    <p class="muted" style="font-size:12.5px">A rule on a TPA covers every insurance company under it. Names come from Payer names on the report pages.</p></div>`);
+  $("#prSave").onclick = () => {
+    const m = {}; $("#dlgInner").querySelectorAll(".prSel").forEach(x => { if (x.value) m[x.dataset.k] = x.value; });
+    S.paRules = m; save(); dlg.close(); render();
+    const n = S.claims.filter(c => c.status === "Draft" && paRule(c) && !c.pa).length;
+    toast(`Saved ${Object.keys(m).length} approval rules. ${n} draft claim${n===1?" needs":"s need"} an approval code.`);
+  };
+}
 
 /* ---------- outsourced lab ---------- */
 // Lab tests for chosen TPAs or insurance companies are done by an outside lab, so they are removed from the claim
