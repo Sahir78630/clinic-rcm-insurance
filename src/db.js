@@ -58,6 +58,13 @@ CREATE TABLE IF NOT EXISTS eclaimlink_files (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS eclaimlink_in_file ON eclaimlink_files(direction, file_id);
 
+-- claim rows read from eClaimLink files for the reports; a file on eClaimLink never changes, so each is opened once
+CREATE TABLE IF NOT EXISTS eclaimlink_rows_cache (
+  key TEXT PRIMARY KEY,               -- format version, mode and file ID
+  json TEXT NOT NULL,
+  at TEXT DEFAULT (datetime('now'))
+);
+
 -- test-mode stand-in for the eClaimLink inbox
 CREATE TABLE IF NOT EXISTS eclaimlink_mock_inbox (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

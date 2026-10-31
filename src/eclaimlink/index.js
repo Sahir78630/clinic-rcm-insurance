@@ -185,11 +185,18 @@ export async function report(ctx, files) {
 export async function rows(ctx, files) {
   if (!Array.isArray(files) || !files.length) throw badRequest("Choose files");
   const list = files.slice(0, 200), out = [], errors = [];
+  // Files already read are taken from the cache, so only new files are downloaded from eClaimLink
+  const m = mode(ctx.env), key = f => `r1:${m}:${f.archive ? "A" : ""}${f.fileId}`;
+  const get = ctx.db.prepare("SELECT json FROM eclaimlink_rows_cache WHERE key = ?"), put = ctx.db.prepare("INSERT OR REPLACE INTO eclaimlink_rows_cache (key, json) VALUES (?, ?)");
+  const todo = [];
+  for (const f of list) { const c = get.get(key(f)); if (c) { const r = JSON.parse(c.json); out.push({ ...r, fileId: f.fileId, transactionDate: f.transactionDate || r.transactionDate }); } else todo.push(f); }
   let next = 0;
-  const worker = async () => { while (next < list.length) { const f = list[next++];
+  const worker = async () => { while (next < todo.length) { const f = todo[next++];
     try { const v = await view(ctx, f.fileId, { archive: f.archive });
-      out.push({ fileId: f.fileId, fileName: v.fileName || f.fileName || null, transactionDate: f.transactionDate || v.summary.header.date, type: v.summary.type, header: v.summary.header, rows: v.summary.rows });
+      const r = { fileId: f.fileId, fileName: v.fileName || f.fileName || null, transactionDate: f.transactionDate || v.summary.header.date, type: v.summary.type, header: v.summary.header, rows: v.summary.rows };
+      if (v.summary.type) put.run(key(f), JSON.stringify(r));
+      out.push(r);
     } catch (e) { errors.push({ fileId: f.fileId, error: e.message }); } } };
-  await Promise.all(Array.from({ length: Math.min(4, list.length) }, worker));
-  return { files: out, errors, truncated: files.length > list.length };
+  await Promise.all(Array.from({ length: Math.min(6, todo.length) }, worker));
+  return { files: out, errors, cached: list.length - todo.length, truncated: files.length > list.length };
 }

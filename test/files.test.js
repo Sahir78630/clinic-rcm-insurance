@@ -39,3 +39,16 @@ test("claim attachments: upload, open, remove", async () => {
     assert.equal((await post("/api/files", { claim: "C-1", name: "e.pdf", data: "" })).status, 400);
   } finally { srv.close(); }
 });
+
+test("eClaimLink report rows are read once and then come from the cache", async () => {
+  const { rows } = await import("../src/eclaimlink/index.js");
+  const db = openDb(":memory:");
+  db.prepare("INSERT INTO eclaimlink_mock_inbox (file_name, sender, receiver, record_count, xml) VALUES (?,?,?,?,?)")
+    .run("RA_1.xml", "INS015", "DHA-F-1", 1, `<Remittance.Advice><Header><SenderID>INS015</SenderID><ReceiverID>DHA-F-1</ReceiverID><TransactionDate>01/10/2026 10:00</TransactionDate><RecordCount>1</RecordCount></Header><Claim><ID>C1</ID><Activity><ID>A1</ID><Net>100</Net><PaymentAmount>0</PaymentAmount><DenialCode>MNEC-004</DenialCode></Activity></Claim></Remittance.Advice>`);
+  const ctx = { db, env: { ECLAIMLINK_MODE: "mock" } };
+  const a = await rows(ctx, [{ fileId: "M1" }]);
+  assert.equal(a.cached, 0); assert.equal(a.files[0].rows[0].id, "C1");
+  db.prepare("DELETE FROM eclaimlink_mock_inbox").run(); // gone from "eClaimLink": must come from the cache
+  const b = await rows(ctx, [{ fileId: "M1" }]);
+  assert.equal(b.cached, 1); assert.equal(b.errors.length, 0); assert.deepEqual(b.files[0].rows, a.files[0].rows);
+});

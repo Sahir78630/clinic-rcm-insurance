@@ -2509,7 +2509,7 @@ function localRows(kind){
   }
   return out;
 }
-// eClaimLink: search in windows of up to 90 days, then open the files 200 at a time
+// eClaimLink: search in windows of up to 90 days, then open the files 40 at a time
 async function loadRepRows(kind, w){
   const u = UI.rep, type = kind === "ra" ? "Remittance.Advice" : "Claim.Submission", direction = kind === "ra" ? "received" : "sent", what = kind === "ra" ? "remittances" : "claim submissions";
   const found = [];
@@ -2520,9 +2520,12 @@ async function loadRepRows(kind, w){
     found.push(...r.files);
   }
   const rows = [], errors = [];
-  for (let i = 0; i < found.length; i += 200){
-    u.progress = `Opening ${what} files ${i+1}–${Math.min(found.length, i+200)} of ${found.length}…`; render();
-    const r = await api("/eclaimlink/rows", {files: found.slice(i, i+200).map(f => ({fileId:f.fileId, fileName:f.fileName, transactionDate:f.transactionDate}))});
+  // Small batches, so each request finishes well within the web link's time limit; files opened before come from the clinic server's cache
+  const N = 40;
+  for (let i = 0; i < found.length; i += N){
+    u.progress = `Opening ${what} files ${i+1}–${Math.min(found.length, i+N)} of ${found.length}…`; render();
+    const body = {files: found.slice(i, i+N).map(f => ({fileId:f.fileId, fileName:f.fileName, transactionDate:f.transactionDate}))};
+    let r; try { r = await api("/eclaimlink/rows", body); } catch(e){ if (/sign in/i.test(e.message)) throw e; r = await api("/eclaimlink/rows", body); }
     errors.push(...r.errors);
     for (const f of r.files){
       const date = dhpoToIso(f.transactionDate) || "", at = date + String(f.transactionDate||"").slice(10);
