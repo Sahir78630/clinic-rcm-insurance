@@ -414,7 +414,13 @@ function renderNav(){
     `<button type="button" data-go="${id}" ${id===current?'aria-current="page"':""}><span>${label}</span>${n[id]?`<span class="count">${n[id]}</span>`:""}</button>`).join("")}</div>`).join("");
 }
 function go(v){ if (v !== current && typeof UI !== "undefined" && UI.rep) { UI.rep.status = ""; UI.rep.q = ""; } current = v; try { history.replaceState(null,"","#"+v); } catch(e) {} render(); window.scrollTo(0,0); }
-function render(){ GEN++; renderBrand(); renderNav(); $("#view").innerHTML = SHARED && !SYNC.ready ? `<section class="panel"><p class="muted">Loading the shared records from the clinic server…</p></section>` : R[current](); bindView(); ddmmDates($("#view")); }
+function render(){ GEN++; renderBrand(); renderNav();
+  // While the shared records load there is nothing to bind; a page that fails shows the error instead of hanging
+  if (SHARED && !SYNC.ready){ $("#view").innerHTML = `<section class="panel"><p class="muted">Loading the shared records from the clinic server…</p></section>`; return; }
+  try { $("#view").innerHTML = R[current](); bindView(); ddmmDates($("#view")); }
+  catch(e){ console.error(e); $("#view").innerHTML = `<section class="panel"><div class="result bad">This page could not be shown: ${esc(e.message)}</div><div class="actions" style="margin-top:10px"><button class="btn" type="button" data-go="overview">Go to Overview</button></div></section>`;
+    $("#view").querySelectorAll("[data-go]").forEach(b => b.onclick = () => go(b.dataset.go)); }
+}
 // Browsers show date boxes in the computer's own format (often mm/dd/yyyy). Each date box is shown instead as a
 // dd/mm/yy text box with a calendar button; the original box stays underneath, keeps its id, value and handlers,
 // and receives the change.
