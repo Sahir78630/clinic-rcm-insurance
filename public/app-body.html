@@ -656,6 +656,7 @@ R.claims = () => {
     if (UI.claimPayer && c.payer !== UI.claimPayer) return false;
     if (UI.claimStatus && status(c) !== UI.claimStatus) return false;
     if (UI.claimDept && c.dept !== UI.claimDept) return false;
+    if (UI.claimVia && sentVia(c) !== UI.claimVia) return false;
     if (UI.claimFrom && c.enc < UI.claimFrom) return false;
     if (UI.claimTo && c.enc > UI.claimTo) return false;
     return true;
@@ -675,12 +676,13 @@ R.claims = () => {
     <select id="ftpa" title="TPA the claim file was sent to"><option value="">All TPAs</option>${[...new Set(S.claims.map(c=>c.tpa).filter(Boolean))].sort().map(t=>`<option value="${esc(t)}" ${UI.claimTpa===t?"selected":""}>${esc(payerText(t))}</option>`).join("")}</select>
     <select id="fpayer"><option value="">All payers</option>${[...new Set([...PAYERS.map(p=>p.id), ...S.claims.filter(c=>!UI.claimTpa||c.tpa===UI.claimTpa).map(c=>c.payer)])].filter(Boolean).sort((a,b)=>payerText(a).localeCompare(payerText(b))).map(p=>`<option value="${esc(p)}" ${UI.claimPayer===p?"selected":""}>${esc(payerText(p))}</option>`).join("")}</select>
     <select id="fstatus"><option value="">All statuses</option>${STS.map(s=>`<option ${UI.claimStatus===s?"selected":""}>${s}</option>`).join("")}</select>
+    <select id="fvia" title="How the claim was submitted"><option value="">Sent any way</option><option value="software" ${UI.claimVia==="software"?"selected":""}>Sent through this software</option><option value="portal" ${UI.claimVia==="portal"?"selected":""}>Sent on the eClaimLink portal</option></select>
     <select id="fdept"><option value="">All departments</option>${Object.keys(DEPTS).map(d=>`<option ${UI.claimDept===d?"selected":""}>${esc(d)}</option>`).join("")}</select>
     <label class="muted" style="display:flex;gap:6px;align-items:center;font-size:12.5px">Visit date <input type="date" id="ffrom" value="${UI.claimFrom}" aria-label="Visit date from"> to <input type="date" id="fto" value="${UI.claimTo}" aria-label="Visit date to"></label>
     ${UI.claimFrom||UI.claimTo?`<button class="btn sm" id="fdclear" type="button">Clear dates</button>`:""}
   </div>
   <div class="table-wrap"><table><thead><tr><th>Claim</th><th>Patient</th><th>Payer / TPA</th><th>Doctor</th><th>Department</th><th>Encounter</th><th>Submitted</th><th class="num">Co-pay</th><th class="num">Net AED</th><th class="num">Paid</th><th class="num">Outstanding</th><th>Status</th><th>Check</th></tr></thead><tbody>
-  ${list.slice(0, UI.claimShow || 300).map(c=>{const t=totals(c);return `<tr class="click" data-claim="${c.id}" tabindex="0"><td class="mono">${c.id}</td><td>${esc(patient(c.patient).name)}</td><td>${esc(payer(c.payer).name)}${tpaLine(c)}</td><td>${esc(docLabel(c.doctor))}</td><td>${esc(c.dept)}</td><td class="muted">${fmtD(c.enc)}</td><td class="muted">${fmtD(c.submitted)}</td><td class="num">${aed(t.ps)}</td><td class="num">${aed(t.net)}</td><td class="num">${aed(t.paid)}</td><td class="num">${t.outstanding?aed(t.outstanding):"–"}</td><td>${pill(status(c))}${c.alreadySent?`<div class="muted" style="font-size:11.5px">already on eClaimLink ${fmtD(c.alreadySent.date)}</div>`:""}</td><td>${c.status==="Draft"?pill(checkState(c)):""}</td></tr>`}).join("") || `<tr><td colspan="13" class="empty">No claims match these filters.</td></tr>`}
+  ${list.slice(0, UI.claimShow || 300).map(c=>{const t=totals(c);return `<tr class="click" data-claim="${c.id}" tabindex="0"><td class="mono">${c.id}</td><td>${esc(patient(c.patient).name)}</td><td>${esc(payer(c.payer).name)}${tpaLine(c)}</td><td>${esc(docLabel(c.doctor))}</td><td>${esc(c.dept)}</td><td class="muted">${fmtD(c.enc)}</td><td class="muted">${fmtD(c.submitted)}</td><td class="num">${aed(t.ps)}</td><td class="num">${aed(t.net)}</td><td class="num">${aed(t.paid)}</td><td class="num">${t.outstanding?aed(t.outstanding):"–"}</td><td>${pill(status(c))}${sentVia(c)?`<div class="muted" style="font-size:11.5px">${sentVia(c)==="portal"?`via eClaimLink portal${c.alreadySent?" "+fmtD(c.alreadySent.date):""}`:"via this software"}</div>`:""}</td><td>${c.status==="Draft"?pill(checkState(c)):""}</td></tr>`}).join("") || `<tr><td colspan="13" class="empty">No claims match these filters.</td></tr>`}
   ${list.length > (UI.claimShow || 300) ? `<tr><td colspan="13" class="empty">Showing ${UI.claimShow || 300} of ${list.length} claims (totals below are for all of them). <button class="btn sm" id="claimMore" type="button">Show ${Math.min(500, list.length - (UI.claimShow || 300))} more</button> Or narrow the list with the filters above.</td></tr>` : ""}
   </tbody><tfoot><tr><td colspan="7">${list.length} claims</td><td class="num">${aed(sum.ps)}</td><td class="num">${aed(sum.net)}</td><td class="num">${aed(sum.paid)}</td><td class="num">${aed(sum.out)}</td><td></td><td></td></tr></tfoot></table></div>`;
 };
@@ -1259,7 +1261,7 @@ function importAppts(txt, replace){
 }
 
 /* ---------- actions ---------- */
-function submitClaim(c){ c.status="Submitted"; c.submitted=TODAY; c.events.push({d:TODAY,t:"Submitted to "+payer(c.payer).name+" via eClaimLink"}); }
+function submitClaim(c){ c.status="Submitted"; c.submitted=TODAY; c.sentVia="software"; c.events.push({d:TODAY,t:"Submitted to "+payer(c.payer).name+" via eClaimLink"}); }
 function doVerify(ap){
   const res = verify(ap.patient,null,null,ap.dept);
   ap.status = res.status; ap.checked = nowTime();
@@ -1411,6 +1413,7 @@ function bindView(){
     $("#checkAll").onclick=checkAllDlg;
     $("#outLabSet").onclick=outLabSetDlg;
     $("#paRulesBtn").onclick=paRulesDlg;
+    $("#fvia").onchange=e=>{UI.claimVia=e.target.value;render();};
     const cm=$("#claimMore"); if (cm) cm.onclick=()=>{ UI.claimShow=(UI.claimShow||300)+500; render(); };
     const dc=$("#dupCheck"); if (dc) dc.onclick=()=>checkDraftsSent();
     const rd=$("#rmDrafts"); if (rd) rd.onclick=removeDraftsDlg;
@@ -2909,11 +2912,20 @@ R["rep-cpt"] = () => {
 
 
 /* ---------- drafts: already sent? and clearing them ---------- */
+// How a sent claim reached eClaimLink: "software" (sent from here), "portal" (found on eClaimLink, sent outside this software), or "" (not known)
+const sentVia = c => {
+  if (c.status === "Draft" || c.status === "Not submitted") return "";
+  if (c.sentVia) return c.sentVia;
+  if (c.eclTx || c.events.some(e => /eClaimLink transaction/.test(e.t))) return "software";
+  if (c.alreadySent || c.events.some(e => /found on eClaimLink/i.test(e.t))) return "portal";
+  return "";
+};
 // Looks for every draft claim in the claim files sent on eClaimLink (from the earliest visit to today).
 // A draft found there was already submitted: it becomes Submitted with the date and file, so it is not sent twice.
 async function checkDraftsSent(){
   const drafts = S.claims.filter(c => c.status === "Draft"); if (!drafts.length) return;
-  if (!ECL()) return toast("Sign in to eClaimLink on the eClaimLink files page first");
+  // In test mode the search only sees files sent from this software's test mode, never the real portal
+  if (LIVE.ecl !== "live") return toast("Sign in to eClaimLink first (eClaimLink files page, with your DHPO login). Without signing in the check only searches test mode, so claims sent on the eClaimLink portal cannot be found.");
   const a = drafts.reduce((m,c) => c.enc && c.enc < m ? c.enc : m, TODAY);
   UI.dupBusy = "Searching eClaimLink…"; render();
   try {
@@ -2921,10 +2933,10 @@ async function checkDraftsSent(){
     const first = new Map(); for (const x of r.rows) if (x.claim && (!first.has(x.claim) || x.date < first.get(x.claim).date)) first.set(x.claim, x);
     let n = 0;
     for (const c of drafts){ const x = first.get(c.id); if (!x) continue;
-      c.status = "Submitted"; c.submitted = x.date || TODAY; c.alreadySent = {date:x.date, file:x.file};
-      c.events.push({d:TODAY, t:`Found on eClaimLink: already submitted ${fmtD(x.date)} in ${x.file}${LIVE.ecl==="live"?"":" (test mode)"}; not sent again`}); n++; }
+      c.status = "Submitted"; c.submitted = x.date || TODAY; c.alreadySent = {date:x.date, file:x.file}; c.sentVia = "portal";
+      c.events.push({d:TODAY, t:`Found on eClaimLink: already submitted directly on the eClaimLink portal ${fmtD(x.date)} in ${x.file}; not sent again`}); n++; }
     UI.dupBusy = ""; UI.rep.progress = ""; save(); render();
-    toast(`Searched ${r.files} claim files sent on eClaimLink since ${fmtD(a)}. ${n} of ${drafts.length} drafts were already submitted and are now marked Submitted; ${drafts.length - n} were not found and stay as drafts.` + (r.errors.length ? ` ${r.errors.length} files could not be opened.` : ""));
+    toast(`Searched ${r.files} claim files sent on eClaimLink since ${fmtD(a)}. ${n} of ${drafts.length} drafts were already submitted on the eClaimLink portal and are now marked Submitted (via eClaimLink portal); ${drafts.length - n} were not found and stay as drafts for submitting.` + (r.errors.length ? ` ${r.errors.length} files could not be opened.` : ""));
   } catch(e){ UI.dupBusy = ""; render(); toast("Checking eClaimLink failed: " + e.message); }
 }
 // Removes the drafts in the list shown (use the filters to choose which), after confirmation. Sent claims are never removed.
