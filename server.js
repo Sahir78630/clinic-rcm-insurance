@@ -12,8 +12,10 @@ import * as ecl from "./src/eclaimlink/index.js";
 import { settings, serviceInfo } from "./src/eclaimlink/soap.js";
 import * as auth from "./src/auth.js";
 import * as shared from "./src/shared.js";
+import * as files from "./src/files.js";
 
 const MAX_BODY = 50 * 1024 * 1024;
+const SENT = Symbol("sent"); // a route that wrote its own response
 const SESSION_IDLE = 2 * 3600e3, SESSION_MAX = 12 * 3600e3, COOKIE = "rcm_ecl", USER_COOKIE = "rcm_user";
 
 // login: false skips website accounts (used by tests that exercise other parts of the API)
@@ -21,6 +23,7 @@ export function createApp({ db, cfg, env = process.env, fetchImpl, login = true 
   const ctx = { db, cfg, env, fetchImpl };
   auth.initAuth(db);
   shared.initShared(db);
+  files.initFiles(db);
   const appHtml = () => {
     const body = readFileSync(new URL("./public/app-body.html", import.meta.url), "utf8");
     return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -131,6 +134,14 @@ export function createApp({ db, cfg, env = process.env, fetchImpl, login = true 
       }
       return shared.push(db, b, u.username);
     }],
+    // Claim attachments: uploaded as JSON (base64), opened in the browser, removed by any signed-in user
+    ["POST", /^\/api\/files$/, async (req, url, m, res, u) => files.addFile(db, await readJson(req), u.username)],
+    ["GET", /^\/api\/files\/(\d+)$/, (req, url, m, res) => {
+      const f = files.getFile(db, Number(m[1]));
+      if (!f) throw Object.assign(new Error("File not found"), { code: 404 });
+      res.writeHead(200, files.fileHeaders(f)); res.end(f.data); return SENT;
+    }],
+    ["POST", /^\/api\/files\/(\d+)\/delete$/, (req, url, m) => files.removeFile(db, Number(m[1]))],
     ["GET", /^\/api\/health$/, () => ({ ok: true, provider: defaultProvider(env), eclaimlink: ecl.mode(env), facility: env.FACILITY_LICENSE || null, today: today() })],
     ["GET", /^\/api\/config$/, () => ({ payers: cfg.payers.map(({ code, name, kind, terms, eclaimlinkId }) => ({ code, name, kind, terms, eclaimlinkId })), approvalDepartments: cfg.approvalDepartments, csvColumns: CSV_COLUMNS, provider: defaultProvider(env) })],
     ["POST", /^\/api\/eligibility$/, async req => {
@@ -240,7 +251,7 @@ export function createApp({ db, cfg, env = process.env, fetchImpl, login = true 
       if (req.method === "GET" && page) return send(res, 200, appHtml(), "text/html; charset=utf-8");
       for (const [method, re, fn] of routes) {
         const m = url.pathname.match(re);
-        if (m && req.method === method) return send(res, 200, await fn(req, url, m, res, u));
+        if (m && req.method === method) { const out = await fn(req, url, m, res, u); return out === SENT ? undefined : send(res, 200, out); }
       }
       send(res, 404, { error: "Not found" });
     } catch (e) {

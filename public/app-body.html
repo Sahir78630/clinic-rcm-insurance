@@ -657,6 +657,10 @@ R.claims = () => {
     if (UI.claimStatus && status(c) !== UI.claimStatus) return false;
     if (UI.claimDept && c.dept !== UI.claimDept) return false;
     if (UI.claimVia && sentVia(c) !== UI.claimVia) return false;
+    if (UI.claimAtt === "needed" && !attNeeded(c)) return false;
+    if (UI.claimAtt === "ecg" && !isEcg(c)) return false;
+    if (UI.claimAtt === "dental" && !isDental(c)) return false;
+    if (UI.claimAtt === "has" && !atts(c).length) return false;
     if (UI.claimFrom && c.enc < UI.claimFrom) return false;
     if (UI.claimTo && c.enc > UI.claimTo) return false;
     return true;
@@ -668,8 +672,10 @@ R.claims = () => {
   const STS = ["Draft","Not submitted","Submitted","Resubmitted","Paid","Partially paid","Rejected","Closed"];
   const nOut = S.claims.filter(c => outLabActs(c).length).length;
   const shownDrafts = list.filter(c => c.status === "Draft" || c.status === "Not submitted").length;
+  const needAtt = drafts.filter(attNeeded), nEcg = needAtt.filter(isEcg).length, nDent = needAtt.filter(isDental).length;
   return head("Claims","Every insurance claim from encounter to settlement. Open a claim to see activities, payer decisions and history.",
-    `<button class="btn" id="importClaims" type="button">Import claims</button>${drafts.length && LIVE.on?`<button class="btn" id="dupCheck" type="button" title="Look for the draft claims on eClaimLink, so claims already sent are not sent twice">${UI.dupBusy?esc(UI.rep.progress||UI.dupBusy):`Check eClaimLink for ${drafts.length} draft${drafts.length===1?"":"s"}`}</button>`:""}${shownDrafts?`<button class="btn" id="rmDrafts" type="button" style="color:var(--bad)" title="Remove the draft claims in the list below">Remove ${shownDrafts} draft${shownDrafts===1?"":"s"}</button>`:""}<button class="btn" id="paRulesBtn" type="button" title="Payers that need an approval code on their claims">Approval rules</button><button class="btn" id="outLabSet" type="button" title="TPAs and insurance companies whose lab tests are outsourced">Outsourced lab</button>${nOut?`<button class="btn" id="outLabBulk" type="button" style="color:var(--bad)">Remove outsourced lab (${nOut})</button>`:""}<button class="btn" id="checkAll" type="button" ${S.claims.length?"":"disabled"}>Check all claims</button><button class="btn" id="claimsXml" type="button" ${list.length?"":"disabled"} title="The claims shown, as eClaimLink XML">Download XML (${list.length})</button><button class="btn primary" id="submitDrafts" type="button" ${ready.length?"":"disabled"}>Submit ${ready.length} checked claim${ready.length===1?"":"s"}</button>`) +
+    `<button class="btn" id="importClaims" type="button">Import claims</button>${drafts.length && LIVE.on?`<button class="btn" id="dupCheck" type="button" title="Look for the draft claims on eClaimLink, so claims already sent are not sent twice">${UI.dupBusy?esc(UI.rep.progress||UI.dupBusy):`Check eClaimLink for ${drafts.length} draft${drafts.length===1?"":"s"}`}</button>`:""}${shownDrafts?`<button class="btn" id="rmDrafts" type="button" style="color:var(--bad)" title="Remove the draft claims in the list below">Remove ${shownDrafts} draft${shownDrafts===1?"":"s"}</button>`:""}<button class="btn" id="paRulesBtn" type="button" title="Payers that need an approval code on their claims">Approval rules</button><button class="btn" id="attAlerts" type="button" title="Codes that mark a claim as ECG">Attachment alerts</button><button class="btn" id="outLabSet" type="button" title="TPAs and insurance companies whose lab tests are outsourced">Outsourced lab</button>${nOut?`<button class="btn" id="outLabBulk" type="button" style="color:var(--bad)">Remove outsourced lab (${nOut})</button>`:""}<button class="btn" id="checkAll" type="button" ${S.claims.length?"":"disabled"}>Check all claims</button><button class="btn" id="claimsXml" type="button" ${list.length?"":"disabled"} title="The claims shown, as eClaimLink XML">Download XML (${list.length})</button><button class="btn primary" id="submitDrafts" type="button" ${ready.length?"":"disabled"}>Submit ${ready.length} checked claim${ready.length===1?"":"s"}</button>`) +
+  (needAtt.length ? `<div class="result warn" style="margin-bottom:12px"><div><b>Attachments needed:</b> ${[nEcg&&`${nEcg} ECG claim${nEcg===1?"":"s"}`, nDent&&`${nDent} dental claim${nDent===1?"":"s"}`].filter(Boolean).join(" and ")} without an attachment. ${UI.claimAtt==="needed"?"":`<button class="btn sm" id="attNeedShow" type="button">Show them</button>`}</div></div>` : "") +
   (drafts.length ? `<div class="result ${nBlocked?"warn":"ok"}" style="margin-bottom:12px"><div><b>Claim check:</b> ${ready.length} of ${drafts.length} draft claims are ready to submit${nBlocked?`. ${nBlocked} ha${nBlocked===1?"s":"ve"} errors and will not be sent until fixed. <button class="btn sm" id="showBlocked" type="button">Show them</button>`:"."}</div></div>` : "") +
   `<div class="filters">
     <input type="text" id="fq" placeholder="Search claim, patient or card" value="${esc(UI.claimQ)}" style="flex:1 1 220px">
@@ -677,12 +683,13 @@ R.claims = () => {
     <select id="fpayer"><option value="">All payers</option>${[...new Set([...PAYERS.map(p=>p.id), ...S.claims.filter(c=>!UI.claimTpa||c.tpa===UI.claimTpa).map(c=>c.payer)])].filter(Boolean).sort((a,b)=>payerText(a).localeCompare(payerText(b))).map(p=>`<option value="${esc(p)}" ${UI.claimPayer===p?"selected":""}>${esc(payerText(p))}</option>`).join("")}</select>
     <select id="fstatus"><option value="">All statuses</option>${STS.map(s=>`<option ${UI.claimStatus===s?"selected":""}>${s}</option>`).join("")}</select>
     <select id="fvia" title="How the claim was submitted"><option value="">Sent any way</option><option value="software" ${UI.claimVia==="software"?"selected":""}>Sent through this software</option><option value="portal" ${UI.claimVia==="portal"?"selected":""}>Sent on the eClaimLink portal</option></select>
+    <select id="fatt" title="ECG and dental claims, and attachments"><option value="">Any attachments</option>${[["needed","Attachment needed (ECG or dental)"],["ecg","ECG claims"],["dental","Dental claims"],["has","With attachments"]].map(([v,l])=>`<option value="${v}" ${UI.claimAtt===v?"selected":""}>${l}</option>`).join("")}</select>
     <select id="fdept"><option value="">All departments</option>${Object.keys(DEPTS).map(d=>`<option ${UI.claimDept===d?"selected":""}>${esc(d)}</option>`).join("")}</select>
     <label class="muted" style="display:flex;gap:6px;align-items:center;font-size:12.5px">Visit date <input type="date" id="ffrom" value="${UI.claimFrom}" aria-label="Visit date from"> to <input type="date" id="fto" value="${UI.claimTo}" aria-label="Visit date to"></label>
     ${UI.claimFrom||UI.claimTo?`<button class="btn sm" id="fdclear" type="button">Clear dates</button>`:""}
   </div>
   <div class="table-wrap"><table><thead><tr><th>Claim</th><th>Patient</th><th>Payer / TPA</th><th>Doctor</th><th>Department</th><th>Encounter</th><th>Submitted</th><th class="num">Co-pay</th><th class="num">Net AED</th><th class="num">Paid</th><th class="num">Outstanding</th><th>Status</th><th>Check</th></tr></thead><tbody>
-  ${list.slice(0, UI.claimShow || 300).map(c=>{const t=totals(c);return `<tr class="click" data-claim="${c.id}" tabindex="0"><td class="mono">${c.id}</td><td>${esc(patient(c.patient).name)}</td><td>${esc(payer(c.payer).name)}${tpaLine(c)}</td><td>${esc(docLabel(c.doctor))}</td><td>${esc(c.dept)}</td><td class="muted">${fmtD(c.enc)}</td><td class="muted">${fmtD(c.submitted)}</td><td class="num">${aed(t.ps)}</td><td class="num">${aed(t.net)}</td><td class="num">${aed(t.paid)}</td><td class="num">${t.outstanding?aed(t.outstanding):"–"}</td><td>${pill(status(c))}${sentVia(c)?`<div class="muted" style="font-size:11.5px">${sentVia(c)==="portal"?`via eClaimLink portal${c.alreadySent?" "+fmtD(c.alreadySent.date):""}`:"via this software"}</div>`:""}</td><td>${c.status==="Draft"?pill(checkState(c)):""}</td></tr>`}).join("") || `<tr><td colspan="13" class="empty">No claims match these filters.</td></tr>`}
+  ${list.slice(0, UI.claimShow || 300).map(c=>{const t=totals(c);return `<tr class="click" data-claim="${c.id}" tabindex="0"><td class="mono">${c.id}${attBadges(c)}</td><td>${esc(patient(c.patient).name)}</td><td>${esc(payer(c.payer).name)}${tpaLine(c)}</td><td>${esc(docLabel(c.doctor))}</td><td>${esc(c.dept)}</td><td class="muted">${fmtD(c.enc)}</td><td class="muted">${fmtD(c.submitted)}</td><td class="num">${aed(t.ps)}</td><td class="num">${aed(t.net)}</td><td class="num">${aed(t.paid)}</td><td class="num">${t.outstanding?aed(t.outstanding):"–"}</td><td>${pill(status(c))}${sentVia(c)?`<div class="muted" style="font-size:11.5px">${sentVia(c)==="portal"?`via eClaimLink portal${c.alreadySent?" "+fmtD(c.alreadySent.date):""}`:"via this software"}</div>`:""}</td><td>${c.status==="Draft"?pill(checkState(c)):""}</td></tr>`}).join("") || `<tr><td colspan="13" class="empty">No claims match these filters.</td></tr>`}
   ${list.length > (UI.claimShow || 300) ? `<tr><td colspan="13" class="empty">Showing ${UI.claimShow || 300} of ${list.length} claims (totals below are for all of them). <button class="btn sm" id="claimMore" type="button">Show ${Math.min(500, list.length - (UI.claimShow || 300))} more</button> Or narrow the list with the filters above.</td></tr>` : ""}
   </tbody><tfoot><tr><td colspan="7">${list.length} claims</td><td class="num">${aed(sum.ps)}</td><td class="num">${aed(sum.net)}</td><td class="num">${aed(sum.paid)}</td><td class="num">${aed(sum.out)}</td><td></td><td></td></tr></tfoot></table></div>`;
 };
@@ -1054,6 +1061,7 @@ function checkClaimNow(c){
   priceIssues(c).forEach(i => out.push(i));
   const pr = paRule(c);
   if (pr && !c.pa) err("AUTH-001", `${payerText(pr.k)} needs an approval code on ${pr.scope === "dental" ? "dental claims" : "every claim, including consultations"}. Enter it below or with Correct claim.`);
+  if (attNeeded(c)) warn("", `${attTags(c).join(" and ")} claim: no attachment yet. Upload the ${attTags(c).map(attWhat).join(" and ")} on the claim.`);
   const ol = outLabActs(c);
   if (ol.length) err("", `${ol.length} lab test${ol.length===1?"":"s"} (${ol.map(a => a.code).join(", ")}, AED ${aed(ol.reduce((x,a) => x + a.net, 0))}) ${ol.length===1?"is":"are"} outsourced for ${payerText(outLabRule(c))}. Remove ${ol.length===1?"it":"them"} with Remove outsourced lab before submitting.`);
   // Lab tests (CPT 80000–89999) carry their result as an <Observation> in the claim file.
@@ -1144,6 +1152,7 @@ function claimDlg(id){
     ${outLabActs(c).length?`<div class="result warn"><div><b>Outsourced lab:</b> ${outLabActs(c).map(a=>`<span class="code">${esc(a.code)}</span>`).join(" ")} for ${esc(payerText(outLabRule(c)))}. Removing them also removes their share of the co-pay.</div><div class="actions"><button class="btn sm primary" data-act="outLabRemove" type="button">Remove outsourced lab</button></div></div>`:""}
     ${(c.outLab||[]).length?`<div class="result"><div><b>Removed as outsourced lab:</b> ${c.outLab.map(a=>`<span class="code">${esc(a.code)}</span> AED ${aed(a.net)} (co-pay ${aed(a.ps)})`).join(", ")} · by ${esc(c.outLab[0].by||"–")} on ${fmtD(c.outLab[0].on)}</div>${c.status==="Draft"||c.status==="Not submitted"?`<div class="actions"><button class="btn sm" data-act="outLabRestore" type="button">Restore lab tests</button></div>`:""}</div>`:""}
     ${c.acts.some(a=>a.denial)?`<div class="result bad">${[...new Set(c.acts.filter(a=>a.denial).map(a=>a.denial))].map(k=>`<div><span class="code">${k}</span> ${esc(DENIALS[k]||"")}</div>`).join("")}</div>`:""}
+    ${attHtml(c)}
     ${resubHist}
     <div class="actions">${act}</div>
     <div class="actions">${(c.status==="Draft"&&!blocked(c))||st==="Rejected"||st==="Partially paid"?`<button class="btn sm primary" data-act="correct" type="button">Correct claim</button>`:""}<button class="btn sm" data-act="labs" type="button">Enter lab results</button><button class="btn sm" data-act="dlxml" type="button">Download claim XML</button></div>
@@ -1272,6 +1281,15 @@ function bindDlg(){
   $("#dlgInner").querySelectorAll("[data-close]").forEach(b=>b.onclick=closeDlg);
   $("#dlgInner").querySelectorAll("[data-claim]").forEach(el=>el.onclick=()=>claimDlg(el.dataset.claim));
   $("#dlgInner").querySelectorAll("[data-newpa]").forEach(b=>b.onclick=()=>newPaDlg(b.dataset.newpa,b.dataset.dept));
+  const attC = () => claimById(dlg.dataset.claim);
+  const af = $("#attFile"); if (af) af.onchange = async () => { const c = attC(), fs = [...af.files]; if (!c || !fs.length) return;
+    toast(`Uploading ${fs.length} file${fs.length===1?"":"s"}…`);
+    try { const n = await addAttachments(c, fs); if (n) done(`${n} attachment${n===1?"":"s"} added to ${c.id}`); } catch(e){ toast(e.message); save(); }
+    claimDlg(c.id); };
+  $("#dlgInner").querySelectorAll("[data-attopen]").forEach(b=>b.onclick=e=>{ e.stopPropagation(); const x=atts(attC()).find(a=>String(a.id)===b.dataset.attopen); if (x) openAttachment(x); });
+  $("#dlgInner").querySelectorAll("[data-attdel]").forEach(b=>b.onclick=async e=>{ e.stopPropagation(); const c=attC(), x=atts(c).find(a=>String(a.id)===b.dataset.attdel);
+    if (!x || !confirm(`Remove ${x.name} from claim ${c.id}?`)) return;
+    try { await removeAttachment(c, x.id); done(`${x.name} removed`); } catch(err){ toast(err.message); } claimDlg(c.id); });
   $("#dlgInner").querySelectorAll("[data-act]").forEach(b=>b.onclick=()=>{
     const a = b.dataset.act;
     if (a==="submit" && ECL()){ const c=claimById(dlg.dataset.claim); b.disabled=true; b.textContent="Sending to eClaimLink…";
@@ -1281,6 +1299,11 @@ function bindDlg(){
     if (a==="labs"){ labDlg(dlg.dataset.claim); return; }
     if (a==="paQuick"){ const c=claimById(dlg.dataset.claim), v=$("#paQuick").value.trim(); if (!v) return toast("Enter the approval code first");
       c.pa=v; c.corrected=true; c.events.push({d:TODAY,t:`Approval code ${v} entered by ${whoAmI()}`}); done(`Approval code ${v} saved`); claimDlg(c.id); return; }
+    if (a==="attRemSave"){ const c=claimById(dlg.dataset.claim), v=$("#attRem").value.trim(); if (v===(c.attRemarks||"")) return toast("No change to the remarks");
+      c.attRemarks=v; c.events.push({d:TODAY,t:`Remarks ${v?"updated":"cleared"} by ${whoAmI()}`}); done("Remarks saved"); claimDlg(c.id); return; }
+    if (a==="ecgSave"){ const v=[...new Set($("#ecgCodes").value.split(/[\s,;]+/).map(x=>x.trim().toUpperCase()).filter(Boolean))]; if (!v.length) return toast("Enter at least one code");
+      S.ecgCodes=v; closeDlg(); done(`${v.length} ECG code${v.length===1?"":"s"} saved`); return; }
+    if (a==="ecgReset"){ S.ecgCodes=null; closeDlg(); done("Standard ECG codes in use"); return; }
     if (a==="outLabRemove"){ const c=claimById(dlg.dataset.claim), r=removeOutLab(c); done(`Removed ${r.n} outsourced lab test${r.n===1?"":"s"} (AED ${aed(r.net)}, co-pay AED ${aed(r.ps)})`); claimDlg(c.id); return; }
     if (a==="outLabRestore"){ const c=claimById(dlg.dataset.claim), n=restoreOutLab(c); done(`Restored ${n} lab test${n===1?"":"s"}`); claimDlg(c.id); return; }
     if (a==="correct"){ correctDlg(dlg.dataset.claim); return; }
@@ -1414,6 +1437,9 @@ function bindView(){
     $("#outLabSet").onclick=outLabSetDlg;
     $("#paRulesBtn").onclick=paRulesDlg;
     $("#fvia").onchange=e=>{UI.claimVia=e.target.value;render();};
+    $("#fatt").onchange=e=>{UI.claimAtt=e.target.value;render();};
+    if ($("#attNeedShow")) $("#attNeedShow").onclick=()=>{UI.claimAtt="needed";render();};
+    $("#attAlerts").onclick=attAlertsDlg;
     const cm=$("#claimMore"); if (cm) cm.onclick=()=>{ UI.claimShow=(UI.claimShow||300)+500; render(); };
     const dc=$("#dupCheck"); if (dc) dc.onclick=()=>checkDraftsSent();
     const rd=$("#rmDrafts"); if (rd) rd.onclick=removeDraftsDlg;
@@ -2973,6 +2999,64 @@ function paRule(c){
   const all = hits.find(h => h.scope === "all"); if (all) return all;
   const dent = hits.find(h => h.scope === "dental");
   return dent && (c.acts.some(isDentalAct) || /dent/i.test(c.dept || "")) ? dent : null;
+}
+/* ---------- claim attachments ---------- */
+// ECG claims (ECG procedure codes, or any code added in Attachment alerts) and dental claims usually need a report
+// or X-ray attached. Every claim can carry attachments and remarks. On the clinic server the files are stored there;
+// in a single browser they are kept in the browser (smaller files only).
+const ECG_DEFAULT = ["93000","93005","93010","93040","93041","93042"];
+const ecgCodes = () => S.ecgCodes || ECG_DEFAULT;
+const isEcg = c => { const k = memo("ecgSet", () => new Set(ecgCodes().map(x => String(x).toUpperCase())));
+  return c.acts.some(a => k.has(String(a.code || "").toUpperCase())) || (c.dx || []).some(d => k.has(String(d[0] || "").toUpperCase())); };
+const isDental = c => c.acts.some(isDentalAct) || /dent/i.test(c.dept || "");
+const attTags = c => [isEcg(c) && "ECG", isDental(c) && "Dental"].filter(Boolean);
+const atts = c => c.attachments || [];
+const attNeeded = c => attTags(c).length > 0 && !atts(c).length;
+const attWhat = t => t === "ECG" ? "ECG report" : "dental X-ray or report";
+const MAX_ATT = SHARED ? 20e6 : 3e6;
+const fileSize = n => n >= 1e6 ? (n/1e6).toFixed(1) + " MB" : Math.max(1, Math.round(n/1e3)) + " KB";
+function attBadges(c){
+  const t = attTags(c), n = atts(c).length;
+  if (!t.length && !n) return "";
+  return `<div style="margin-top:4px;display:flex;gap:4px;flex-wrap:wrap">${t.map(x => `<span class="pill ${n?"p-ok":"p-warn"}" title="${n?"Attachment added":"Attach the "+attWhat(x)}">${x}${n?"":" · attach"}</span>`).join("")}${n?`<span class="muted" style="font-size:11.5px" title="Attachments">📎 ${n}</span>`:""}</div>`;
+}
+const readDataUrl = f => new Promise((ok, no) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = () => no(new Error("Could not read " + f.name)); r.readAsDataURL(f); });
+async function addAttachments(c, list){
+  let n = 0;
+  for (const f of list){
+    if (f.size > MAX_ATT){ toast(`${f.name} is larger than ${MAX_ATT/1e6} MB${SHARED?"":" (in a single browser; the clinic server takes up to 20 MB)"}`); continue; }
+    const data = await readDataUrl(f);
+    const meta = SHARED ? await api("/files", {claim:c.id, name:f.name, type:f.type, data}) : {id:"L"+Date.now().toString(36)+Math.random().toString(36).slice(2,6), name:f.name, type:f.type, size:f.size, data};
+    (c.attachments ||= []).push({id:meta.id, name:meta.name, type:meta.type, size:meta.size, by:whoAmI(), at:TODAY, ...(meta.data ? {data:meta.data} : {})});
+    c.events.push({d:TODAY, t:`Attachment ${meta.name} added by ${whoAmI()}`});
+    n++;
+  }
+  return n;
+}
+async function removeAttachment(c, id){
+  const x = atts(c).find(a => String(a.id) === String(id)); if (!x) return;
+  if (SHARED && !x.data) await api(`/files/${x.id}/delete`, {}).catch(e => { if (!/not found/i.test(e.message)) throw e; });
+  c.attachments = atts(c).filter(a => a !== x);
+  c.events.push({d:TODAY, t:`Attachment ${x.name} removed by ${whoAmI()}`});
+}
+function openAttachment(x){
+  if (!x.data) return window.open(`${API_BASE}/files/${x.id}`, "_blank", "noopener");
+  fetch(x.data).then(r => r.blob()).then(b => { const a = Object.assign(document.createElement("a"), {href:URL.createObjectURL(b), download:x.name});
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 5000); });
+}
+function attHtml(c){
+  const t = attTags(c), list = atts(c), need = attNeeded(c);
+  return `<div class="result ${need?"warn":list.length?"ok":""}"><div><b>Attachments</b>${t.length?` · ${t.join(" and ")} claim: ${list.length?"attachment added":"attach the "+t.map(attWhat).join(" and ")}`:""}</div>
+    ${list.length?`<div class="table-wrap" style="margin-top:6px"><table><tbody>${list.map(x=>`<tr><td>📎 <button class="btn sm" type="button" data-attopen="${esc(x.id)}" title="Open">${esc(x.name)}</button></td><td class="muted">${fileSize(x.size||0)}</td><td class="muted">${esc(x.by||"–")} · ${fmtD(x.at)}</td><td><button class="btn sm" type="button" data-attdel="${esc(x.id)}" style="color:var(--bad)">Remove</button></td></tr>`).join("")}</tbody></table></div>`:""}
+    <div class="actions" style="align-items:flex-start;flex-wrap:wrap"><label class="btn sm primary" for="attFile">Upload files</label><input type="file" id="attFile" multiple hidden accept=".pdf,image/*,.doc,.docx,.txt,.xls,.xlsx">
+      <div style="flex:1 1 260px"><label for="attRem" class="muted" style="font-size:12.5px;display:block;margin-bottom:3px">Remarks</label><textarea id="attRem" rows="2" style="min-height:56px" placeholder="Notes about the attachments or the claim">${esc(c.attRemarks||"")}</textarea></div>
+      <button class="btn sm" data-act="attRemSave" type="button" style="align-self:flex-end">Save remarks</button></div>
+    <div class="muted" style="font-size:12px">PDF, images, Word, Excel or text, up to ${MAX_ATT/1e6} MB each. Attachments stay in this software and are not sent to eClaimLink.</div></div>`;
+}
+function attAlertsDlg(){
+  openDlg(dlgHead("Attachment alerts", "Claims with these codes are marked ECG and need the ECG report attached. Codes can be activity (CPT) codes or diagnosis (ICD-10) codes. Dental claims are always marked.") +
+  `<div class="dlg-body"><div class="field"><label for="ecgCodes">ECG codes, separated by commas</label><textarea id="ecgCodes" rows="3">${esc(ecgCodes().join(", "))}</textarea></div>
+    <div class="actions"><button class="btn primary" data-act="ecgSave" type="button">Save</button><button class="btn" data-act="ecgReset" type="button">Use the standard codes (${ECG_DEFAULT.join(", ")})</button></div></div>`);
 }
 function paRulesDlg(){
   const r = paRules(), keys = [...new Set([...S.claims.flatMap(c => [c.tpa, c.payer]), ...Object.keys(r)].filter(Boolean))].sort((a,b) => payerText(a).localeCompare(payerText(b)));
