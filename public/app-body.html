@@ -301,12 +301,17 @@ const COLLS = ["patients","claims","ras","auths","appts"];
 const CLIENT = Math.random().toString(36).slice(2);
 // set: each setting as last saved on the server; the starting values count as saved, so the server's own replace them
 const SYNC = {ready:false, rev:0, base:{}, set:Object.fromEntries(Object.entries(emptyState()).filter(([k]) => !COLLS.includes(k) && k !== "log").map(([k,v]) => [k, JSON.stringify(v)])), prices:JSON.stringify({lists:{}}), logs:new WeakSet(), dirty:false, timer:null, busy:false, again:false, ok:true, stale:false, me:null};
+// Results worked out from all claims (claim check, duplicate index, approval rules) are kept until the next save or render
+let GEN = 0; const genCache = new Map();
+const memo = (k, fn) => { const h = genCache.get(k); if (h && h.gen === GEN) return h.v; const v = fn(); genCache.set(k, {gen:GEN, v}); return v; };
 function save(){
+  GEN++;
   if (!SHARED){ try { localStorage.setItem(KEY, JSON.stringify(S)); } catch(e) {} return; }
   if (!SYNC.ready) return;
   SYNC.dirty = true; clearTimeout(SYNC.timer); SYNC.timer = setTimeout(syncNow, 400);
 }
-const patient = id => S.patients.find(p => p.id === id) || {name:"Unknown",policy:{}};
+const patient = id => { const m = memo("patients", () => new Map(S.patients.map(p => [p.id, p]))); if (m.has(id)) return m.get(id);
+  return S.patients.find(p => p.id === id) || {name:"Unknown",policy:{}}; };
 const claimById = id => S.claims.find(c => c.id === id);
 
 function totals(c){
@@ -409,7 +414,7 @@ function renderNav(){
     `<button type="button" data-go="${id}" ${id===current?'aria-current="page"':""}><span>${label}</span>${n[id]?`<span class="count">${n[id]}</span>`:""}</button>`).join("")}</div>`).join("");
 }
 function go(v){ if (v !== current && typeof UI !== "undefined" && UI.rep) { UI.rep.status = ""; UI.rep.q = ""; } current = v; try { history.replaceState(null,"","#"+v); } catch(e) {} render(); window.scrollTo(0,0); }
-function render(){ renderBrand(); renderNav(); $("#view").innerHTML = SHARED && !SYNC.ready ? `<section class="panel"><p class="muted">Loading the shared records from the clinic server…</p></section>` : R[current](); bindView(); ddmmDates($("#view")); }
+function render(){ GEN++; renderBrand(); renderNav(); $("#view").innerHTML = SHARED && !SYNC.ready ? `<section class="panel"><p class="muted">Loading the shared records from the clinic server…</p></section>` : R[current](); bindView(); ddmmDates($("#view")); }
 // Browsers show date boxes in the computer's own format (often mm/dd/yyyy). Each date box is shown instead as a
 // dd/mm/yy text box with a calendar button; the original box stays underneath, keeps its id, value and handlers,
 // and receives the change.
@@ -675,7 +680,8 @@ R.claims = () => {
     ${UI.claimFrom||UI.claimTo?`<button class="btn sm" id="fdclear" type="button">Clear dates</button>`:""}
   </div>
   <div class="table-wrap"><table><thead><tr><th>Claim</th><th>Patient</th><th>Payer / TPA</th><th>Doctor</th><th>Department</th><th>Encounter</th><th>Submitted</th><th class="num">Co-pay</th><th class="num">Net AED</th><th class="num">Paid</th><th class="num">Outstanding</th><th>Status</th><th>Check</th></tr></thead><tbody>
-  ${list.map(c=>{const t=totals(c);return `<tr class="click" data-claim="${c.id}" tabindex="0"><td class="mono">${c.id}</td><td>${esc(patient(c.patient).name)}</td><td>${esc(payer(c.payer).name)}${tpaLine(c)}</td><td>${esc(docLabel(c.doctor))}</td><td>${esc(c.dept)}</td><td class="muted">${fmtD(c.enc)}</td><td class="muted">${fmtD(c.submitted)}</td><td class="num">${aed(t.ps)}</td><td class="num">${aed(t.net)}</td><td class="num">${aed(t.paid)}</td><td class="num">${t.outstanding?aed(t.outstanding):"–"}</td><td>${pill(status(c))}${c.alreadySent?`<div class="muted" style="font-size:11.5px">already on eClaimLink ${fmtD(c.alreadySent.date)}</div>`:""}</td><td>${c.status==="Draft"?pill(checkState(c)):""}</td></tr>`}).join("") || `<tr><td colspan="13" class="empty">No claims match these filters.</td></tr>`}
+  ${list.slice(0, UI.claimShow || 300).map(c=>{const t=totals(c);return `<tr class="click" data-claim="${c.id}" tabindex="0"><td class="mono">${c.id}</td><td>${esc(patient(c.patient).name)}</td><td>${esc(payer(c.payer).name)}${tpaLine(c)}</td><td>${esc(docLabel(c.doctor))}</td><td>${esc(c.dept)}</td><td class="muted">${fmtD(c.enc)}</td><td class="muted">${fmtD(c.submitted)}</td><td class="num">${aed(t.ps)}</td><td class="num">${aed(t.net)}</td><td class="num">${aed(t.paid)}</td><td class="num">${t.outstanding?aed(t.outstanding):"–"}</td><td>${pill(status(c))}${c.alreadySent?`<div class="muted" style="font-size:11.5px">already on eClaimLink ${fmtD(c.alreadySent.date)}</div>`:""}</td><td>${c.status==="Draft"?pill(checkState(c)):""}</td></tr>`}).join("") || `<tr><td colspan="13" class="empty">No claims match these filters.</td></tr>`}
+  ${list.length > (UI.claimShow || 300) ? `<tr><td colspan="13" class="empty">Showing ${UI.claimShow || 300} of ${list.length} claims (totals below are for all of them). <button class="btn sm" id="claimMore" type="button">Show ${Math.min(500, list.length - (UI.claimShow || 300))} more</button> Or narrow the list with the filters above.</td></tr>` : ""}
   </tbody><tfoot><tr><td colspan="7">${list.length} claims</td><td class="num">${aed(sum.ps)}</td><td class="num">${aed(sum.net)}</td><td class="num">${aed(sum.paid)}</td><td class="num">${aed(sum.out)}</td><td></td><td></td></tr></tfoot></table></div>`;
 };
 
@@ -1012,7 +1018,12 @@ function paDepartments(){
   const fromServer = LIVE.cfg && LIVE.cfg.approvalDepartments;
   return fromServer && fromServer.length ? fromServer : Object.keys(DEPTS).filter(d => DEPTS[d].pa);
 }
+const checkCache = new WeakMap();
 function checkClaim(c){
+  const h = checkCache.get(c); if (h && h.gen === GEN) return h.v;
+  const v = checkClaimNow(c); checkCache.set(c, {gen:GEN, v}); return v;
+}
+function checkClaimNow(c){
   const out = [], err = (code, msg, lab) => out.push({level:"error", code, msg, lab}), warn = (code, msg, lab) => out.push({level:"warn", code, msg, lab});
   const p = patient(c.patient), pol = p.policy || {};
   if (!c.card) err("ELIG-001","Member card number is missing.");
@@ -1052,7 +1063,8 @@ function checkClaim(c){
   });
   const codes = new Set(c.acts.map(a => a.code).filter(Boolean));
   if (c.acts.length !== codes.size) warn("DUPL-002","The same activity code appears more than once. Use quantity instead if it is the same service.");
-  const dup = S.claims.find(o => o.id !== c.id && o.patient === c.patient && o.enc === c.enc && o.acts.some(a => codes.has(a.code)));
+  const byVisit = memo("byVisit", () => { const m = new Map(); for (const o of S.claims){ const k = o.patient + "|" + o.enc; (m.get(k) || m.set(k, []).get(k)).push(o); } return m; });
+  const dup = (byVisit.get(c.patient + "|" + c.enc) || []).find(o => o.id !== c.id && o.acts.some(a => codes.has(a.code)));
   if (dup) err("DUPL-002",`Claim ${dup.id} already bills the same service for this patient on ${fmtD(c.enc)}.`);
   if (paDepartments().includes(c.dept)) {
     const pa = c.pa && S.auths.find(x => x.id === c.pa);
@@ -1399,6 +1411,7 @@ function bindView(){
     $("#checkAll").onclick=checkAllDlg;
     $("#outLabSet").onclick=outLabSetDlg;
     $("#paRulesBtn").onclick=paRulesDlg;
+    const cm=$("#claimMore"); if (cm) cm.onclick=()=>{ UI.claimShow=(UI.claimShow||300)+500; render(); };
     const dc=$("#dupCheck"); if (dc) dc.onclick=()=>checkDraftsSent();
     const rd=$("#rmDrafts"); if (rd) rd.onclick=removeDraftsDlg;
     const olb=$("#outLabBulk"); if (olb) olb.onclick=()=>outLabBulkDlg();
@@ -1555,7 +1568,7 @@ function bindEclAccount(){
     LIVE.eclUser = null; UI.eclTest = false; UI.ecl.results = null; UI.ecl.report = null; await refreshEclStatus(); refreshEcl(); render(); toast("Signed out of eClaimLink"); };
 }
 async function bootLive(){
-  if (SHARED) await bootShared();
+  if (SHARED && await bootShared() === false) return;
   try {
     const [h, appts, log, cfg] = await Promise.all([api("/health"), api("/appointments"), api("/checks?limit=30"), api("/config").catch(()=>null)]);
     LIVE.cfg = cfg;
@@ -1609,6 +1622,9 @@ async function syncNow(){
 async function syncPull(){
   const d = await api("/data?since=" + SYNC.rev);
   let changed = false;
+  // Position of each record by id, so a large first load does not search the whole list for every record
+  const pos = {}; for (const c of COLLS){ const m = pos[c] = new Map(); S[c].forEach((r, i) => m.set(String(r.id), i)); }
+  const front = {}, gone = {};  // new records for the top of a list, and records removed, applied after the loop
   for (const ch of d.changes){
     const j = ch.data === null ? undefined : JSON.stringify(ch.data);
     if (ch.coll === "_"){
@@ -1619,15 +1635,19 @@ async function syncPull(){
       continue;
     }
     if (!COLLS.includes(ch.coll)) continue;
-    const base = SYNC.base[ch.coll] || (SYNC.base[ch.coll] = new Map()), arr = S[ch.coll], i = arr.findIndex(r => String(r.id) === ch.id);
+    const base = SYNC.base[ch.coll] || (SYNC.base[ch.coll] = new Map()), arr = S[ch.coll];
+    const i = pos[ch.coll].has(ch.id) ? pos[ch.coll].get(ch.id) : -1;
     const local = i < 0 ? undefined : JSON.stringify(arr[i]), dirty = local !== base.get(ch.id);
     if (j === undefined) base.delete(ch.id); else base.set(ch.id, j);
     if (dirty || local === j) continue;
-    if (j === undefined) arr.splice(i, 1);
+    if (j === undefined) (gone[ch.coll] ||= new Set()).add(arr[i]);
     else if (i >= 0) arr[i] = ch.data;
-    else if (ch.coll === "patients" || ch.coll === "claims") arr.push(ch.data); else arr.unshift(ch.data);
+    else if (ch.coll === "patients" || ch.coll === "claims"){ pos[ch.coll].set(ch.id, arr.length); arr.push(ch.data); }
+    else (front[ch.coll] ||= []).unshift(ch.data);
     changed = true;
   }
+  for (const c in gone) S[c] = S[c].filter(r => !gone[c].has(r));
+  for (const c in front) S[c] = [...front[c], ...S[c]];
   for (const l of d.log.slice().reverse()) if (l._c !== CLIENT){ delete l._c; S.log.unshift(l); SYNC.logs.add(l); changed = true; }
   if (S.log.length > 500) S.log.length = 500;
   SYNC.rev = d.rev;
@@ -1653,9 +1673,10 @@ function renderSync(){
     : `<span style="color:var(--bad)">Not saved: the clinic server cannot be reached. Retrying…</span>`;
 }
 async function bootShared(){
-  try { SYNC.me = await api("/me"); } catch(e){ toast("Clinic server not reachable: " + e.message); return; }
-  try { await syncPull(); } catch(e){ toast("Could not load the shared records: " + e.message); return; }
-  SYNC.ready = true; renderSync();
+  const fail = msg => { $("#view").innerHTML = `<section class="panel"><div class="result bad">${esc(msg)}</div><div class="actions" style="margin-top:10px"><button class="btn primary" type="button" onclick="location.reload()">Try again</button></div></section>`; };
+  try { SYNC.me = await api("/me"); } catch(e){ fail("The clinic server could not be reached: " + e.message + ". Check that Clinic RCM is running on the clinic computer (the black window), then try again."); return false; }
+  try { await syncPull(); } catch(e){ fail("The shared records could not be loaded: " + e.message + ". If the clinic computer was just updated, close every black Clinic RCM window, run taskkill /IM node.exe /F, start start-for-staff.bat again, then try again."); return false; }
+  SYNC.ready = true; renderSync(); render();
   // Records this browser kept before they moved to the server: copy across the ones the server does not have yet
   let asked = null; try { asked = localStorage.getItem(KEY + "-copied"); } catch(e) {}
   if ((OLD_LOCAL || OLD_PRICES) && !asked){
@@ -1664,7 +1685,7 @@ async function bootShared(){
       try {
         const all = [];
         for (const c of COLLS) for (const r of o[c] || []) all.push({coll:c, id:String(r.id), data:r});
-        for (let i = 0; i < all.length; i += 300) await api("/data", {onlyNew:true, upserts: all.slice(i, i + 300)});
+        for (let i = 0; i < all.length; i += 300){ toast(`Copying this browser's records to the clinic server: ${Math.min(all.length, i + 300)} of ${all.length}…`); await api("/data", {onlyNew:true, upserts: all.slice(i, i + 300)}); }
         const settings = {}; for (const k of Object.keys(o)) if (!COLLS.includes(k) && k !== "log") settings[k] = o[k];
         if (OLD_PRICES) settings.prices = OLD_PRICES;
         await api("/data", {onlyNew:true, settings, log: (o.log || []).slice(0, 200)});
@@ -2927,6 +2948,9 @@ const PA_DEFAULTS = [[/next\s*care/i, "all"], [/life\s*line/i, "all"], [/\be[\s-
 const isDentalAct = a => String(a.type) === "6" || /^D\d{4}$/i.test(a.code || "");
 function paRules(){
   if (S.paRules) return S.paRules;
+  return memo("paRules", paDefaults);
+}
+function paDefaults(){
   const out = {}, keys = new Set([...S.claims.flatMap(c => [c.tpa, c.payer]), ...Object.keys(S.payerNames || {})].filter(Boolean));
   for (const k of keys){ const name = `${k} ${payerName(k)}`, hit = PA_DEFAULTS.find(([re]) => re.test(name)); if (hit) out[k] = hit[1]; }
   return out;
