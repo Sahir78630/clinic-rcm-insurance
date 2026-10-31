@@ -752,7 +752,10 @@ function resubState(x){
 }
 const dtX = iso => iso.split("-").reverse().join("/");
 function claimBlock(c, resub){
-  const p = patient(c.patient), t = totals(c), x = c.resubs[c.resubs.length-1] || {type:"correction",note:""}, dt = dtX;
+  const x = c.resubs[c.resubs.length-1] || {type:"correction",note:""}, dt = dtX;
+  const pick = resub && Array.isArray(x.acts) ? new Set(x.acts) : null;
+  if (pick) c = {...c, acts: c.acts.filter(a => pick.has(a.aid))};
+  const p = patient(c.patient), t = pick ? (o => ({...o, gross:r2(o.net + o.ps)}))(c.acts.reduce((s,a) => ({ps:r2(s.ps + a.ps), net:r2(s.net + a.net - a.paid)}), {ps:0, net:0})) : totals(c);
   return `  <Claim>
     <ID>${c.id}</ID>
     <MemberID>${esc(c.card)}</MemberID>
@@ -1139,6 +1142,10 @@ function claimDlg(id){
       <div class="field" style="grid-column:span 2"><label for="rsNote">What was corrected</label><input type="text" id="rsNote" value="Attached clinical notes and corrected diagnosis coding"></div>
       <div class="field"><button class="btn primary" data-act="resubmit" type="button">Resubmit claim</button></div>
     </div>
+    <div style="width:100%"><span class="eyebrow">Activities to resubmit</span> <span class="muted" style="font-size:12.5px">Rejected and unpaid activities are ticked. Paid ones are left out unless you tick them.</span>
+      <div class="table-wrap" style="margin-top:6px"><table><thead><tr><th></th><th>Activity</th><th>Code</th><th class="num">Net</th><th class="num">Paid</th><th class="num">Not paid</th><th>Denial</th></tr></thead><tbody>
+      ${c.acts.map(a => { const due = r2(a.net - a.paid), on = due > 0.009 || a.denial; return `<tr><td><input type="checkbox" class="rsAct" value="${esc(a.aid)}" ${on?"checked":""} aria-label="Resubmit ${esc(a.code)}"></td><td class="mono muted">${esc(a.aid)}</td><td><span class="code">${esc(a.code)}</span></td><td class="num">${aed(a.net)}</td><td class="num">${aed(a.paid)}</td><td class="num" style="${due>0.009?"color:var(--bad);font-weight:600":""}">${aed(Math.max(0,due))}</td><td>${a.denial?`<span class="code" title="${esc(DENIALS[a.denial]||"")}">${esc(a.denial)}</span>`:""}</td></tr>`; }).join("")}
+      </tbody></table></div></div>
     <div class="form-grid" style="width:100%">
       <div class="field" style="grid-column:span 2"><label for="woReason">Write-off reason</label><select id="woReason"><option>Contractual / non-recoverable</option><option>Resubmission time limit passed</option><option>Transfer to patient responsibility</option><option>Small balance</option></select></div>
       <div class="field"><button class="btn danger" data-act="writeoff" type="button">Write off AED ${aed(t.outstanding)}</button></div>
@@ -1320,11 +1327,13 @@ function bindDlg(){
       openDlg(dlgHead(`Resubmission file · <span class="mono">${c.id}</span>`,"eClaimLink-style Claim.Submission with a Resubmission block. Copy it into your submission tool.",`<button class="btn sm" data-act="copyXml" type="button">Copy</button>`)+`<div class="dlg-body"><textarea id="xmlOut" readonly style="min-height:360px">${esc(x)}</textarea><div class="actions"><button class="btn sm" data-claim="${c.id}" type="button">Back to claim</button></div></div>`); return; }
     if (a==="copyXml"){ const t=$("#xmlOut"); try { navigator.clipboard.writeText(t.value).then(()=>toast("Copied"),()=>{t.select();}); } catch(e){ t.select(); } return; }
     if (a==="resubmit"){ const c=claimById(dlg.dataset.claim); const type=$("#rsType").value, note=$("#rsNote").value.trim(); if (!note) return toast("Describe what was corrected before resubmitting");
-      const entry={d:TODAY,type,note,amount:totals(c).outstanding,codes:[...new Set(c.acts.filter(a=>a.denial&&a.net>a.paid).map(a=>a.denial))],outcome:null};
-      const record = r => { c.status="Resubmitted"; c.resubs.push(entry); c.events.push({d:TODAY,t:`Resubmitted (${type})${note?": "+note:""}`+(r?`, eClaimLink transaction ${r.transactionId||"–"}`:"")}); done(r?"Resubmission sent to eClaimLink":"Claim resubmitted"); claimDlg(c.id); };
+      const pick=[...document.querySelectorAll("#dlgInner .rsAct:checked")].map(x=>x.value), chosen=c.acts.filter(a=>pick.includes(a.aid));
+      if (!chosen.length) return toast("Tick at least one activity to resubmit");
+      const entry={d:TODAY,type,note,acts:pick,amount:r2(chosen.reduce((s,a)=>s+Math.max(0,a.net-a.paid),0)),codes:[...new Set(chosen.filter(a=>a.denial&&a.net>a.paid).map(a=>a.denial))],outcome:null};
+      const record = r => { c.status="Resubmitted"; c.resubs.push(entry); c.events.push({d:TODAY,t:`Resubmitted (${type}), ${chosen.length} of ${c.acts.length} activit${c.acts.length===1?"y":"ies"} (${chosen.map(a=>a.code).join(", ")})${note?": "+note:""}`+(r?`, eClaimLink transaction ${r.transactionId||"–"}`:"")}); done(r?"Resubmission sent to eClaimLink":"Claim resubmitted"); claimDlg(c.id); };
       if (!ECL()) return record(null);
       b.disabled=true; b.textContent="Sending to eClaimLink…";
-      const xml=claimFileXml([c],{fresh:true,resub:{type,note}});
+      const xml=claimFileXml([c],{fresh:true,resub:{type,note,acts:pick}});
       eclUpload(xml).then(record).catch(e=>{ toast(e.message); claimDlg(c.id); }); return; }
     if (a==="writeoff"){ const c=claimById(dlg.dataset.claim); const t=totals(c); c.writeOff=r2((c.writeOff||0)+t.outstanding); c.woReason=$("#woReason").value; c.events.push({d:TODAY,t:`Balance AED ${aed(t.outstanding)} written off: ${c.woReason}`}); done("Balance written off"); claimDlg(c.id); }
     if (a==="reconcile"){ const r=S.ras.find(x=>x.id===dlg.dataset.ra); const amt=parseFloat($("#bankAmt").value); if (isNaN(amt)) return toast("Enter the bank amount first"); const note=$("#bankNote").value; if (Math.abs(amt-r.amount)>0.009 && note==="No variance") return toast("Bank amount differs from the remittance. Pick a variance reason."); r.bank=r2(amt); r.status="Reconciled"; r.recOn=TODAY; r.note=note; done("Remittance reconciled"); raDlg(r.id); }
@@ -2200,12 +2209,20 @@ function claimSrcXml(c, resub){
   if (c.corrected) applyCorrections(doc, ce, c);
   // A resubmission sends the same claim with a <Resubmission> block (type and comment) after the activities
   [...ce.children].filter(x => x.tagName === "Resubmission").forEach(x => { const p = x.previousSibling; if (p && p.nodeType === 3 && !p.textContent.trim()) p.remove(); x.remove(); });
+  if (resub && Array.isArray(resub.acts)){
+    const pick = new Set(resub.acts), own = (el, t) => [...el.children].find(x => x.tagName === t);
+    for (const ae of [...ce.getElementsByTagName("Activity")]){ const id = own(ae, "ID"); if (id && !pick.has(id.textContent.trim())){ const p = ae.previousSibling; if (p && p.nodeType === 3 && !p.textContent.trim()) p.remove(); ae.remove(); } }
+    const kept = [...ce.getElementsByTagName("Activity")], net = r2(kept.reduce((s, ae) => s + num((own(ae, "Net") || {}).textContent || 0), 0));
+    const ps = r2(c.acts.filter(a => pick.has(a.aid)).reduce((s, a) => s + (a.ps || 0), 0));
+    for (const [t, v] of [["Net", net], ["PatientShare", ps], ["Gross", r2(net + ps)]]){ const el = own(ce, t); if (el) el.textContent = v.toFixed(2); }
+  }
   if (resub){
     const el = doc.createElement("Resubmission");
     for (const [t, v] of [["Type", resub.type], ["Comment", resub.note]]){ el.appendChild(doc.createTextNode("\n      ")); const x = doc.createElement(t); x.textContent = v; el.appendChild(x); }
     el.appendChild(doc.createTextNode("\n    "));
-    const contract = [...ce.children].find(x => x.tagName === "Contract");
-    ce.insertBefore(doc.createTextNode("\n    "), contract || ce.lastChild); ce.insertBefore(el, contract || ce.lastChild);
+    // DHA order: after the last activity, before <Contract>
+    const contract = [...ce.children].find(x => x.tagName === "Contract"), tail = ce.lastChild && ce.lastChild.nodeType === 3 ? ce.lastChild : null, ref = contract || tail;
+    ce.insertBefore(doc.createTextNode("\n    "), ref); ce.insertBefore(el, ref);
     if (contract) ce.insertBefore(doc.createTextNode("\n    "), contract);
   }
   for (const ae of [...ce.getElementsByTagName("Activity")]){
