@@ -791,6 +791,12 @@ ${c.acts.map(a=>`    <Activity>
         <Code>${esc(o.code||"")}</Code>
         <Value>${esc(o.value)}</Value>
         <ValueType>${esc(o.unit||"")}</ValueType>
+      </Observation>`).join("")}${(a.teeth||[]).map(t=>`
+      <Observation>
+        <Type>${TOOTH_TYPE}</Type>
+        <Code>${esc(t)}</Code>
+        <Value></Value>
+        <ValueType></ValueType>
       </Observation>`).join("")}
     </Activity>`).join("\n")}${resub?`
     <Resubmission>
@@ -1073,7 +1079,14 @@ function checkClaimNow(c){
   priceIssues(c).forEach(i => out.push(i));
   const pr = paRule(c);
   if (pr && !c.pa) err("AUTH-001", `${payerText(pr.k)} needs an approval code on ${pr.scope === "dental" ? "dental claims" : "every claim, including consultations"}. Enter it below or with Correct claim.`);
-  if (attNeeded(c)) warn("", `${attTags(c).join(" and ")} claim: no attachment yet. Upload the ${attTags(c).map(attWhat).join(" and ")} on the claim.`);
+  if (attNeeded(c)){ const miss = teethNoXray(c);
+    if (isEcg(c) && !atts(c).some(x => !x.tooth)) warn("", "ECG claim: no attachment yet. Upload the ECG report on the claim.");
+    if (isDental(c) && miss.length) warn("", `Dental claim: no X-ray yet for tooth ${miss.join(", ")}. Upload it under Tooth numbers and X-rays.`);
+    else if (isDental(c) && !claimTeeth(c).length && !atts(c).length) warn("", "Dental claim: no attachment yet. Upload the dental X-ray or report on the claim."); }
+  c.acts.filter(isDentalAct).forEach(a => {
+    if (!(a.teeth||[]).length) warn("", `Dental activity ${a.code}: tooth number is missing.`);
+    (a.teeth||[]).filter(t => !TOOTH_OK.test(t)).forEach(t => warn("", `Dental activity ${a.code}: ${t} is not a tooth number.`));
+  });
   const ol = outLabActs(c);
   if (ol.length) err("", `${ol.length} lab test${ol.length===1?"":"s"} (${ol.map(a => a.code).join(", ")}, AED ${aed(ol.reduce((x,a) => x + a.net, 0))}) ${ol.length===1?"is":"are"} outsourced for ${payerText(outLabRule(c))}. Remove ${ol.length===1?"it":"them"} with Remove outsourced lab before submitting.`);
   // Lab tests (CPT 80000–89999) carry their result as an <Observation> in the claim file.
@@ -1304,6 +1317,10 @@ function bindDlg(){
     toast(`Uploading ${fs.length} file${fs.length===1?"":"s"}…`);
     try { const n = await addAttachments(c, fs); if (n) done(`${n} attachment${n===1?"":"s"} added to ${c.id}`); } catch(e){ toast(e.message); save(); }
     claimDlg(c.id); };
+  $("#dlgInner").querySelectorAll("input[type=file][data-tooth]").forEach(inp => inp.onchange = async () => { const c = attC(), fs = [...inp.files], t = inp.dataset.tooth; if (!c || !fs.length) return;
+    toast(`Uploading X-ray for tooth ${t}…`);
+    try { const n = await addAttachments(c, fs, t); if (n) done(`${n} X-ray${n===1?"":"s"} added for tooth ${t}`); } catch(e){ toast(e.message); save(); }
+    claimDlg(c.id); });
   $("#dlgInner").querySelectorAll("[data-attopen]").forEach(b=>b.onclick=e=>{ e.stopPropagation(); const x=atts(attC()).find(a=>String(a.id)===b.dataset.attopen); if (x) openAttachment(x); });
   $("#dlgInner").querySelectorAll("[data-attdel]").forEach(b=>b.onclick=async e=>{ e.stopPropagation(); const c=attC(), x=atts(c).find(a=>String(a.id)===b.dataset.attdel);
     if (!x || !confirm(`Remove ${x.name} from claim ${c.id}?`)) return;
@@ -1317,6 +1334,13 @@ function bindDlg(){
     if (a==="labs"){ labDlg(dlg.dataset.claim); return; }
     if (a==="paQuick"){ const c=claimById(dlg.dataset.claim), v=$("#paQuick").value.trim(); if (!v) return toast("Enter the approval code first");
       c.pa=v; c.corrected=true; c.events.push({d:TODAY,t:`Approval code ${v} entered by ${whoAmI()}`}); done(`Approval code ${v} saved`); claimDlg(c.id); return; }
+    if (a==="toothSave"){ const c=claimById(dlg.dataset.claim); let changed=0;
+      $("#dlgInner").querySelectorAll(".toothIn").forEach(inp => { const x=c.acts.find(y=>y.aid===inp.dataset.aid); if (!x) return;
+        const v=[...new Set(inp.value.split(/[\s,;\/]+/).map(t=>t.trim().toUpperCase()).filter(Boolean))];
+        if (v.join(",")!==(x.teeth||[]).join(",")){ if (v.length) x.teeth=v; else delete x.teeth; changed++; } });
+      if (!changed) return toast("No change to the tooth numbers");
+      c.events.push({d:TODAY,t:`Tooth numbers updated by ${whoAmI()}: ${c.acts.filter(isDentalAct).map(x=>`${x.code} ${(x.teeth||[]).join(", ")||"–"}`).join("; ")}`});
+      done("Tooth numbers saved"); claimDlg(c.id); return; }
     if (a==="attRemSave"){ const c=claimById(dlg.dataset.claim), v=$("#attRem").value.trim(); if (v===(c.attRemarks||"")) return toast("No change to the remarks");
       c.attRemarks=v; c.events.push({d:TODAY,t:`Remarks ${v?"updated":"cleared"} by ${whoAmI()}`}); done("Remarks saved"); claimDlg(c.id); return; }
     if (a==="ecgSave"){ const v=[...new Set($("#ecgCodes").value.split(/[\s,;]+/).map(x=>x.trim().toUpperCase()).filter(Boolean))]; if (!v.length) return toast("Enter at least one code");
@@ -1963,8 +1987,9 @@ function addClaimsFromXml(xml, {draft = false, file = ""} = {}){
     const claimNet = num(own(ce,"Net")), claimPs = num(own(ce,"PatientShare"));
     const actEls = [...ce.getElementsByTagName("Activity")];
     const acts = actEls.map((a,k) => { const net = num(own(a,"Net")), ps = claimNet ? r2(claimPs*net/claimNet) : 0;
-      const obs = [...a.getElementsByTagName("Observation")].map(o => ({type:own(o,"Type"), code:own(o,"Code"), value:own(o,"Value"), unit:own(o,"ValueType")}));
-      return {aid:own(a,"ID")||`${id}-${k+1}`, code:own(a,"Code"), type:own(a,"Type"), obs, desc:"", qty:num(own(a,"Quantity"))||1, gross:r2(net+ps), ps, net:r2(net), paid:0, denial:null}; });
+      const all = [...a.getElementsByTagName("Observation")].map(o => ({type:own(o,"Type"), code:own(o,"Code"), value:own(o,"Value"), unit:own(o,"ValueType")}));
+      const obs = all.filter(o => !TOOTH_OBS.test(o.type)), teeth = [...new Set(all.filter(o => TOOTH_OBS.test(o.type)).map(o => o.code || o.value).filter(Boolean))];
+      return {aid:own(a,"ID")||`${id}-${k+1}`, code:own(a,"Code"), type:own(a,"Type"), obs, ...(teeth.length ? {teeth} : {}), desc:"", qty:num(own(a,"Quantity"))||1, gross:r2(net+ps), ps, net:r2(net), paid:0, denial:null}; });
     const dx = [...ce.getElementsByTagName("Diagnosis")].map(d => [own(d,"Code"), ""]);
     const c = {id, patient:pt.id, payer:pid, card:own(ce,"MemberID"), dept:"–", doctor:actEls[0]?own(actEls[0],"Clinician"):"", enc:encDate,
       dx:dx.length?dx:[["",""]], acts, status:draft?"Draft":resub?"Resubmitted":"Submitted", submitted:draft?null:sent,
@@ -2243,7 +2268,7 @@ function claimSrcXml(c, resub){
     [...ae.children].filter(x => x.tagName === "Observation").forEach(x => { const p = x.previousSibling; if (p && p.nodeType === 3 && !p.textContent.trim()) p.remove(); x.remove(); });
     const last = ae.lastChild, ind = last && last.nodeType === 3 ? last.textContent.replace(/^[\s\S]*\n/, "") : "    ";
     if (last && last.nodeType === 3) last.remove();
-    for (const o of (a.obs||[]).filter(o => o.value)){ ae.appendChild(doc.createTextNode("\n" + ind + "  ")); ae.appendChild(obsXml(doc, o, ind + "  ")); }
+    for (const o of [...(a.obs||[]).filter(o => o.value), ...(a.teeth||[]).map(t => ({type:TOOTH_TYPE, code:t, value:""}))]){ ae.appendChild(doc.createTextNode("\n" + ind + "  ")); ae.appendChild(obsXml(doc, o, ind + "  ")); }
     ae.appendChild(doc.createTextNode("\n" + ind));
   }
   return new XMLSerializer().serializeToString(ce).replace(/ xmlns(:\w+)?="[^"]*"/g, "");
@@ -3098,24 +3123,31 @@ const isEcg = c => { const k = memo("ecgSet", () => new Set(ecgCodes().map(x => 
 const isDental = c => c.acts.some(isDentalAct) || /dent/i.test(c.dept || "");
 const attTags = c => [isEcg(c) && "ECG", isDental(c) && "Dental"].filter(Boolean);
 const atts = c => c.attachments || [];
-const attNeeded = c => attTags(c).length > 0 && !atts(c).length;
+// Dental: tooth numbers on each dental activity, and an X-ray for each tooth
+const TOOTH_TYPE = "Universal Dental", TOOTH_OBS = /dental|tooth/i;
+const TOOTH_OK = /^(?:[1-4][1-8]|[5-8][1-5]|[1-9]|[12]\d|3[0-2]|[A-T])$/i; // FDI (11–48, 51–85) or Universal (1–32, A–T)
+const claimTeeth = c => [...new Set(c.acts.filter(isDentalAct).flatMap(a => a.teeth || []))];
+const teethNoXray = c => claimTeeth(c).filter(t => !atts(c).some(x => x.tooth === t));
+const attNeeded = c => (isEcg(c) && !atts(c).some(x => !x.tooth)) || (isDental(c) && (claimTeeth(c).length ? teethNoXray(c).length > 0 : !atts(c).length));
 const attWhat = t => t === "ECG" ? "ECG report" : "dental X-ray or report";
 const MAX_ATT = SHARED ? 20e6 : 3e6;
 const fileSize = n => n >= 1e6 ? (n/1e6).toFixed(1) + " MB" : Math.max(1, Math.round(n/1e3)) + " KB";
 function attBadges(c){
   const t = attTags(c), n = atts(c).length;
   if (!t.length && !n) return "";
-  return `<div style="margin-top:4px;display:flex;gap:4px;flex-wrap:wrap">${t.map(x => `<span class="pill ${n?"p-ok":"p-warn"}" title="${n?"Attachment added":"Attach the "+attWhat(x)}">${x}${n?"":" · attach"}</span>`).join("")}${n?`<span class="muted" style="font-size:11.5px" title="Attachments">📎 ${n}</span>`:""}</div>`;
+  const teeth = claimTeeth(c), miss = teethNoXray(c).length;
+  const ok = x => x === "Dental" && teeth.length ? !miss : x === "ECG" ? atts(c).some(a => !a.tooth) : n > 0;
+  return `<div style="margin-top:4px;display:flex;gap:4px;flex-wrap:wrap">${t.map(x => `<span class="pill ${ok(x)?"p-ok":"p-warn"}" title="${ok(x)?"Attachment added":"Attach the "+attWhat(x)}">${x}${x==="Dental"&&teeth.length?` · X-ray ${teeth.length-miss}/${teeth.length}`:ok(x)?"":" · attach"}</span>`).join("")}${n?`<span class="muted" style="font-size:11.5px" title="Attachments">📎 ${n}</span>`:""}</div>`;
 }
 const readDataUrl = f => new Promise((ok, no) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = () => no(new Error("Could not read " + f.name)); r.readAsDataURL(f); });
-async function addAttachments(c, list){
+async function addAttachments(c, list, tooth = ""){
   let n = 0;
   for (const f of list){
     if (f.size > MAX_ATT){ toast(`${f.name} is larger than ${MAX_ATT/1e6} MB${SHARED?"":" (in a single browser; the clinic server takes up to 20 MB)"}`); continue; }
     const data = await readDataUrl(f);
     const meta = SHARED ? await api("/files", {claim:c.id, name:f.name, type:f.type, data}) : {id:"L"+Date.now().toString(36)+Math.random().toString(36).slice(2,6), name:f.name, type:f.type, size:f.size, data};
-    (c.attachments ||= []).push({id:meta.id, name:meta.name, type:meta.type, size:meta.size, by:whoAmI(), at:TODAY, ...(meta.data ? {data:meta.data} : {})});
-    c.events.push({d:TODAY, t:`Attachment ${meta.name} added by ${whoAmI()}`});
+    (c.attachments ||= []).push({id:meta.id, name:meta.name, type:meta.type, size:meta.size, by:whoAmI(), at:TODAY, ...(tooth ? {tooth} : {}), ...(meta.data ? {data:meta.data} : {})});
+    c.events.push({d:TODAY, t:`${tooth ? `X-ray for tooth ${tooth}` : "Attachment"} ${meta.name} added by ${whoAmI()}`});
     n++;
   }
   return n;
@@ -3131,10 +3163,20 @@ function openAttachment(x){
   fetch(x.data).then(r => r.blob()).then(b => { const a = Object.assign(document.createElement("a"), {href:URL.createObjectURL(b), download:x.name});
     document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 5000); });
 }
+function toothHtml(c){
+  const dents = c.acts.filter(isDentalAct); if (!dents.length) return "";
+  const xr = t => atts(c).filter(x => x.tooth === t), safe = t => String(t).replace(/[^\w]/g, "");
+  return `<div style="margin-top:8px"><span class="eyebrow">Tooth numbers and X-rays</span> <span class="muted" style="font-size:12.5px">Type the tooth numbers for each dental activity, separated by commas (for example 11, 12), and save. Each tooth then gets its own X-ray upload.</span>
+    <div class="table-wrap" style="margin-top:6px"><table><thead><tr><th>Activity</th><th>Code</th><th>Tooth numbers</th><th>X-ray for each tooth</th></tr></thead><tbody>
+    ${dents.map(a => `<tr><td class="mono muted">${esc(a.aid)}</td><td><span class="code">${esc(a.code)}</span></td><td><input type="text" class="toothIn" data-aid="${esc(a.aid)}" value="${esc((a.teeth||[]).join(", "))}" placeholder="e.g. 11, 12" style="width:130px" autocomplete="off"></td>
+      <td>${(a.teeth||[]).map(t => `<div style="display:flex;gap:6px;align-items:center;margin:2px 0"><b class="mono">${esc(t)}</b>${xr(t).length?`<span class="pill p-ok">${xr(t).length} X-ray${xr(t).length===1?"":"s"}</span>`:`<span class="pill p-warn">no X-ray</span>`}<label class="btn sm" for="attT-${esc(safe(a.aid))}-${esc(safe(t))}">Upload X-ray</label><input type="file" id="attT-${esc(safe(a.aid))}-${esc(safe(t))}" data-tooth="${esc(t)}" multiple hidden accept=".pdf,image/*"></div>`).join("") || `<span class="muted">Save tooth numbers first</span>`}</td></tr>`).join("")}
+    </tbody></table></div><div class="actions"><button class="btn sm primary" data-act="toothSave" type="button">Save tooth numbers</button></div></div>`;
+}
 function attHtml(c){
-  const t = attTags(c), list = atts(c), need = attNeeded(c);
-  return `<div class="result ${need?"warn":list.length?"ok":""}"><div><b>Attachments</b>${t.length?` · ${t.join(" and ")} claim: ${list.length?"attachment added":"attach the "+t.map(attWhat).join(" and ")}`:""}</div>
-    ${list.length?`<div class="table-wrap" style="margin-top:6px"><table><tbody>${list.map(x=>`<tr><td>📎 <button class="btn sm" type="button" data-attopen="${esc(x.id)}" title="Open">${esc(x.name)}</button></td><td class="muted">${fileSize(x.size||0)}</td><td class="muted">${esc(x.by||"–")} · ${fmtD(x.at)}</td><td><button class="btn sm" type="button" data-attdel="${esc(x.id)}" style="color:var(--bad)">Remove</button></td></tr>`).join("")}</tbody></table></div>`:""}
+  const t = attTags(c), list = atts(c), need = attNeeded(c), miss = teethNoXray(c);
+  return `<div class="result ${need?"warn":list.length?"ok":""}"><div><b>Attachments</b>${t.length?` · ${t.join(" and ")} claim: ${need?(miss.length?`X-ray needed for tooth ${miss.join(", ")}`:"attach the "+t.map(attWhat).join(" and ")):"attachments added"}`:""}</div>
+    ${toothHtml(c)}
+    ${list.length?`<div class="table-wrap" style="margin-top:6px"><table><tbody>${list.map(x=>`<tr><td>📎 ${x.tooth?`<span class="pill p-info">Tooth ${esc(x.tooth)}</span> `:""}<button class="btn sm" type="button" data-attopen="${esc(x.id)}" title="Open">${esc(x.name)}</button></td><td class="muted">${fileSize(x.size||0)}</td><td class="muted">${esc(x.by||"–")} · ${fmtD(x.at)}</td><td><button class="btn sm" type="button" data-attdel="${esc(x.id)}" style="color:var(--bad)">Remove</button></td></tr>`).join("")}</tbody></table></div>`:""}
     <div class="actions" style="align-items:flex-start;flex-wrap:wrap"><label class="btn sm primary" for="attFile">Upload files</label><input type="file" id="attFile" multiple hidden accept=".pdf,image/*,.doc,.docx,.txt,.xls,.xlsx">
       <div style="flex:1 1 260px"><label for="attRem" class="muted" style="font-size:12.5px;display:block;margin-bottom:3px">Remarks</label><textarea id="attRem" rows="2" style="min-height:56px" placeholder="Notes about the attachments or the claim">${esc(c.attRemarks||"")}</textarea></div>
       <button class="btn sm" data-act="attRemSave" type="button" style="align-self:flex-end">Save remarks</button></div>
