@@ -682,7 +682,7 @@ R.claims = () => {
   const shownDrafts = list.filter(c => c.status === "Draft" || c.status === "Not submitted").length;
   const needAtt = drafts.filter(attNeeded), nEcg = needAtt.filter(isEcg).length, nDent = needAtt.filter(isDental).length;
   return head("Claims","Every insurance claim from encounter to settlement. Open a claim to see activities, payer decisions and history.",
-    `<button class="btn" id="importClaims" type="button">Import claims</button>${drafts.length && LIVE.on?`<button class="btn" id="dupCheck" type="button" title="Look for the draft claims on eClaimLink, so claims already sent are not sent twice">${UI.dupBusy?esc(UI.rep.progress||UI.dupBusy):`Check eClaimLink for ${drafts.length} draft${drafts.length===1?"":"s"}`}</button>`:""}${shownDrafts?`<button class="btn" id="rmDrafts" type="button" style="color:var(--bad)" title="Remove the draft claims in the list below">Remove ${shownDrafts} draft${shownDrafts===1?"":"s"}</button>`:""}<button class="btn" id="paRulesBtn" type="button" title="Payers that need an approval code on their claims">Approval rules</button><button class="btn" id="attAlerts" type="button" title="Codes that mark a claim as ECG">Attachment alerts</button><button class="btn" id="outLabSet" type="button" title="TPAs and insurance companies whose lab tests are outsourced">Outsourced lab</button>${nOut?`<button class="btn" id="outLabBulk" type="button" style="color:var(--bad)">Remove outsourced lab (${nOut})</button>`:""}<button class="btn" id="checkAll" type="button" ${S.claims.length?"":"disabled"}>Check all claims</button><button class="btn" id="claimsXml" type="button" ${list.length?"":"disabled"} title="The claims shown, as eClaimLink XML">Download XML (${list.length})</button>${sel.length?`<button class="btn" id="selClear" type="button">Clear ticks</button><button class="btn primary" id="submitSel" type="button">Submit ${sel.length} ticked claim${sel.length===1?"":"s"}</button>`:`<button class="btn primary" id="submitDrafts" type="button" ${ready.length?"":"disabled"} title="Tick claims in the list to submit only those">Submit all ${ready.length} checked claim${ready.length===1?"":"s"}</button>`}`) +
+    `<button class="btn" id="importClaims" type="button">Import claims</button>${drafts.length && LIVE.on?`<button class="btn" id="dupCheck" type="button" title="Look for the draft claims on eClaimLink, so claims already sent are not sent twice">${UI.dupBusy?esc(UI.rep.progress||UI.dupBusy):`Check eClaimLink for ${drafts.length} draft${drafts.length===1?"":"s"}`}</button>`:""}${shownDrafts?`<button class="btn" id="rmDrafts" type="button" style="color:var(--bad)" title="Remove the draft claims in the list below">Remove ${shownDrafts} draft${shownDrafts===1?"":"s"}</button>`:""}${ECL()?`<button class="btn" id="wrongRcv" type="button" title="Find claims sent in a file addressed to a different TPA or payer">Check where claims were sent</button>`:""}<button class="btn" id="paRulesBtn" type="button" title="Payers that need an approval code on their claims">Approval rules</button><button class="btn" id="attAlerts" type="button" title="Codes that mark a claim as ECG">Attachment alerts</button><button class="btn" id="outLabSet" type="button" title="TPAs and insurance companies whose lab tests are outsourced">Outsourced lab</button>${nOut?`<button class="btn" id="outLabBulk" type="button" style="color:var(--bad)">Remove outsourced lab (${nOut})</button>`:""}<button class="btn" id="checkAll" type="button" ${S.claims.length?"":"disabled"}>Check all claims</button><button class="btn" id="claimsXml" type="button" ${list.length?"":"disabled"} title="The claims shown, as eClaimLink XML">Download XML (${list.length})</button>${sel.length?`<button class="btn" id="selClear" type="button">Clear ticks</button><button class="btn primary" id="submitSel" type="button">Submit ${sel.length} ticked claim${sel.length===1?"":"s"}</button>`:`<button class="btn primary" id="submitDrafts" type="button" ${ready.length?"":"disabled"} title="Tick claims in the list to submit only those">Submit all ${ready.length} checked claim${ready.length===1?"":"s"}</button>`}`) +
   (needAtt.length ? `<div class="result warn" style="margin-bottom:12px"><div><b>Attachments needed:</b> ${[nEcg&&`${nEcg} ECG claim${nEcg===1?"":"s"}`, nDent&&`${nDent} dental claim${nDent===1?"":"s"}`].filter(Boolean).join(" and ")} without an attachment. ${UI.claimAtt==="needed"?"":`<button class="btn sm" id="attNeedShow" type="button">Show them</button>`}</div></div>` : "") +
   (drafts.length ? `<div class="result ${nBlocked?"warn":"ok"}" style="margin-bottom:12px"><div><b>Claim check:</b> ${ready.length} of ${drafts.length} draft claims are ready to submit${nBlocked?`. ${nBlocked} ha${nBlocked===1?"s":"ve"} errors and will not be sent until fixed. <button class="btn sm" id="showBlocked" type="button">Show them</button>`:"."}</div></div>` : "") +
   `<div class="filters">
@@ -1044,6 +1044,8 @@ function paDepartments(){
   const fromServer = LIVE.cfg && LIVE.cfg.approvalDepartments;
   return fromServer && fromServer.length ? fromServer : Object.keys(DEPTS).filter(d => DEPTS[d].pa);
 }
+// Who a claim's file goes to: its TPA, else the receiver of the file it came from, else its payer
+const receiverOf = c => c.tpa || ((c.srcHeader || "").match(/<ReceiverID>([^<]*)<\/ReceiverID>/) || [])[1] || c.payer;
 const selectedClaims = () => [...UI.sel].map(claimById).filter(c => c && c.status === "Draft" && !blocked(c));
 const checkCache = new WeakMap();
 function checkClaim(c){
@@ -1484,6 +1486,7 @@ function bindView(){
     $("#fatt").onchange=e=>{UI.claimAtt=e.target.value;render();};
     if ($("#attNeedShow")) $("#attNeedShow").onclick=()=>{UI.claimAtt="needed";render();};
     $("#attAlerts").onclick=attAlertsDlg;
+    if ($("#wrongRcv")) $("#wrongRcv").onclick=e=>wrongReceiverDlg(e.target);
     const cm=$("#claimMore"); if (cm) cm.onclick=()=>{ UI.claimShow=(UI.claimShow||300)+500; render(); };
     const dc=$("#dupCheck"); if (dc) dc.onclick=()=>checkDraftsSent();
     const rd=$("#rmDrafts"); if (rd) rd.onclick=removeDraftsDlg;
@@ -1493,11 +1496,13 @@ function bindView(){
     const sendClaims = async (e, d) => {
       if (!ECL()){ d.forEach(submitClaim); d.forEach(c => UI.sel.delete(c.id)); return done(`Submitted ${d.length} claims to payers`); }
       e.target.disabled=true; e.target.textContent="Sending to eClaimLink…";
-      const byPayer = {}; d.forEach(c=>(byPayer[c.payer+(c.srcXml?"|src":"")]=byPayer[c.payer+(c.srcXml?"|src":"")]||[]).push(c));
+      // One file per receiver (the TPA, or the payer when there is no TPA) and payer: a file goes to the receiver in its header,
+      // so claims for different TPAs must never share a file
+      const byPayer = {}; d.forEach(c=>{ const k = `${c.payer}|${receiverOf(c)}${c.srcXml?"|src":""}`; (byPayer[k] ||= []).push(c); });
       let sent=0; const fails=[];
       for (const [pid,list] of Object.entries(byPayer)){
         try { const r = await eclUpload(claimFileXml(list,{fresh:true})); list.forEach(c=>{ submitClaim(c); c.eclTx=r.transactionId; c.events.push({d:TODAY,t:`eClaimLink transaction ${r.transactionId||"–"}`}); }); sent+=list.length; }
-        catch(err){ fails.push(`${payer(pid.split("|")[0]).name}: ${err.message}`); }
+        catch(err){ fails.push(`${payerText(pid.split("|")[1])}: ${err.message}`); }
       }
       d.forEach(c => { if (c.status !== "Draft") UI.sel.delete(c.id); });
       done(`Sent ${sent} claims to eClaimLink in ${Object.keys(byPayer).length-fails.length} files`+(fails.length?`. Failed: ${fails.join("; ")}`:"")); };
@@ -2279,8 +2284,11 @@ function claimFileXml(list, {fresh = false, resub = null} = {}){
     if (!resub) return claimsXml(list);
     const c = list[0]; c.resubs.push({d:TODAY, ...resub}); const x = resubXml(c); c.resubs.pop(); return x;
   }
-  let headerXml = list[0].srcHeader || xmlHeader(list[0].payer, list.length);
-  headerXml = headerXml.replace(/<RecordCount>\d*<\/RecordCount>/, `<RecordCount>${list.length}</RecordCount>`).replace(/ xmlns(:\w+)?="[^"]*"/g, "");
+  const rcv = [...new Set(list.map(receiverOf))];
+  if (rcv.length > 1) throw new Error(`These claims go to different receivers (${rcv.map(payerText).join(", ")}) and cannot be sent in one file`);
+  let headerXml = list[0].srcHeader || xmlHeader(rcv[0], list.length);
+  headerXml = headerXml.replace(/<RecordCount>\d*<\/RecordCount>/, `<RecordCount>${list.length}</RecordCount>`).replace(/ xmlns(:\w+)?="[^"]*"/g, "")
+    .replace(/<ReceiverID>[^<]*<\/ReceiverID>/, `<ReceiverID>${esc(rcv[0])}</ReceiverID>`);
   if (fresh) headerXml = headerXml.replace(/<TransactionDate>[^<]*<\/TransactionDate>/, `<TransactionDate>${dtX(TODAY)} ${nowTime()}</TransactionDate>`);
   return `<?xml version="1.0" encoding="utf-8"?>\n<Claim.Submission xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">\n  ${headerXml.trim()}\n  ${list.map(c => claimSrcXml(c, resub)).join("\n  ")}\n</Claim.Submission>\n`;
 }
@@ -2927,6 +2935,29 @@ function resubMarkDlg(id){
    <div class="actions"><button class="btn" type="button" data-close>Cancel</button><button class="btn primary" id="rmSave" type="button">Mark as resubmitted</button></div></div>`);
   $("#rmSave").onclick = () => { const d = $("#rmDate").value; if (!d) return toast("Choose the date");
     S.resubMarks = {...(S.resubMarks||{}), [id]: {d, by: whoAmI()}}; closeDlg(); done(`${id} marked as resubmitted on ${fmtD(d)}`); };
+}
+// Claims sent in a file whose receiver is not the claim's TPA (or payer): listed so they can be sent again to the right one
+async function wrongReceiverDlg(btn){
+  if (btn){ btn.disabled = true; btn.textContent = "Checking sent files…"; }
+  let rows = [];
+  try {
+    const files = (await api("/eclaimlink/files?direction=out&type=Claim.Submission&limit=300")).filter(f => f.result_code >= 0);
+    const last = new Map();
+    for (const f of files.slice().reverse()){ // oldest first, so the latest file for each claim wins
+      const x = await api(`/eclaimlink/files/${f.id}`), doc = new DOMParser().parseFromString(x.xml || "", "application/xml");
+      for (const ce of doc.getElementsByTagName("Claim")){ const id = ([...ce.children].find(e => e.tagName === "ID") || {}).textContent; if (id) last.set(id.trim(), f); }
+    }
+    for (const [id, f] of last){ const c = claimById(id); if (c && f.receiver && receiverOf(c) !== f.receiver && c.status !== "Draft") rows.push({c, f}); }
+  } catch(e){ toast(e.message); }
+  if (btn){ btn.disabled = false; btn.textContent = "Check where claims were sent"; }
+  openDlg(dlgHead("Claims sent to the wrong receiver", rows.length ? `${rows.length} claim${rows.length===1?" was":"s were"} last sent in a file addressed to a different TPA or payer than the claim's own.` : "Every claim sent from this website went to its own TPA or payer.",
+    rows.length ? `<button class="btn sm primary" id="wrFix" type="button">Set ${rows.length} back to draft for sending again</button>` : "") +
+  `<div class="dlg-body">${rows.length ? `<div class="table-wrap"><table><thead><tr><th>Claim</th><th>Payer</th><th>Should go to</th><th>Was sent to</th><th>File</th><th>Sent</th></tr></thead><tbody>
+    ${rows.map(({c,f}) => `<tr><td class="mono">${esc(c.id)}</td><td>${esc(payerText(c.payer))}</td><td><b>${esc(payerText(receiverOf(c)))}</b></td><td style="color:var(--bad)">${esc(payerText(f.receiver))}</td><td class="mono" style="font-size:12px">${esc(f.file_name||"–")}</td><td class="muted">${esc(f.created_at||"")}</td></tr>`).join("")}
+    </tbody></table></div><p class="muted" style="font-size:12.5px">Setting them back to draft lets you send them again (they will go to the right TPA or payer). The wrong receiver will normally reject them; nothing needs to be sent to it.</p>` : ""}</div>`);
+  const fx = $("#wrFix"); if (fx) fx.onclick = () => { rows.forEach(({c,f}) => { c.status = "Draft"; c.submitted = null; delete c.sentVia; delete c.eclTx;
+      c.events.push({d:TODAY, t:`Was sent to ${payerText(f.receiver)} by mistake (${f.file_name||"file"}); set back to draft by ${whoAmI()} to send to ${payerText(receiverOf(c))}`}); });
+    rows.forEach(({c}) => UI.sel.add(c.id)); closeDlg(); current = "claims"; done(`${rows.length} claims are drafts again and ticked: click Submit ${rows.length} ticked claims to send them to the right TPA or payer`); };
 }
 function resubPayerDlg(){
   const cur = Object.entries(S.resubDaysPayer||{}).map(([k,v]) => `${k}, ${v}`).join("\n");
