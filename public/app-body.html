@@ -791,12 +791,12 @@ ${c.acts.map(a=>`    <Activity>
         <Code>${esc(o.code||"")}</Code>
         <Value>${esc(o.value)}</Value>
         <ValueType>${esc(o.unit||"")}</ValueType>
-      </Observation>`).join("")}${(a.teeth||[]).map(t=>`
+      </Observation>`).join("")}${toothLines(a).map(o=>`
       <Observation>
-        <Type>${TOOTH_TYPE}</Type>
-        <Code>${esc(t)}</Code>
-        <Value></Value>
-        <ValueType></ValueType>
+        <Type>${esc(o.type)}</Type>
+        <Code>${esc(o.code||"")}</Code>
+        <Value>${esc(o.value||"")}</Value>
+        <ValueType>${esc(o.unit||"")}</ValueType>
       </Observation>`).join("")}
     </Activity>`).join("\n")}${resub?`
     <Resubmission>
@@ -1332,7 +1332,7 @@ function bindDlg(){
     const a = b.dataset.act;
     if (a==="submit" && ECL()){ const c=claimById(dlg.dataset.claim); b.disabled=true; b.textContent="Sending to eClaimLink…";
       eclUpload(claimFileXml([c],{fresh:true})).then(r=>{ submitClaim(c); c.events.push({d:TODAY,t:`eClaimLink transaction ${r.transactionId||"–"}`+(r.warnings?` (accepted with warnings)`:"")}); c.eclTx=r.transactionId; done("Claim sent to eClaimLink"); claimDlg(c.id); })
-        .catch(e=>{ toast(e.message); claimDlg(c.id); }); return; }
+        .catch(e=>{ if (e.report) eclRejectDlg([{to:payerText(receiverOf(c)), ids:[c.id], msg:e.message, report:e.report}], {back:c.id}); else { toast(e.message); claimDlg(c.id); } }); return; }
     if (a==="submit"){ submitClaim(claimById(dlg.dataset.claim)); done("Claim submitted"); claimDlg(dlg.dataset.claim); }
     if (a==="labs"){ labDlg(dlg.dataset.claim); return; }
     if (a==="paQuick"){ const c=claimById(dlg.dataset.claim), v=$("#paQuick").value.trim(); if (!v) return toast("Enter the approval code first");
@@ -1367,7 +1367,7 @@ function bindDlg(){
       if (!ECL()) return record(null);
       b.disabled=true; b.textContent="Sending to eClaimLink…";
       const xml=claimFileXml([c],{fresh:true,resub:{type,note,acts:pick}});
-      eclUpload(xml).then(record).catch(e=>{ toast(e.message); claimDlg(c.id); }); return; }
+      eclUpload(xml).then(record).catch(e=>{ if (e.report) eclRejectDlg([{to:payerText(receiverOf(c)), ids:[c.id], msg:e.message, report:e.report}], {back:c.id}); else { toast(e.message); claimDlg(c.id); } }); return; }
     if (a==="writeoff"){ const c=claimById(dlg.dataset.claim); const t=totals(c); c.writeOff=r2((c.writeOff||0)+t.outstanding); c.woReason=$("#woReason").value; c.events.push({d:TODAY,t:`Balance AED ${aed(t.outstanding)} written off: ${c.woReason}`}); done("Balance written off"); claimDlg(c.id); }
     if (a==="reconcile"){ const r=S.ras.find(x=>x.id===dlg.dataset.ra); const amt=parseFloat($("#bankAmt").value); if (isNaN(amt)) return toast("Enter the bank amount first"); const note=$("#bankNote").value; if (Math.abs(amt-r.amount)>0.009 && note==="No variance") return toast("Bank amount differs from the remittance. Pick a variance reason."); r.bank=r2(amt); r.status="Reconciled"; r.recOn=TODAY; r.note=note; done("Remittance reconciled"); raDlg(r.id); }
     if (a==="facSave"){ S.facility = {name:$("#fName").value.trim(), licence:$("#fLic").value.trim().toUpperCase()}; closeDlg(); done("Facility details saved"); return; }
@@ -1503,13 +1503,27 @@ function bindView(){
       // One file per receiver (the TPA, or the payer when there is no TPA) and payer: a file goes to the receiver in its header,
       // so claims for different TPAs must never share a file
       const byPayer = {}; d.forEach(c=>{ const k = `${c.payer}|${receiverOf(c)}${c.srcXml?"|src":""}`; (byPayer[k] ||= []).push(c); });
-      let sent=0; const fails=[];
+      let sent=0, files=0, n=0; const fails=[], total=d.length, btn=e.target;
+      const ok = (list, r) => { list.forEach(c=>{ submitClaim(c); c.eclTx=r.transactionId; c.events.push({d:TODAY,t:`eClaimLink transaction ${r.transactionId||"–"}`+(r.warnings?" (accepted with warnings)":"")}); }); sent+=list.length; files++; };
+      const fail = (list, to, err) => { fails.push({to, ids:list.map(c=>c.id), msg:err.message, report:err.report||""});
+        list.forEach(c => c.events.push({d:TODAY, t:`eClaimLink did not accept the file: ${err.message}`})); };
       for (const [pid,list] of Object.entries(byPayer)){
-        try { const r = await eclUpload(claimFileXml(list,{fresh:true})); list.forEach(c=>{ submitClaim(c); c.eclTx=r.transactionId; c.events.push({d:TODAY,t:`eClaimLink transaction ${r.transactionId||"–"}`}); }); sent+=list.length; }
-        catch(err){ fails.push(`${payerText(pid.split("|")[1])}: ${err.message}`); }
+        const to = payerText(pid.split("|")[1]);
+        btn.textContent = `Sending to eClaimLink… ${n}/${total}`;
+        try { ok(list, await eclUpload(claimFileXml(list,{fresh:true}))); }
+        catch(err){
+          // eClaimLink rejects the whole file when one claim fails its checks (code -2). Send that file's claims one by one,
+          // so the good claims go through and only the claims with errors are left as drafts.
+          if (err.code === -2 && list.length > 1){
+            for (const c of list){ btn.textContent = `Sending one by one… ${c.id}`;
+              try { ok([c], await eclUpload(claimFileXml([c],{fresh:true}))); } catch(e2){ fail([c], to, e2); } }
+          } else fail(list, to, err);
+        }
+        n += list.length;
       }
       d.forEach(c => { if (c.status !== "Draft") UI.sel.delete(c.id); });
-      done(`Sent ${sent} claims to eClaimLink in ${Object.keys(byPayer).length-fails.length} files`+(fails.length?`. Failed: ${fails.join("; ")}`:"")); };
+      if (!fails.length) return done(`Sent ${sent} claims to eClaimLink in ${files} file${files===1?"":"s"}`);
+      save(); render(); eclRejectDlg(fails, {sent, files}); };
     if ($("#submitDrafts")) $("#submitDrafts").onclick = e => sendClaims(e, S.claims.filter(c=>c.status==="Draft"&&!blocked(c)));
     if ($("#submitSel")) $("#submitSel").onclick = e => { const d = selectedClaims(); if (!d.length) return toast("Tick the claims to submit first");
       if (confirm(`Submit these ${d.length} claims${ECL()?" to "+eclLabel():""}?\n\n${d.slice(0,15).map(c=>c.id).join(", ")}${d.length>15?` and ${d.length-15} more`:""}`)) sendClaims(e, d); };
@@ -1550,9 +1564,20 @@ const refreshEcl = () => ECL() ? api("/eclaimlink/files?limit=15").then(f=>{ LIV
 async function eclUpload(xml){
   const r = await api("/eclaimlink/upload",{xml});
   refreshEcl();
-  if (!r.ok) throw new Error(`eClaimLink did not accept the file (code ${r.resultCode}): ${r.errorMessage||"no message"}`);
+  if (!r.ok) throw Object.assign(new Error(`eClaimLink did not accept the file (code ${r.resultCode}): ${r.errorMessage||"no message"}`), {code:r.resultCode, report:r.errorReport||"", fileId:r.id});
   return r;
 }
+// eClaimLink's own reasons for rejecting files: one block per failed file, with the claims it held and the error report
+function eclRejectDlg(fails, {sent = 0, files = 0, back = ""} = {}){
+  openDlg(dlgHead(fails.length === 1 && !sent ? "eClaimLink did not accept the file" : `eClaimLink did not accept ${fails.length} file${fails.length===1?"":"s"}`,
+    `${sent ? `${sent} claim${sent===1?" was":"s were"} sent in ${files} file${files===1?"":"s"}. ` : ""}A file with an error is rejected as a whole and nothing in it is sent. Correct the claims below and send them again.`) +
+    `<div class="dlg-body">${fails.map(f => `<div class="result bad" style="margin-bottom:10px"><b>${esc(f.to)}</b>${f.ids && f.ids.length ? ` · claim${f.ids.length===1?"":"s"} ${f.ids.map(id => claimById(id) ? `<a href="#" data-claim="${esc(id)}" class="mono">${esc(id)}</a>` : `<span class="mono">${esc(id)}</span>`).join(", ")}` : ""}
+      <div style="margin-top:4px">${esc(f.msg)}</div>
+      ${f.report ? `<pre class="mono" style="white-space:pre-wrap;margin:6px 0 0;max-height:260px;overflow:auto;font-size:12px">${esc(f.report.split("\n").slice(0,200).join("\n"))}</pre>` : `<div class="muted" style="margin-top:4px;font-size:12.5px">eClaimLink sent no error details with this file.</div>`}</div>`).join("")}
+    <div class="actions">${back ? `<button class="btn sm" data-claim="${esc(back)}" type="button">Back to claim</button>` : ""}<button class="btn sm" data-close type="button">Close</button></div></div>`);
+  bindDlgClaimLinks();
+}
+const bindDlgClaimLinks = () => $("#dlgInner").querySelectorAll("a[data-claim]").forEach(a => a.onclick = e => { e.preventDefault(); claimDlg(a.dataset.claim); });
 async function eclSync(btn){
   if (btn){ btn.disabled = true; btn.textContent = "Downloading…"; }
   try {
@@ -1997,8 +2022,9 @@ function addClaimsFromXml(xml, {draft = false, file = ""} = {}){
     const actEls = [...ce.getElementsByTagName("Activity")];
     const acts = actEls.map((a,k) => { const net = num(own(a,"Net")), ps = claimNet ? r2(claimPs*net/claimNet) : 0;
       const all = [...a.getElementsByTagName("Observation")].map(o => ({type:own(o,"Type"), code:own(o,"Code"), value:own(o,"Value"), unit:own(o,"ValueType")}));
-      const obs = all.filter(o => !TOOTH_OBS.test(o.type)), teeth = [...new Set(all.filter(o => TOOTH_OBS.test(o.type)).map(o => o.code || o.value).filter(Boolean))];
-      return {aid:own(a,"ID")||`${id}-${k+1}`, code:own(a,"Code"), type:own(a,"Type"), obs, ...(teeth.length ? {teeth} : {}), desc:"", qty:num(own(a,"Quantity"))||1, gross:r2(net+ps), ps, net:r2(net), paid:0, denial:null}; });
+      // Tooth observations are kept exactly as they came (toothObs), so a claim that is not changed is sent with the same lines
+      const toothObs = all.filter(o => TOOTH_OBS.test(o.type)), obs = all.filter(o => !TOOTH_OBS.test(o.type)), teeth = [...new Set(toothObs.map(o => o.code || o.value).filter(Boolean))];
+      return {aid:own(a,"ID")||`${id}-${k+1}`, code:own(a,"Code"), type:own(a,"Type"), obs, ...(teeth.length ? {teeth, toothObs} : {}), desc:"", qty:num(own(a,"Quantity"))||1, gross:r2(net+ps), ps, net:r2(net), paid:0, denial:null}; });
     const dx = [...ce.getElementsByTagName("Diagnosis")].map(d => [own(d,"Code"), ""]);
     const c = {id, patient:pt.id, payer:pid, card:own(ce,"MemberID"), dept:"–", doctor:actEls[0]?own(actEls[0],"Clinician"):"", enc:encDate,
       dx:dx.length?dx:[["",""]], acts, status:draft?"Draft":resub?"Resubmitted":"Submitted", submitted:draft?null:sent,
@@ -2277,7 +2303,7 @@ function claimSrcXml(c, resub){
     [...ae.children].filter(x => x.tagName === "Observation").forEach(x => { const p = x.previousSibling; if (p && p.nodeType === 3 && !p.textContent.trim()) p.remove(); x.remove(); });
     const last = ae.lastChild, ind = last && last.nodeType === 3 ? last.textContent.replace(/^[\s\S]*\n/, "") : "    ";
     if (last && last.nodeType === 3) last.remove();
-    for (const o of [...(a.obs||[]).filter(o => o.value), ...(a.teeth||[]).map(t => ({type:TOOTH_TYPE, code:t, value:""}))]){ ae.appendChild(doc.createTextNode("\n" + ind + "  ")); ae.appendChild(obsXml(doc, o, ind + "  ")); }
+    for (const o of [...(a.obs||[]).filter(o => o.value), ...toothLines(a)]){ ae.appendChild(doc.createTextNode("\n" + ind + "  ")); ae.appendChild(obsXml(doc, o, ind + "  ")); }
     ae.appendChild(doc.createTextNode("\n" + ind));
   }
   return new XMLSerializer().serializeToString(ce).replace(/ xmlns(:\w+)?="[^"]*"/g, "");
@@ -3201,6 +3227,12 @@ const attTags = c => [isEcg(c) && "ECG", isDental(c) && "Dental"].filter(Boolean
 const atts = c => c.attachments || [];
 // Dental: tooth numbers on each dental activity, and an X-ray for each tooth
 const TOOTH_TYPE = "Universal Dental", TOOTH_OBS = /dental|tooth/i;
+// The observations written for an activity's teeth: the original line for a tooth that came in the file, otherwise a new one
+// in the same style as the file's own tooth lines (Value repeats the tooth when the file does that)
+function toothLines(a){
+  const orig = a.toothObs || [], like = orig[0];
+  return (a.teeth || []).map(t => orig.find(o => (o.code || o.value) === t) || {type: like ? like.type : TOOTH_TYPE, code: t, value: like && like.value ? t : "", unit: like ? like.unit || "" : ""});
+}
 const TOOTH_OK = /^(?:[1-4][1-8]|[5-8][1-5]|[1-9]|[12]\d|3[0-2]|[A-T])$/i; // FDI (11–48, 51–85) or Universal (1–32, A–T)
 const claimTeeth = c => [...new Set(c.acts.filter(isDentalAct).flatMap(a => a.teeth || []))];
 const teethNoXray = c => claimTeeth(c).filter(t => !atts(c).some(x => x.tooth === t));

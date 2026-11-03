@@ -104,6 +104,6 @@ ${Object.entries(body).map(([k, v]) => v === null ? `      <${k} xsi:nil="true" 
   if (resp === null) throw new EClaimLinkError(op, "parse", "response did not contain " + op + "Response");
   const result = Number(tag(resp, `${op}Result`));
   const out = Object.fromEntries(outFields.map(f => [f, xmlUnesc(tag(resp, f) ?? "")]));
-  if (!Number.isFinite(result) || (result < 0 && !allow.includes(result))) throw new EClaimLinkError(op, result, out.errorMessage);
+  if (!Number.isFinite(result) || (result < 0 && !allow.includes(result))) throw Object.assign(new EClaimLinkError(op, result, out.errorMessage), { out });
   return { result, out };
 }

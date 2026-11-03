@@ -1,3 +1,4 @@
+import { inflateRawSync, gunzipSync } from "node:zlib";
 import { call, settings, tag, tags, xmlUnesc } from "./soap.js";
 
 // A transport moves files to and from eClaimLink. "live" talks to the real web service,
@@ -9,9 +10,15 @@ export function liveTransport(opts) {
   return {
     name: "live",
     async upload(fileName, xml) {
-      const { result, out } = await call("UploadTransaction",
+      let result, out;
+      try { ({ result, out } = await call("UploadTransaction",
         { fileContent: Buffer.from(xml, "utf8").toString("base64"), fileName },
-        ["errorMessage", "errorReport", "TransactionID"], opts);
+        ["errorMessage", "errorReport", "TransactionID"], opts)); }
+      catch (e) {
+        // A rejected file (for example -2, validation failed) still carries the error report: keep it so staff can see which claim failed and why
+        if (!e.out || !Number.isInteger(e.code)) throw e;
+        return { result: e.code, transactionId: null, errorMessage: e.out.errorMessage || null, errorReport: decodeReport(e.out.errorReport) };
+      }
       return { result, transactionId: out.TransactionID || null, errorMessage: out.errorMessage || null, errorReport: decodeReport(out.errorReport) };
     },
     // Claims and remittances come from GetNewTransactions. DHA advises GetNewPriorAuthorizationTransactions
@@ -52,12 +59,33 @@ export function liveTransport(opts) {
   };
 }
 
-// The error report comes back base64 encoded; show it as text when it is text
-function decodeReport(b64) {
+// The error report comes back base64 encoded: usually a zipped CSV, sometimes gzip or plain text
+export function decodeReport(b64) {
   if (!b64) return null;
   const buf = Buffer.from(b64, "base64");
-  const txt = buf.toString("utf8");
+  let txt = null;
+  try {
+    if (buf[0] === 0x50 && buf[1] === 0x4b) txt = unzipText(buf);
+    else if (buf[0] === 0x1f && buf[1] === 0x8b) txt = gunzipSync(buf).toString("utf8");
+  } catch { txt = null; }
+  if (txt == null) txt = buf.toString("utf8");
+  txt = txt.replace(/^﻿/, "").replace(/\r\n?/g, "\n").trim();
   return /^[\x09\x0a\x0d\x20-\x7e -￿]*$/.test(txt) ? txt : `(binary report, ${buf.length} bytes)`;
+}
+// Reads every file in a zip (stored or deflated) from its central directory and joins their text
+function unzipText(buf) {
+  const eocd = buf.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+  if (eocd < 0) throw new Error("not a zip");
+  const count = buf.readUInt16LE(eocd + 10), parts = [];
+  let p = buf.readUInt32LE(eocd + 16);
+  for (let i = 0; i < count && buf.readUInt32LE(p) === 0x02014b50; i++) {
+    const method = buf.readUInt16LE(p + 10), size = buf.readUInt32LE(p + 20), nLen = buf.readUInt16LE(p + 28), xLen = buf.readUInt16LE(p + 30), cLen = buf.readUInt16LE(p + 32), off = buf.readUInt32LE(p + 42);
+    const name = buf.toString("utf8", p + 46, p + 46 + nLen);
+    const start = off + 30 + buf.readUInt16LE(off + 26) + buf.readUInt16LE(off + 28), data = buf.subarray(start, start + size);
+    if (!name.endsWith("/")) parts.push((method === 8 ? inflateRawSync(data) : data).toString("utf8"));
+    p += 46 + nLen + xLen + cLen;
+  }
+  return parts.join("\n");
 }
 
 // GetNewTransactions returns a list like <Files><File FileID='…' FileName='…' SenderID='…' … /></Files>
@@ -100,6 +128,13 @@ ${body}
       if (root === "Claim.Submission") {
         const claims = tags(xml, "Claim");
         if (!claims.length) return { result: -2, errorMessage: "File has no Claim records", transactionId: null };
+        // Test mode checks a little like DHPO does: a claim whose ID contains INVALID, or an observation without a code,
+        // makes the whole file fail with -2 and a CSV error report
+        const errs = claims.flatMap(c => { const id = tag(c, "ID");
+          return [...(/INVALID/i.test(id) ? [`${id},,Claim,Test mode: claim ${id} is marked invalid`] : []),
+            ...tags(c, "Activity").filter(a => tags(a, "Observation").some(o => !(tag(o, "Code") || "").trim())).map(a => `${id},${tag(a, "ID")},Observation,Observation Code is required`)]; });
+        if (errs.length) return { result: -2, errorMessage: "eClaim transaction validation is failed with errors", transactionId: null,
+          errorReport: ["ClaimID,ActivityID,Element,Error", ...errs].join("\n") };
         const body = claims.map(c => {
           const id = tag(c, "ID"), resub = tag(c, "Resubmission") !== null, acts = tags(c, "Activity");
           return `  <Claim>

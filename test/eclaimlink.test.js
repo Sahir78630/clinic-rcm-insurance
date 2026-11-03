@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
+import { deflateRawSync } from "node:zlib";
 import { openDb } from "../src/db.js";
 import { loadConfig } from "../src/util.js";
 import * as ecl from "../src/eclaimlink/index.js";
@@ -65,6 +66,18 @@ test("parseFileList reads the GetNewTransactions list", () => {
   assert.deepEqual(l, [{ fileId: "11", fileName: "ra.xml", sender: "A001", receiver: "DHA-F-1", transactionDate: "23/10/2026 09:00", recordCount: 3, isDownloaded: false }]);
 });
 
+// A one-file zip (deflated), the way DHPO sends its error report
+function zip(name, text) {
+  const data = Buffer.from(text), packed = deflateRawSync(data), n = Buffer.from(name), crc = 0;
+  const local = Buffer.alloc(30); local.writeUInt32LE(0x04034b50, 0); local.writeUInt16LE(20, 4); local.writeUInt16LE(8, 8); local.writeUInt32LE(crc, 14);
+  local.writeUInt32LE(packed.length, 18); local.writeUInt32LE(data.length, 22); local.writeUInt16LE(n.length, 26);
+  const central = Buffer.alloc(46); central.writeUInt32LE(0x02014b50, 0); central.writeUInt16LE(20, 4); central.writeUInt16LE(20, 6); central.writeUInt16LE(8, 10);
+  central.writeUInt32LE(packed.length, 20); central.writeUInt32LE(data.length, 24); central.writeUInt16LE(n.length, 28); central.writeUInt32LE(0, 42);
+  const cdOff = 30 + n.length + packed.length, cdLen = 46 + n.length, end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(1, 8); end.writeUInt16LE(1, 10); end.writeUInt32LE(cdLen, 12); end.writeUInt32LE(cdOff, 16);
+  return Buffer.concat([local, n, packed, central, n, end]);
+}
+
 // A stand-in for the eClaimLink SOAP endpoint, answering the four post office operations
 function fakeDhpo() {
   const calls = [];
@@ -74,7 +87,9 @@ function fakeDhpo() {
       const op = req.headers.soapaction.replace(/"/g, "").split("/").pop();
       calls.push({ op, body: b, login: tag(b, "login"), pwd: tag(b, "pwd") });
       const reply = {
-        UploadTransaction: (tag(b, "fileName") || "").includes("bad")
+        UploadTransaction: (tag(b, "fileName") || "").includes("invalid")
+          ? `<UploadTransactionResult>-2</UploadTransactionResult><errorMessage>eClaim transaction validation is failed with errors</errorMessage><errorReport>${zip("errors.csv", "\uFEFFClaimID,Error\r\nCLM-5,Observation Value is required\r\n").toString("base64")}</errorReport>`
+          : (tag(b, "fileName") || "").includes("bad")
           ? "<UploadTransactionResult>-4</UploadTransactionResult><errorMessage>Invalid XML structure</errorMessage>"
           : `<UploadTransactionResult>1</UploadTransactionResult><errorMessage>accepted with warnings</errorMessage><errorReport>${Buffer.from("Claim CLM-1: missing clinician").toString("base64")}</errorReport><TransactionID>778</TransactionID>`,
         GetNewTransactions: `<GetNewTransactionsResult>0</GetNewTransactionsResult><xmlTransactions>${'<Files><File FileID="55" FileName="RA_55.xml" SenderID="A001" ReceiverID="DHA-F-1" RecordCount="1"/></Files>'.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</xmlTransactions><errorMessage/>`,
@@ -105,6 +120,10 @@ test("live mode speaks SOAP to the post office: upload, list, download, mark dow
 
     const bad = await ecl.upload(ctx, { xml: claimXml("CLM-3"), fileName: "bad.xml" });
     assert.deepEqual([bad.ok, bad.resultCode, bad.errorMessage], [false, -4, "Invalid XML structure"]);
+
+    const inv = await ecl.upload(ctx, { xml: claimXml("CLM-5"), fileName: "invalid.xml" });
+    assert.deepEqual([inv.ok, inv.resultCode, inv.errorReport], [false, -2, "ClaimID,Error\nCLM-5,Observation Value is required"], "a rejected file keeps its unzipped error report");
+    calls.splice(2, 1);
 
     const s = await ecl.sync(ctx);
     assert.deepEqual([s.listed, s.downloaded, s.errors.length], [1, 1, 0]);
@@ -205,4 +224,11 @@ test("browse: a search eClaimLink cuts short is continued from the newest file's
     assert.deepEqual(r.files.map(f => f.fileId).sort((a, b) => a - b), all.map(f => f.id));
     assert.ok(calls <= 6, `${calls} searches`);
   } finally { srv.close(); }
+});
+
+test("test mode rejects a file with an invalid claim (-2) and explains why", async () => {
+  const ctx = { db: openDb(":memory:"), cfg, env: { ECLAIMLINK_MODE: "mock" } };
+  const r = await ecl.upload(ctx, { xml: claimXml("CLM-INVALID-1") });
+  assert.deepEqual([r.ok, r.resultCode], [false, -2]);
+  assert.match(r.errorReport, /CLM-INVALID-1/);
 });
