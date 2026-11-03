@@ -28,9 +28,9 @@ export function toApi(row) {
   };
 }
 
-export function listAppointments(db, date = today()) {
+export function listAppointments(db, date = today(), fac = "") {
   return db.prepare(`SELECT a.*, c.result_json FROM appointments a LEFT JOIN eligibility_checks c ON c.id = a.last_check_id
-    WHERE a.date = ? ORDER BY a.time, a.id`).all(date).map(toApi);
+    WHERE a.date = ? AND a.facility = ? ORDER BY a.time, a.id`).all(date, fac).map(toApi);
 }
 
 export function importCsv(ctx, csv, { date = today(), replace = true } = {}) {
@@ -44,8 +44,9 @@ export function importCsv(ctx, csv, { date = today(), replace = true } = {}) {
   const skipped = []; let imported = 0, membersUpdated = 0;
   db.exec("BEGIN");
   try {
-    if (replace) db.prepare("DELETE FROM appointments WHERE date = ?").run(date);
-    const ins = db.prepare(`INSERT INTO appointments (date, time, patient_name, emirates_id, payer, card_no, department, doctor) VALUES (?,?,?,?,?,?,?,?)`);
+    const fac = ctx.facility || "";
+    if (replace) db.prepare("DELETE FROM appointments WHERE date = ? AND facility = ?").run(date, fac);
+    const ins0 = db.prepare(`INSERT INTO appointments (date, time, patient_name, emirates_id, payer, card_no, department, doctor, facility) VALUES (?,?,?,?,?,?,?,?,?)`), ins = { run: (...a) => ins0.run(...a, fac) };
     rows.forEach((r, i) => {
       const line = i + 2;
       const eidRaw = col(r, "emirates_id"), card = col(r, "card_no"), payerRaw = col(r, "payer");
@@ -72,7 +73,7 @@ export function importCsv(ctx, csv, { date = today(), replace = true } = {}) {
 
 export async function verifyAppointment(ctx, id) {
   const { db } = ctx;
-  const a = db.prepare("SELECT * FROM appointments WHERE id = ?").get(id);
+  const a = db.prepare("SELECT * FROM appointments WHERE id = ? AND facility = ?").get(id, ctx.facility || "");
   if (!a) return null;
   const res = await checkEligibility(ctx, { emiratesId: a.emirates_id, cardNo: a.card_no, payer: a.payer, department: a.department, source: "appointment", appointmentId: a.id });
   db.prepare("UPDATE appointments SET status = ?, last_check_id = ?, checked_at = ?, patient_name = COALESCE(patient_name, ?), payer = COALESCE(payer, ?) WHERE id = ?")
@@ -82,7 +83,7 @@ export async function verifyAppointment(ctx, id) {
 
 // Checks run a few at a time so a large clinic list doesn't flood the payer API
 export async function verifyAll(ctx, date = today(), { onlyUnverified = true, concurrency = 4 } = {}) {
-  const ids = ctx.db.prepare(`SELECT id FROM appointments WHERE date = ? ${onlyUnverified ? "AND status = 'Not verified'" : ""} ORDER BY time, id`).all(date).map(r => r.id);
+  const ids = ctx.db.prepare(`SELECT id FROM appointments WHERE date = ? AND facility = ? ${onlyUnverified ? "AND status = 'Not verified'" : ""} ORDER BY time, id`).all(date, ctx.facility || "").map(r => r.id);
   let next = 0;
   const worker = async () => { while (next < ids.length) await verifyAppointment(ctx, ids[next++]); };
   await Promise.all(Array.from({ length: Math.min(concurrency, ids.length) }, worker));

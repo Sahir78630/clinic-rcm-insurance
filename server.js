@@ -13,6 +13,7 @@ import { settings, serviceInfo } from "./src/eclaimlink/soap.js";
 import * as auth from "./src/auth.js";
 import * as shared from "./src/shared.js";
 import * as files from "./src/files.js";
+import * as facs from "./src/facilities.js";
 
 const MAX_BODY = 50 * 1024 * 1024;
 const SENT = Symbol("sent"); // a route that wrote its own response
@@ -24,6 +25,7 @@ export function createApp({ db, cfg, env = process.env, fetchImpl, login = true 
   auth.initAuth(db);
   shared.initShared(db);
   files.initFiles(db);
+  facs.initFacilities(db);
   const appHtml = () => {
     const body = readFileSync(new URL("./public/app-body.html", import.meta.url), "utf8");
     return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -44,6 +46,14 @@ export function createApp({ db, cfg, env = process.env, fetchImpl, login = true 
   };
   // A browser whose eClaimLink session ended gets an error rather than quietly falling back to test mode
   const eclCtx = (req, s = sessionOf(req)) => {
+    // Locked to facilities: always the facility's own saved login, never a personal one
+    const c = req.rcm;
+    if (c && c.locked) {
+      if (!c.f) throw Object.assign(new Error("Choose a facility first"), { code: 409, needFacility: true });
+      const cr = facs.credentials(db, env, c.f.id);
+      const m = ecl.mode(env) === "off" ? "off" : String(env.ECLAIMLINK_MODE || "").toLowerCase() === "mock" ? "mock" : "live";
+      return { ...ctx, facility: c.lic, env: { ...env, ECLAIMLINK_MODE: m, ECLAIMLINK_LOGIN: cr.login, ECLAIMLINK_PASSWORD: cr.pwd, FACILITY_LICENSE: c.lic } };
+    }
     if (!s && cookieOf(req)) throw Object.assign(new Error("Your eClaimLink session has ended. Sign in again."), { code: 401, signIn: true });
     if (!s) return ctx;
     return { ...ctx, env: { ...env, ECLAIMLINK_MODE: ecl.mode(env) === "off" ? "off" : "live", ECLAIMLINK_LOGIN: s.login, ECLAIMLINK_PASSWORD: s.pwd } };
@@ -53,6 +63,8 @@ export function createApp({ db, cfg, env = process.env, fetchImpl, login = true 
     res.setHeader("set-cookie", `${name}=${value}; Path=/; HttpOnly; SameSite=${same}; Max-Age=${maxAge}${secure}`);
   };
   const eclStatus = (req, s = sessionOf(req)) => {
+    const c = req.rcm;
+    if (c && c.locked && c.f) return { ...ecl.status(eclCtx(req)), signedIn: true, signedInAs: c.f.name, canSignIn: false, serverLogin: true, facility: c.f.licence };
     return { ...ecl.status(s ? eclCtx(req, s) : ctx), signedIn: Boolean(s), signedInAs: s?.login || null, canSignIn: ecl.mode(env) !== "off",
       serverLogin: Boolean(env.ECLAIMLINK_LOGIN && env.ECLAIMLINK_PASSWORD) };
   };
@@ -67,6 +79,15 @@ export function createApp({ db, cfg, env = process.env, fetchImpl, login = true 
   const isLocal = req => (loopback(req) || ownAddress(req)) && !viaProxy(req);
   const clientIp = req => (loopback(req) && String(req.headers["cf-connecting-ip"] || "").trim()) || req.socket.remoteAddress;
   const userOf = req => login ? auth.sessionUser(db, cookieNamed(req, USER_COOKIE)) : { id: 0, username: "local", name: "", role: "admin" };
+  // The facility this browser works in. Locked (facilities set up): the one chosen at sign-in, or the only one allowed.
+  const facOf = (req, u) => {
+    if (!login || !facs.locked(db)) return { locked: false, f: null, lic: "", allowed: [] };
+    const allowed = facs.allowedFor(db, u);
+    let f = allowed.find(x => x.id === facs.sessionFacility(db, u.sessionId)) || null;
+    if (!f && allowed.length === 1) { f = allowed[0]; facs.setSessionFacility(db, u.sessionId, f.id); }
+    return { locked: true, f, lic: f ? f.licence : "", allowed };
+  };
+  const act = (req, u, action, detail = "") => facs.logActivity(db, { user: u ? u.username : "", facility: req.rcm?.lic || "", ip: clientIp(req), action, detail });
   const loginFails = new Map();
   const loginPage = mode => readFileSync(new URL("./public/login.html", import.meta.url), "utf8").replace("__MODE__", mode);
   const needAdmin = u => { if (u.role !== "admin") throw Object.assign(new Error("Only an admin can do this"), { code: 403 }); };
@@ -77,12 +98,15 @@ export function createApp({ db, cfg, env = process.env, fetchImpl, login = true 
       if (f.length >= 10) throw Object.assign(new Error("Too many wrong passwords. Wait 15 minutes and try again."), { code: 429 });
       const b = await readJson(req);
       const u = auth.checkLogin(db, b.username, b.password);
-      if (!u) { loginFails.set(ip, [...f, now]); throw Object.assign(new Error("Wrong username or password"), { code: 401 }); }
+      if (!u) { loginFails.set(ip, [...f, now]); facs.logActivity(db, { user: String(b.username || "").slice(0, 60), ip, action: "Website sign-in failed" }); throw Object.assign(new Error("Wrong username or password"), { code: 401 }); }
       loginFails.delete(ip);
       setCookie(req, res, auth.startSession(db, u.id), auth.SESSION_IDLE / 1000, USER_COOKIE, "Lax");
+      facs.logActivity(db, { user: u.username, ip, action: "Website sign-in" });
       return { ok: true };
     }],
     ["POST", /^\/auth\/logout$/, (req, url, m, res) => {
+      const u = auth.sessionUser(db, cookieNamed(req, USER_COOKIE));
+      if (u) facs.logActivity(db, { user: u.username, facility: (facs.facilityById(db, facs.sessionFacility(db, u.sessionId)) || {}).licence || "", ip: clientIp(req), action: "Website sign-out" });
       auth.endSession(db, cookieNamed(req, USER_COOKIE));
       setCookie(req, res, "", 0, USER_COOKIE, "Lax");
       return { ok: true };
@@ -111,59 +135,101 @@ export function createApp({ db, cfg, env = process.env, fetchImpl, login = true 
   });
 
   const routes = [
-    ["GET", /^\/api\/me$/, (req, url, m, res, u) => ({ ...u, sessionId: undefined, login })],
+    ["GET", /^\/api\/me$/, (req, url, m, res, u) => { const c = req.rcm;
+      return { ...u, sessionId: undefined, login, locked: c.locked, facility: c.f && { id: c.f.id, name: c.f.name, licence: c.f.licence },
+        facilities: c.allowed.map(f => ({ id: f.id, name: f.name, licence: f.licence })), needFacility: c.locked && !c.f }; }],
+    // Choosing the facility to work in. Staff choose once per sign-in (to change, they sign out); admins may switch.
+    ["POST", /^\/api\/facility$/, async (req, url, m, res, u) => {
+      const c = req.rcm, id = Number((await readJson(req)).id);
+      if (!c.locked) throw Object.assign(new Error("No facilities are set up"), { code: 409 });
+      const f = c.allowed.find(x => x.id === id);
+      if (!f) throw Object.assign(new Error("You do not have access to this facility"), { code: 403 });
+      if (c.f && c.f.id !== f.id && u.role !== "admin") throw Object.assign(new Error("Sign out first, then sign in again and choose the other facility"), { code: 403 });
+      facs.setSessionFacility(db, u.sessionId, f.id);
+      req.rcm = { ...c, f, lic: f.licence };
+      act(req, u, c.f && c.f.id !== f.id ? "Switched facility" : "Opened facility", `${f.name} (${f.licence})`);
+      return { ok: true, facility: { id: f.id, name: f.name, licence: f.licence } };
+    }],
+    // Facilities and their eClaimLink logins (admin only). Passwords are never sent back.
+    ["GET", /^\/api\/facilities$/, (req, url, m, res, u) => { needAdmin(u); return facs.listFacilities(db); }],
+    ["POST", /^\/api\/facilities$/, async (req, url, m, res, u) => {
+      needAdmin(u);
+      const b = await readJson(req);
+      const verify = async (licence, login, pwd) => {
+        if (["mock", "off"].includes(String(env.ECLAIMLINK_MODE || "").toLowerCase())) return;
+        await ecl.verifyLogin({ ...ctx, env: { ...env, FACILITY_LICENSE: licence } }, login, pwd);
+      };
+      const f = await facs.saveFacility(db, env, { id: b.id, licence: b.licence, name: b.name, login: b.login, password: b.password || undefined, active: b.active }, u.username, verify);
+      act(req, u, b.id ? "Changed facility" : "Added facility", `${f.name} (${f.licence})${b.password ? ", eClaimLink password set" : ""}${b.active === false ? ", disabled" : b.active === true ? ", enabled" : ""}`);
+      return f;
+    }],
+    ["GET", /^\/api\/activity$/, (req, url, m, res, u) => {
+      needAdmin(u);
+      const p = url.searchParams;
+      return facs.listActivity(db, { user: p.get("user"), facility: p.get("facility"), from: p.get("from"), to: p.get("to"), limit: p.get("limit") });
+    }],
     ["POST", /^\/api\/me\/password$/, async (req, url, m, res, u) => {
       const b = await readJson(req);
       auth.changeOwnPassword(db, u.id, b.current, b.password);
       return { ok: true };
     }],
-    ["GET", /^\/api\/users$/, (req, url, m, res, u) => { needAdmin(u); return auth.listUsers(db); }],
-    ["POST", /^\/api\/users$/, async (req, url, m, res, u) => { needAdmin(u); return auth.createUser(db, await readJson(req)); }],
+    ["GET", /^\/api\/users$/, (req, url, m, res, u) => { needAdmin(u); const fa = facs.userFacilities(db); return auth.listUsers(db).map(x => ({ ...x, facilities: fa[x.id] ?? null })); }],
+    ["POST", /^\/api\/users$/, async (req, url, m, res, u) => {
+      needAdmin(u);
+      const b = await readJson(req), n = auth.createUser(db, b);
+      if (b.facilities !== undefined) facs.setUserFacilities(db, n.id, b.facilities);
+      act(req, u, "Added website account", `${n.username} (${n.role})`);
+      return n;
+    }],
     ["POST", /^\/api\/users\/(\d+)$/, async (req, url, m, res, u) => {
       needAdmin(u);
       const b = await readJson(req);
-      return auth.updateUser(db, Number(m[1]), { name: b.name, role: b.role, active: b.active, password: b.password }, u);
+      const n = auth.updateUser(db, Number(m[1]), { name: b.name, role: b.role, active: b.active, password: b.password }, u);
+      if (b.facilities !== undefined) facs.setUserFacilities(db, n.id, b.facilities);
+      act(req, u, "Changed website account", `${n.username}: ${[b.role && "role " + b.role, b.active !== undefined && (b.active ? "enabled" : "disabled"), b.password && "new password", b.facilities !== undefined && "facilities " + (b.facilities === null ? "all" : (b.facilities || []).map(id => (facs.facilityById(db, id) || {}).name || id).join(", ") || "none")].filter(Boolean).join(", ")}`);
+      return n;
     }],
     // Shared records: every browser pulls changes since its last revision and pushes its own edits
-    ["GET", /^\/api\/data$/, (req, url) => shared.pull(db, Number(url.searchParams.get("since")) || 0)],
+    ["GET", /^\/api\/data$/, (req, url) => shared.pull(db, Number(url.searchParams.get("since")) || 0, req.rcm.lic)],
     ["POST", /^\/api\/data$/, async (req, url, m, res, u) => {
       const b = await readJson(req);
       if (b.clearAll) {
         needAdmin(u);
-        shared.clearAll(db, u.username);
+        shared.clearAll(db, u.username, req.rcm.lic);
+        act(req, u, "Cleared all data");
       }
-      return shared.push(db, b, u.username);
+      return shared.push(db, b, u.username, req.rcm.lic);
     }],
     // Claim attachments: uploaded as JSON (base64), opened in the browser, removed by any signed-in user
-    ["POST", /^\/api\/files$/, async (req, url, m, res, u) => files.addFile(db, await readJson(req), u.username)],
+    ["POST", /^\/api\/files$/, async (req, url, m, res, u) => files.addFile(db, await readJson(req), u.username, req.rcm.lic)],
     ["GET", /^\/api\/files\/(\d+)$/, (req, url, m, res) => {
-      const f = files.getFile(db, Number(m[1]));
+      const f = files.getFile(db, Number(m[1]), req.rcm.lic);
       if (!f) throw Object.assign(new Error("File not found"), { code: 404 });
       res.writeHead(200, files.fileHeaders(f)); res.end(f.data); return SENT;
     }],
-    ["POST", /^\/api\/files\/(\d+)\/delete$/, (req, url, m) => files.removeFile(db, Number(m[1]))],
-    ["GET", /^\/api\/health$/, () => ({ ok: true, provider: defaultProvider(env), eclaimlink: ecl.mode(env), facility: env.FACILITY_LICENSE || null, today: today() })],
+    ["POST", /^\/api\/files\/(\d+)\/delete$/, (req, url, m) => files.removeFile(db, Number(m[1]), req.rcm.lic)],
+    ["GET", /^\/api\/health$/, req => ({ ok: true, provider: defaultProvider(env), eclaimlink: req.rcm.locked ? eclStatus(req).mode : ecl.mode(env), facility: req.rcm.lic || env.FACILITY_LICENSE || null, today: today() })],
     ["GET", /^\/api\/config$/, () => ({ payers: cfg.payers.map(({ code, name, kind, terms, eclaimlinkId }) => ({ code, name, kind, terms, eclaimlinkId })), approvalDepartments: cfg.approvalDepartments, csvColumns: CSV_COLUMNS, provider: defaultProvider(env) })],
     ["POST", /^\/api\/eligibility$/, async req => {
       const b = await readJson(req);
-      return checkEligibility(ctx, { emiratesId: b.emiratesId, cardNo: b.cardNo, payer: b.payer, department: b.department, source: "walk-in" });
+      return checkEligibility(req.rcm.ctx, { emiratesId: b.emiratesId, cardNo: b.cardNo, payer: b.payer, department: b.department, source: "walk-in" });
     }],
-    ["GET", /^\/api\/appointments$/, (req, url) => listAppointments(db, url.searchParams.get("date") || today())],
+    ["GET", /^\/api\/appointments$/, (req, url) => listAppointments(db, url.searchParams.get("date") || today(), req.rcm.lic)],
     ["POST", /^\/api\/appointments\/import$/, async req => {
       const b = await readJson(req);
       if (typeof b.csv !== "string" || !b.csv.trim()) throw Object.assign(new Error("Send the CSV text in the 'csv' field"), { code: 400 });
       const date = b.date || today();
-      const r = importCsv(ctx, b.csv, { date, replace: b.replace !== false });
-      const checked = b.verify === false ? 0 : await verifyAll(ctx, date);
-      return { ...r, checked, appointments: listAppointments(db, date) };
+      const r = importCsv(req.rcm.ctx, b.csv, { date, replace: b.replace !== false });
+      const checked = b.verify === false ? 0 : await verifyAll(req.rcm.ctx, date);
+      return { ...r, checked, appointments: listAppointments(db, date, req.rcm.lic) };
     }],
     ["POST", /^\/api\/appointments\/verify-all$/, async (req, url) => {
       const date = url.searchParams.get("date") || today();
-      const checked = await verifyAll(ctx, date, { onlyUnverified: url.searchParams.get("all") !== "1" });
-      return { checked, appointments: listAppointments(db, date) };
+      const checked = await verifyAll(req.rcm.ctx, date, { onlyUnverified: url.searchParams.get("all") !== "1" });
+      return { checked, appointments: listAppointments(db, date, req.rcm.lic) };
     }],
     ["POST", /^\/api\/appointments\/(\d+)\/verify$/, async (req, url, m) => {
-      const r = await verifyAppointment(ctx, Number(m[1]));
+      const r = await verifyAppointment(req.rcm.ctx, Number(m[1]));
       if (!r) throw Object.assign(new Error("Appointment not found"), { code: 404 });
       return r;
     }],
@@ -185,6 +251,7 @@ export function createApp({ db, cfg, env = process.env, fetchImpl, login = true 
       const ip = req.socket.remoteAddress, now = Date.now();
       const f = (failures.get(ip) || []).filter(t => now - t < 15 * 60e3);
       if (f.length >= 5) throw Object.assign(new Error("Too many failed sign-ins. Wait 15 minutes, so eClaimLink does not lock the account."), { code: 429 });
+      if (req.rcm.locked) throw Object.assign(new Error("eClaimLink is used through each facility's account, saved by the admin under Account & staff. Personal eClaimLink sign-in is switched off."), { code: 403 });
       const b = await readJson(req);
       const login = String(b.login || "").trim(), pwd = String(b.pwd || "");
       try { await ecl.verifyLogin(ctx, login, pwd); }
@@ -205,30 +272,34 @@ export function createApp({ db, cfg, env = process.env, fetchImpl, login = true 
     ["POST", /^\/api\/eclaimlink\/upload$/, async req => {
       const b = await readJson(req);
       if (typeof b.xml !== "string" || !b.xml.trim()) throw Object.assign(new Error("Send the XML in the 'xml' field"), { code: 400 });
-      return ecl.upload(eclCtx(req), { xml: b.xml, fileName: b.fileName });
+      const r = await ecl.upload(eclCtx(req), { xml: b.xml, fileName: b.fileName });
+      act(req, req.user, "eClaimLink: sent file", `${r.fileName} (${r.type}) to ${String(b.xml).match(/<ReceiverID>([^<]*)</)?.[1] || "?"}, ${String(b.xml).match(/<RecordCount>([^<]*)</)?.[1] || "?"} records: ${r.ok ? "accepted" : "rejected " + r.resultCode}`);
+      return r;
     }],
-    ["POST", /^\/api\/eclaimlink\/sync$/, req => ecl.sync(eclCtx(req))],
+    ["POST", /^\/api\/eclaimlink\/sync$/, async req => { const r = await ecl.sync(eclCtx(req)); act(req, req.user, "eClaimLink: downloaded new files", `${r.downloaded} new`); return r; }],
     ["GET", /^\/api\/eclaimlink\/files$/, (req, url) => ecl.listFiles(eclCtx(req), {
       direction: url.searchParams.get("direction"), type: url.searchParams.get("type"),
       unapplied: url.searchParams.get("unapplied") === "1", limit: Math.min(200, Number(url.searchParams.get("limit")) || 50) })],
     ["GET", /^\/api\/eclaimlink\/files\/(\d+)$/, (req, url, m) => {
       const f = ecl.getFile(eclCtx(req), Number(m[1]));
       if (!f) throw Object.assign(new Error("File not found"), { code: 404 });
+      act(req, req.user, "eClaimLink: opened file", f.file_name || String(f.id));
       return f;
     }],
     ["GET", /^\/api\/eclaimlink\/search$/, (req, url) => {
       const p = url.searchParams;
+      act(req, req.user, "eClaimLink: searched files", `${p.get("direction") || ""} ${p.get("type") || "all"} ${p.get("from") || ""} to ${p.get("to") || ""}${p.get("name") ? " name " + p.get("name") : ""}${p.get("archive") === "1" ? " (archive)" : ""}`);
       return ecl.search(eclCtx(req), { direction: p.get("direction"), type: p.get("type") || "all", status: p.get("status") || "all",
         from: p.get("from"), to: p.get("to"), name: p.get("name"), archive: p.get("archive") === "1" });
     }],
-    ["GET", /^\/api\/eclaimlink\/remote\/([\w.-]+)$/, (req, url, m) => ecl.view(eclCtx(req), m[1], { archive: url.searchParams.get("archive") === "1" })],
-    ["POST", /^\/api\/eclaimlink\/report$/, async req => ecl.report(eclCtx(req), (await readJson(req)).files)],
-    ["POST", /^\/api\/eclaimlink\/rows$/, async req => ecl.rows(eclCtx(req), (await readJson(req)).files)],
+    ["GET", /^\/api\/eclaimlink\/remote\/([\w.-]+)$/, async (req, url, m) => { const v = await ecl.view(eclCtx(req), m[1], { archive: url.searchParams.get("archive") === "1" }); act(req, req.user, "eClaimLink: opened file", v.fileName || m[1]); return v; }],
+    ["POST", /^\/api\/eclaimlink\/report$/, async req => { const f = (await readJson(req)).files; act(req, req.user, "eClaimLink: built a report", `${Array.isArray(f) ? f.length : 0} files`); return ecl.report(eclCtx(req), f); }],
+    ["POST", /^\/api\/eclaimlink\/rows$/, async req => { const f = (await readJson(req)).files; act(req, req.user, "eClaimLink: read files for a report", `${Array.isArray(f) ? f.length : 0} files`); return ecl.rows(eclCtx(req), f); }],
     ["POST", /^\/api\/eclaimlink\/files\/(\d+)\/applied$/, (req, url, m) => ({ applied: ecl.markApplied(eclCtx(req), Number(m[1])) })],
     ["GET", /^\/api\/checks$/, (req, url) => {
       const limit = Math.min(500, Number(url.searchParams.get("limit")) || 50);
-      return db.prepare("SELECT id, created_at, source, provider, payer, emirates_id, card_no, department, status, result_json FROM eligibility_checks ORDER BY id DESC LIMIT ?")
-        .all(limit).map(r => ({ ...r, result: JSON.parse(r.result_json), result_json: undefined }));
+      return db.prepare("SELECT id, created_at, source, provider, payer, emirates_id, card_no, department, status, result_json FROM eligibility_checks WHERE facility = ? ORDER BY id DESC LIMIT ?")
+        .all(req.rcm.lic, limit).map(r => ({ ...r, result: JSON.parse(r.result_json), result_json: undefined }));
     }],
   ];
 
@@ -249,6 +320,11 @@ export function createApp({ db, cfg, env = process.env, fetchImpl, login = true 
         throw Object.assign(new Error("Your website sign-in has ended. Sign in again."), { code: 401, login: true });
       }
       if (req.method === "GET" && page) return send(res, 200, appHtml(), "text/html; charset=utf-8");
+      const c = facOf(req, u);
+      req.rcm = { ...c, ctx: { ...ctx, facility: c.lic } }; req.user = u;
+      // Locked: nothing of a facility can be read or changed before a facility is chosen
+      if (c.locked && !c.f && !/^\/api\/(me(\/password)?|facility|facilities|users(\/\d+)?|activity)$/.test(url.pathname))
+        throw Object.assign(new Error("Choose a facility first"), { code: 409, needFacility: true });
       for (const [method, re, fn] of routes) {
         const m = url.pathname.match(re);
         if (m && req.method === method) { const out = await fn(req, url, m, res, u); return out === SENT ? undefined : send(res, 200, out); }
@@ -257,7 +333,7 @@ export function createApp({ db, cfg, env = process.env, fetchImpl, login = true 
     } catch (e) {
       const code = Number.isInteger(e.code) ? e.code : 500;
       if (code === 500) console.error(e);
-      send(res, code, { error: code === 500 ? "Server error" : e.message, ...(e.signIn && { signIn: true }), ...(e.login && { login: true }) });
+      send(res, code, { error: code === 500 ? "Server error" : e.message, ...(e.signIn && { signIn: true }), ...(e.login && { login: true }), ...(e.needFacility && { needFacility: true }) });
     }
   };
 }
@@ -271,7 +347,8 @@ if (process.argv[1] && samePath(fileURLToPath(import.meta.url), resolve(process.
   const cfg = loadConfig();
   const port = Number(env.PORT) || 3000;
   const host = env.HOST || "127.0.0.1";
-  const app = createApp({ db, cfg, env });
+  // The facility password key is kept next to the database (data/facility.key)
+  const app = createApp({ db, cfg, env: { ...env, DATABASE_FILE: dbFile } });
   const daily = () => { try { const f = shared.backup(db, dbFile); if (f) console.log(`Backup: ${f}`); } catch (e) { console.error("Backup failed:", e.message); } };
   daily(); setInterval(daily, 3600e3).unref();
   if (!auth.userCount(db)) console.log(`No accounts yet: open http://127.0.0.1:${port} on this computer to create the admin account.`);

@@ -59,8 +59,8 @@ export async function checkEligibility(ctx, input) {
     provider: provider.name,
     checkedAt: new Date().toISOString(),
   };
-  const info = db.prepare(`INSERT INTO eligibility_checks (source, appointment_id, provider, payer, emirates_id, card_no, department, status, result_json)
-    VALUES (?,?,?,?,?,?,?,?,?)`).run(input.source || "api", input.appointmentId ?? null, out.provider, out.payer, out.emiratesId, out.cardNo, out.department, out.status, JSON.stringify(out));
+  const info = db.prepare(`INSERT INTO eligibility_checks (source, appointment_id, provider, payer, emirates_id, card_no, department, status, result_json, facility)
+    VALUES (?,?,?,?,?,?,?,?,?,?)`).run(input.source || "api", input.appointmentId ?? null, out.provider, out.payer, out.emiratesId, out.cardNo, out.department, out.status, JSON.stringify(out), ctx.facility || "");
   out.checkId = Number(info.lastInsertRowid);
   return out;
 }

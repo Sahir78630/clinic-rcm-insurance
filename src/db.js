@@ -92,8 +92,13 @@ export function openDb(file) {
   const db = new DatabaseSync(file);
   db.exec("PRAGMA journal_mode = WAL;");
   db.exec(SCHEMA);
+  // One facility's records: '' for records from before facilities were set up
+  for (const t of ["appointments", "eligibility_checks", "eclaimlink_files"]) addColumn(db, t, "facility", "TEXT NOT NULL DEFAULT ''");
   return db;
 }
+export const addColumn = (db, table, col, def) => {
+  if (!db.prepare(`PRAGMA table_info(${table})`).all().some(c => c.name === col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`);
+};
 
 // keys are stored digits-only so lookups ignore dashes and spaces
 export const key = s => String(s ?? "").replace(/[^0-9a-z]/gi, "").toLowerCase();

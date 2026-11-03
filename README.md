@@ -158,6 +158,21 @@ Every file sent or received is kept in the `eclaimlink_files` table with its res
 
 The connector follows the DHPO Web Service Specification v4.0 (March 2026): `UploadTransaction`, `GetNewTransactions`, `GetNewPriorAuthorizationTransactions` (DHA's recommended way to collect prior authorization replies), `DownloadTransactionFile` and `SetTransactionDownloaded`, with the shared result codes (1 = accepted with warnings, 2 = nothing new, negative = error). The specification has no eligibility operation, so eligibility still goes through the providers above. Files older than the archiving period (24 months for claims, 6 for authorizations) move to DHA's separate archive service, which this connector does not call.
 
+## Several facilities, one at a time
+
+Under **Account & staff** an admin can add each facility: its name, DHA licence, and eClaimLink username and password. The login is checked with eClaimLink before it is saved, and the password is kept encrypted on the clinic server (AES-256-GCM, with the key in `data/facility.key` next to the database); it is never shown again, only replaced. When moving the website to another computer, copy the whole `data` folder, key included, or enter the passwords again.
+
+As soon as one facility is saved the website is **locked to facilities**:
+
+- Everyone works in one facility at a time. After signing in, a person with access to several facilities chooses one; with only one they go straight in. The bar at the top of every page names the facility. Staff change facility by signing out and signing in again; an admin can also use **Switch facility**.
+- Each facility has its own claims, patients, remittances, approvals, settings, attachments, appointments, eligibility checks and eClaimLink files. A claim file from another facility's licence is not imported into the open facility.
+- eClaimLink works only through the saved facility logins. Personal eClaimLink sign-in is switched off, so nobody can use the website with another facility's account, and staff never see or type the eClaimLink password.
+- For each staff account, **Facilities** chooses which facilities they can open (every facility until chosen). Admins can open every facility.
+- A browser left unused for 30 minutes signs out.
+- The **Activity log** lists website sign-ins (and failed attempts), sign-outs, the facility opened or switched to, eClaimLink files sent (with the result), downloads, searches and files opened, reports built, and changes to accounts and facilities, with the person, the facility and the computer's address. It can be filtered and downloaded as CSV.
+
+The first facility saved takes over every record kept before facilities were set up. Disabling the last active facility unlocks the website again.
+
 ## API
 
 | Method | Path | Purpose |

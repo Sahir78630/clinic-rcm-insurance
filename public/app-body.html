@@ -54,6 +54,12 @@ h1{font-size:24px} h2{font-size:17px} h3{font-size:15px}
 .nav button[aria-current="page"]{background:var(--accent-soft);color:var(--accent);font-weight:600}
 .nav .count{font-family:var(--mono);font-size:11px;background:var(--sunk);color:var(--muted);border-radius:10px;padding:1px 7px}
 .nav button[aria-current="page"] .count{background:var(--surface);color:var(--accent)}
+.facbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:16px;padding:9px 14px;border:1px solid var(--accent);border-radius:10px;background:var(--accent-soft);color:var(--ink)}
+.facbar[hidden]{display:none}
+#facBar{flex-direction:row;margin:0 auto 16px;gap:10px}
+.facbar .facname{font-family:var(--display);font-weight:700;font-size:15px;color:var(--accent)}
+.facbar .actions{margin-left:auto}
+@media print{.facbar{display:none !important}}
 .rail-foot{margin-top:auto;font-size:11.5px;color:var(--muted);padding:0 6px;display:flex;flex-direction:column;gap:8px}
 
 .print-only{display:none}
@@ -205,7 +211,7 @@ dialog::backdrop{background:rgba(8,16,14,.45)}
       <button class="btn sm danger" id="resetBtn" type="button">Clear all data</button>
     </div>
   </aside>
-  <main><div class="wrap" id="view"></div></main>
+  <main><div class="wrap facbar" id="facBar" hidden></div><div class="wrap" id="view"></div></main>
 </div>
 
 <dialog id="dlg"><div id="dlgInner"></div></dialog>
@@ -1615,6 +1621,7 @@ async function api(path, body){
   const r = await fetch(API_BASE + path, body === undefined ? {credentials:"same-origin"} : {method:"POST",credentials:"same-origin",headers:{"content-type":"application/json"},body:JSON.stringify(body)});
   const j = await r.json().catch(()=>({}));
   if (r.status === 401 && j.login) { SYNC.ok = false; location.reload(); }
+  if (r.status === 409 && j.needFacility && !SYNC.choosing) { SYNC.ok = false; location.reload(); }
   if (r.status === 401 && j.signIn) { LIVE.eclUser = null; refreshEclStatus().then(render); }
   if (!r.ok) throw new Error(j.error || `Server returned ${r.status}`);
   return j;
@@ -1668,7 +1675,7 @@ function eclSignInHtml(){
     <p class="muted" style="font-size:12.5px;margin:10px 0 0">Your password goes only to the clinic server, which passes it to eClaimLink with each request. The server keeps it in memory only, never on disk, and forgets it when you sign out, after 2 hours without use, or after 12 hours.${LIVE.ecl==="mock"?` <a href="#" id="eclTestMode">Continue in test mode instead</a>.`:""}</p>
   </section>`;
 }
-const eclUserBar = () => LIVE.eclUser ? `<div class="muted" style="font-size:12.5px;margin:-4px 0 12px">Signed in to eClaimLink as <b>${esc(LIVE.eclUser)}</b> · <a href="#" id="eclSignOut">Sign out</a></div>` : "";
+const eclUserBar = () => facLock() ? `<div class="muted" style="font-size:12.5px;margin:-4px 0 12px">Using the eClaimLink account of <b>${esc(SYNC.me.facility.name)}</b> (<span class="mono">${esc(SYNC.me.facility.licence)}</span>), saved by the admin. Personal eClaimLink sign-in is switched off.</div>` : LIVE.eclUser ? `<div class="muted" style="font-size:12.5px;margin:-4px 0 12px">Signed in to eClaimLink as <b>${esc(LIVE.eclUser)}</b> · <a href="#" id="eclSignOut">Sign out</a></div>` : "";
 function bindEclAccount(){
   const f = $("#eclLogin");
   if (f) f.onsubmit = async e => { e.preventDefault();
@@ -1788,11 +1795,52 @@ function renderSync(){
     : SYNC.ok ? `All figures in AED. Records are saved on the clinic server and shared by all staff.${SYNC.me?` Signed in as <b>${esc(SYNC.me.name||SYNC.me.username)}</b>${SYNC.me.role==="admin"?" (admin)":""}.`:""}`
     : `<span style="color:var(--bad)">Not saved: the clinic server cannot be reached. Retrying…</span>`;
 }
+/* ---------- one facility at a time ---------- */
+// When the admin has saved facilities, each sign-in works in one facility: the bar at the top names it on every page.
+// Staff sign out to change facility; an admin can switch. 30 minutes without use signs the browser out.
+async function signOutNow(){ try { await fetch("/auth/logout", {method:"POST", credentials:"same-origin", headers:{"content-type":"application/json"}, body:"{}"}); } catch(e) {} location.reload(); }
+const facBtn = (f, attr, cur) => `<button class="btn ${cur?"primary":""}" style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 14px;width:100%" ${attr}="${f.id}" type="button"><b>${esc(f.name)}</b><span class="mono" style="font-size:12.5px">${esc(f.licence)}</span></button>`;
+function facilityChooser(){
+  SYNC.choosing = true;
+  const me = SYNC.me, list = me.facilities || [];
+  $("#nav").innerHTML = ""; const rf = document.querySelector(".rail-foot"); if (rf) rf.style.visibility = "hidden";
+  $("#view").innerHTML = `<section class="panel" style="max-width:560px;width:100%;margin:40px auto 0"><div class="panel-head"><div><h2>Choose the facility to work in</h2><p>Signed in as <b>${esc(me.name||me.username)}</b>. You see one facility at a time: its claims, reports and eClaimLink files only. ${me.role==="admin"?"As an admin you can switch later from the bar at the top of the page.":"To work in another facility later, sign out and sign in again."}</p></div></div>
+    ${list.length ? `<div style="display:flex;flex-direction:column;gap:8px">${list.map(f => facBtn(f, "data-fac")).join("")}</div>` : `<div class="result bad">No facility is open to your account. Ask the admin to give you access under Account & staff.</div>`}
+    <div class="actions" style="margin-top:14px"><button class="btn" id="chooseOut" type="button">Sign out</button></div></section>`;
+  $("#view").querySelectorAll("[data-fac]").forEach(b => b.onclick = async () => { b.disabled = true;
+    try { await api("/facility", {id:Number(b.dataset.fac)}); location.reload(); } catch(e){ toast(e.message); b.disabled = false; } });
+  $("#chooseOut").onclick = signOutNow;
+}
+function applyFacility(){
+  const f = SYNC.me && SYNC.me.locked && SYNC.me.facility;
+  if (f && (!S.facility || S.facility.licence !== f.licence || S.facility.name !== f.name)){ S.facility = {...(S.facility||{}), name:f.name, licence:f.licence}; save(); }
+}
+function renderFacBar(){
+  const el = $("#facBar"), me = SYNC.me, f = me && me.locked && me.facility;
+  if (!el) return; el.hidden = !f; if (!f) return;
+  const canSwitch = me.role === "admin" && (me.facilities||[]).length > 1;
+  el.innerHTML = `<span class="eyebrow">Working in</span><span class="facname">${esc(f.name)}</span><span class="mono muted" style="font-size:12.5px">${esc(f.licence)}</span><span class="muted" style="font-size:12.5px">· ${esc(me.name||me.username)}</span>
+    <div class="actions">${canSwitch?`<button class="btn sm" id="facSwitch" type="button">Switch facility</button>`:""}<button class="btn sm" id="facOut" type="button" title="${me.role==="admin"?"":"To work in another facility, sign out and sign in again"}">Sign out</button></div>`;
+  $("#facOut").onclick = async () => { await syncNow(); signOutNow(); };
+  if (canSwitch) $("#facSwitch").onclick = () => {
+    openDlg(dlgHead("Switch facility", "The claims, reports and eClaimLink files of the facility you choose open in this browser.") + `<div class="dlg-body"><div style="display:flex;flex-direction:column;gap:8px">${me.facilities.map(x => facBtn(x, "data-swf", x.id === f.id)).join("")}</div></div>`);
+    $("#dlgInner").querySelectorAll("[data-swf]").forEach(b => b.onclick = async () => { if (Number(b.dataset.swf) === f.id) return closeDlg();
+      try { await syncNow(); SYNC.choosing = true; await api("/facility", {id:Number(b.dataset.swf)}); location.reload(); } catch(e){ toast(e.message); } });
+  };
+}
+const IDLE_MINUTES = 30;
+function startIdleSignOut(){
+  if (!facLock()) return;
+  let last = Date.now();
+  ["pointerdown","pointermove","keydown","wheel","touchstart"].forEach(ev => document.addEventListener(ev, () => { last = Date.now(); }, {passive:true, capture:true}));
+  setInterval(() => { if (Date.now() - last > IDLE_MINUTES * 60e3 && !SYNC.dirty && !SYNC.busy) signOutNow(); }, 30e3);
+}
 async function bootShared(){
   const fail = msg => { $("#view").innerHTML = `<section class="panel"><div class="result bad">${esc(msg)}</div><div class="actions" style="margin-top:10px"><button class="btn primary" type="button" onclick="location.reload()">Try again</button></div></section>`; };
   try { SYNC.me = await api("/me"); } catch(e){ fail("The clinic server could not be reached: " + e.message + ". Check that Clinic RCM is running on the clinic computer (the black window), then try again."); return false; }
+  if (SYNC.me.needFacility){ facilityChooser(); return false; }
   try { await syncPull(); } catch(e){ fail("The shared records could not be loaded: " + e.message + ". If the clinic computer was just updated, close every black Clinic RCM window, run taskkill /IM node.exe /F, start start-for-staff.bat again, then try again."); return false; }
-  SYNC.ready = true; renderSync(); render();
+  SYNC.ready = true; applyFacility(); renderFacBar(); startIdleSignOut(); renderSync(); render();
   // Records this browser kept before they moved to the server: copy across the ones the server does not have yet
   let asked = null; try { asked = localStorage.getItem(KEY + "-copied"); } catch(e) {}
   if ((OLD_LOCAL || OLD_PRICES) && !asked){
@@ -1825,7 +1873,15 @@ R.account = () => {
     `<button class="btn" id="pwBtn" type="button">Change my password</button><button class="btn danger" id="signOutBtn" type="button">Sign out</button>`) +
   (me.role === "admin" ? `<section class="panel"><div class="panel-head"><div><h2>Staff accounts</h2><p>Each person signs in with their own username and password. Staff can use everything except this list and clearing all data. Disabling an account or setting a new password signs that person out at once.</p></div>
     <button class="btn primary" id="uAddBtn" type="button">Add an account</button></div>
-    <div class="table-wrap"><table><thead><tr><th>Username</th><th>Name</th><th>Role</th><th>Status</th><th>Last sign-in (UTC)</th><th></th></tr></thead><tbody id="uRows"><tr><td colspan="6" class="empty">Loading…</td></tr></tbody></table></div></section>` : "") +
+    <div class="table-wrap"><table><thead><tr><th>Username</th><th>Name</th><th>Role</th><th>Facilities</th><th>Status</th><th>Last sign-in (UTC)</th><th></th></tr></thead><tbody id="uRows"><tr><td colspan="7" class="empty">Loading…</td></tr></tbody></table></div></section>
+  <section class="panel"><div class="panel-head"><div><h2>Facilities and eClaimLink logins</h2><p>Enter each facility's licence and its eClaimLink username and password once. The password is checked with eClaimLink, then kept encrypted on the clinic server; nobody can see it again, it can only be replaced. Once a facility is saved the website is locked to these facilities: everyone signs in to one facility at a time, eClaimLink works only through these saved logins, and no other eClaimLink account can be used here. When DHA asks for a new eClaimLink password, change it here.</p></div>
+    <button class="btn primary" id="facAddBtn" type="button">Add a facility</button></div>
+    <div class="table-wrap"><table><thead><tr><th>Facility</th><th>Licence</th><th>eClaimLink username</th><th>Status</th><th>Last changed</th><th></th></tr></thead><tbody id="facRows"><tr><td colspan="6" class="empty">Loading…</td></tr></tbody></table></div></section>
+  <section class="panel"><div class="panel-head"><div><h2>Activity log</h2><p>Who signed in, from which computer, which facility they opened, and what they did on eClaimLink (files sent, downloaded, searched and opened), plus changes to accounts and facilities. Times are UTC.</p></div>
+    <button class="btn" id="actCsv" type="button">Download CSV</button></div>
+    <form class="filters" id="actForm" style="margin-bottom:10px"><select id="actUser" aria-label="Person"><option value="">Everyone</option></select><select id="actFac" aria-label="Facility"><option value="">All facilities</option></select>
+      <input type="date" id="actFrom" aria-label="From" value="${addDays(TODAY,-7)}"><input type="date" id="actTo" aria-label="To" value="${TODAY}"><button class="btn" type="submit">Show</button></form>
+    <div class="table-wrap"><table><thead><tr><th>Time (UTC)</th><th>Person</th><th>Facility</th><th>Computer</th><th>What</th><th>Details</th></tr></thead><tbody id="actRows"><tr><td colspan="6" class="empty">Loading…</td></tr></tbody></table></div></section>` : "") +
   `<section class="panel"><div class="panel-head"><div><h2>Where the records are</h2><p>Claims, remittances, approvals, patients and price lists are saved on the clinic server and shared by everyone who signs in. The server keeps a copy of everything every day for the last 30 days, in the <span class="mono">data\\backups</span> folder on the clinic computer.</p></div></div></section>`;
 };
 async function bindAccount(){
@@ -1846,9 +1902,12 @@ async function bindAccount(){
   let users = [];
   try { users = await api("/users"); } catch(e){ toast(e.message); return; }
   if (current !== "account" || !$("#uRows")) return;
-  $("#uRows").innerHTML = users.map(u => `<tr><td class="mono">${esc(u.username)}</td><td>${esc(u.name)}</td><td>${u.role==="admin"?"Admin":"Staff"}</td>
+  let facList = []; try { facList = await api("/facilities"); } catch(e){}
+  const facName = id => (facList.find(f => f.id === id) || {}).name || `#${id}`;
+  const facCell = u => !facList.length ? `<span class="muted">–</span>` : u.role === "admin" ? `<span class="muted">All (admin)</span>` : u.facilities === null ? "All" : u.facilities.length ? esc(u.facilities.map(facName).join(", ")) : `<span style="color:var(--bad)">None</span>`;
+  $("#uRows").innerHTML = users.map(u => `<tr><td class="mono">${esc(u.username)}</td><td>${esc(u.name)}</td><td>${u.role==="admin"?"Admin":"Staff"}</td><td class="wrap-cell">${facCell(u)}</td>
     <td><span class="pill ${u.active?"p-ok":"p-mute"}">${u.active?"Active":"Disabled"}</span></td><td class="muted mono">${esc(u.lastLogin||"never")}</td>
-    <td><div class="actions" style="justify-content:flex-end"><button class="btn sm" data-uact="pw" data-uid="${u.id}" type="button">Set new password</button>
+    <td><div class="actions" style="justify-content:flex-end">${facList.length && u.role !== "admin" ? `<button class="btn sm" data-uact="fac" data-uid="${u.id}" type="button">Facilities</button>` : ""}<button class="btn sm" data-uact="pw" data-uid="${u.id}" type="button">Set new password</button>
     <button class="btn sm" data-uact="role" data-uid="${u.id}" type="button">${u.role==="admin"?"Make staff":"Make admin"}</button>
     <button class="btn sm ${u.active?"danger":""}" data-uact="active" data-uid="${u.id}" type="button">${u.active?"Disable":"Enable"}</button></div></td></tr>`).join("");
   const change = async (id, body, msg) => {
@@ -1856,6 +1915,7 @@ async function bindAccount(){
   };
   $("#uRows").querySelectorAll("[data-uact]").forEach(b => b.onclick = () => {
     const u = users.find(x => x.id === Number(b.dataset.uid)), a = b.dataset.uact;
+    if (a === "fac"){ userFacDlg(u, facList, change); return; }
     if (a === "pw"){ const pw = prompt(`New password for ${u.username} (at least 8 characters). Tell them the new password; they can change it under Account & staff.`); if (pw) change(u.id, {password:pw}, `New password set for ${u.username}`); }
     if (a === "role") change(u.id, {role: u.role === "admin" ? "staff" : "admin"}, `${u.username} is now ${u.role === "admin" ? "staff" : "an admin"}`);
     if (a === "active" && (!u.active || confirm(`Disable ${u.username}? They are signed out and cannot sign in until enabled again.`))) change(u.id, {active: !u.active}, `${u.username} ${u.active ? "disabled" : "enabled"}`);
@@ -1868,14 +1928,72 @@ async function bindAccount(){
       <div class="field"><label for="nuPw">Password (at least 8 characters)</label><input type="text" id="nuPw" autocomplete="off"></div>
     </div><div class="actions"><button class="btn primary" id="nuSave" type="button">Add account</button></div></div>`);
     $("#nuSave").onclick = async () => {
-      try { const u = await api("/users", {username:$("#nuUser").value, name:$("#nuName").value, role:$("#nuRole").value, password:$("#nuPw").value}); closeDlg(); toast(`Account ${u.username} added`); render(); }
+      try { const u = await api("/users", {username:$("#nuUser").value, name:$("#nuName").value, role:$("#nuRole").value, password:$("#nuPw").value}); closeDlg(); toast(`Account ${u.username} added${facList.length && u.role !== "admin" ? ". Use Facilities to choose which facilities they can open (all, until you choose)" : ""}`); render(); }
       catch(e){ toast(e.message); }
     };
   };
+  bindFacilitiesAdmin(facList, users);
+}
+// Which facilities a member of staff may open
+function userFacDlg(u, facList, change){
+  const all = u.facilities === null;
+  openDlg(dlgHead(`Facilities · ${esc(u.username)}`, "The facilities this person can sign in to. With one facility they go straight into it; with several they choose at sign-in, and sign out to change.") +
+    `<div class="dlg-body"><label style="display:flex;gap:8px;align-items:center;margin-bottom:10px"><input type="checkbox" id="ufAll" ${all?"checked":""}> <b>Every facility</b> <span class="muted">(including facilities added later)</span></label>
+    <div id="ufList" style="display:flex;flex-direction:column;gap:6px">${facList.filter(f => f.active).map(f => `<label style="display:flex;gap:8px;align-items:center"><input type="checkbox" class="ufOne" value="${f.id}" ${all || (u.facilities||[]).includes(f.id) ? "checked" : ""} ${all?"disabled":""}> ${esc(f.name)} <span class="mono muted">${esc(f.licence)}</span></label>`).join("")}</div>
+    <div class="actions" style="margin-top:12px"><button class="btn primary" id="ufSave" type="button">Save</button></div></div>`);
+  $("#ufAll").onchange = e => document.querySelectorAll("#dlgInner .ufOne").forEach(x => { x.disabled = e.target.checked; if (e.target.checked) x.checked = true; });
+  $("#ufSave").onclick = () => { const ids = $("#ufAll").checked ? null : [...document.querySelectorAll("#dlgInner .ufOne:checked")].map(x => Number(x.value));
+    if (ids && !ids.length && !confirm(`${u.username} will not be able to open any facility. Continue?`)) return;
+    closeDlg(); change(u.id, {facilities: ids}, `Facilities saved for ${u.username}`); };
+}
+function bindFacilitiesAdmin(facList, users){
+  if (!$("#facRows")) return;
+  $("#facRows").innerHTML = facList.map(f => `<tr><td><b>${esc(f.name)}</b>${SYNC.me.facility && SYNC.me.facility.id === f.id ? ` <span class="pill p-ok">Open now</span>` : ""}</td><td class="mono">${esc(f.licence)}</td><td class="mono">${esc(f.login)}</td>
+    <td><span class="pill ${f.active?"p-ok":"p-mute"}">${f.active?"Active":"Disabled"}</span></td><td class="muted">${esc(f.updatedAt||"")}${f.updatedBy?` · ${esc(f.updatedBy)}`:""}</td>
+    <td><div class="actions" style="justify-content:flex-end"><button class="btn sm" data-fedit="${f.id}" type="button">Edit or new password</button><button class="btn sm ${f.active?"danger":""}" data-factive="${f.id}" type="button">${f.active?"Disable":"Enable"}</button></div></td></tr>`).join("")
+    || `<tr><td colspan="6" class="empty">No facilities yet. While there are none, the website works as before: one set of records, and each person signs in to eClaimLink with their own login.</td></tr>`;
+  const after = async (msg) => { toast(msg); const was = SYNC.me.locked; try { SYNC.me = await api("/me"); } catch(e){} if (was !== SYNC.me.locked || SYNC.me.needFacility) { setTimeout(() => location.reload(), 1500); return; } renderFacBar(); render(); };
+  const dlgFor = f => {
+    openDlg(dlgHead(f ? `Edit ${esc(f.name)}` : "Add a facility", f ? "Leave the password empty to keep the saved one." : facList.length ? "Staff with access to every facility can open it at once." : "This is the first facility: every record kept so far (claims, remittances, eClaimLink files, attachments) will belong to it, and the website will be locked to facilities.") +
+      `<div class="dlg-body"><div class="form-grid">
+        <div class="field"><label for="faName">Facility name</label><input type="text" id="faName" value="${esc(f?f.name:"")}" placeholder="e.g. Al Barsha Polyclinic" autocomplete="off"></div>
+        <div class="field"><label for="faLic">DHA facility licence</label><input type="text" id="faLic" value="${esc(f?f.licence:"")}" placeholder="DHA-F-0000000" autocomplete="off" spellcheck="false"></div>
+        <div class="field"><label for="faLogin">eClaimLink username</label><input type="text" id="faLogin" value="${esc(f?f.login:"")}" autocomplete="off" autocapitalize="none" spellcheck="false"></div>
+        <div class="field"><label for="faPwd">eClaimLink password${f?" (empty keeps the saved one)":""}</label><input type="password" id="faPwd" autocomplete="new-password"></div>
+      </div><p class="muted" style="font-size:12.5px;margin:10px 0 0">The username and password are checked with eClaimLink before they are saved. The password is kept encrypted on the clinic computer, with its key in <span class="mono">data\\facility.key</span>: when you move the website to another computer, copy the whole <span class="mono">data</span> folder.</p>
+      <div class="actions" style="margin-top:12px"><button class="btn primary" id="faSave" type="button">${f?"Save changes":"Check with eClaimLink and save"}</button></div></div>`);
+    $("#faSave").onclick = async () => { const b = $("#faSave"); b.disabled = true; b.textContent = "Checking with eClaimLink…";
+      try { const r = await api("/facilities", {id: f ? f.id : undefined, name:$("#faName").value, licence:$("#faLic").value.trim().toUpperCase(), login:$("#faLogin").value, password:$("#faPwd").value || undefined});
+        closeDlg(); after(r.tookOver ? `${r.name} saved. Every record kept so far now belongs to ${r.name}; the website is now locked to facilities.` : `${r.name} saved`); }
+      catch(e){ toast(e.message); b.disabled = false; b.textContent = f ? "Save changes" : "Check with eClaimLink and save"; } };
+  };
+  $("#facAddBtn").onclick = () => dlgFor(null);
+  $("#facRows").querySelectorAll("[data-fedit]").forEach(b => b.onclick = () => dlgFor(facList.find(f => f.id === Number(b.dataset.fedit))));
+  $("#facRows").querySelectorAll("[data-factive]").forEach(b => b.onclick = async () => { const f = facList.find(x => x.id === Number(b.dataset.factive));
+    if (f.active && !confirm(`Disable ${f.name}? Nobody can open it until it is enabled again; its records stay.${facList.filter(x => x.active).length === 1 ? "\n\nIt is the last active facility: the website goes back to working without facilities, with the records kept from before they were set up." : ""}`)) return;
+    try { await api("/facilities", {id:f.id, active:!f.active}); after(`${f.name} ${f.active ? "disabled" : "enabled"}`); } catch(e){ toast(e.message); } });
+  // Activity log
+  const sel = (id, opts) => { const el = $(id); el.innerHTML = el.options[0].outerHTML + opts; };
+  sel("#actUser", users.map(u => `<option value="${esc(u.username)}">${esc(u.name || u.username)} (${esc(u.username)})</option>`).join(""));
+  sel("#actFac", facList.map(f => `<option value="${esc(f.licence)}">${esc(f.name)}</option>`).join(""));
+  let rows = [];
+  const fname = lic => lic ? ((facList.find(f => f.licence.toUpperCase() === String(lic).toUpperCase()) || {}).name || lic) : "–";
+  const load = async () => {
+    const q = new URLSearchParams({user:$("#actUser").value, facility:$("#actFac").value, from:$("#actFrom").value, to:$("#actTo").value, limit:"2000"});
+    try { rows = await api("/activity?" + q); } catch(e){ toast(e.message); return; }
+    if (!$("#actRows")) return;
+    $("#actRows").innerHTML = rows.slice(0, 500).map(r => `<tr><td class="mono muted" style="white-space:nowrap">${esc(r.at)}</td><td>${esc(r.user||"–")}</td><td>${esc(fname(r.facility))}</td><td class="mono muted">${esc(String(r.ip||"").replace(/^::ffff:/, ""))}</td><td>${/failed|rejected/i.test(r.action + r.detail) ? `<span style="color:var(--bad)">${esc(r.action)}</span>` : esc(r.action)}</td><td class="wrap-cell" style="max-width:420px">${esc(r.detail||"")}</td></tr>`).join("")
+      + (rows.length > 500 ? `<tr><td colspan="6" class="muted">Showing 500 of ${rows.length}. Download the CSV for all.</td></tr>` : "") || `<tr><td colspan="6" class="empty">Nothing in this period.</td></tr>`;
+  };
+  $("#actForm").onsubmit = e => { e.preventDefault(); load(); };
+  $("#actCsv").onclick = () => downloadFile(`activity_${TODAY}.csv`, ["time_utc,person,facility,computer,action,details", ...rows.map(r => csvRow([r.at, r.user, fname(r.facility), String(r.ip||"").replace(/^::ffff:/, ""), r.action, r.detail]))].join("\n"), "text/csv");
+  load();
 }
 
 /* ---------- facility and getting started ---------- */
-const facLic = () => (S.facility && S.facility.licence) || "DHA-F-0000000";
+const facLic = () => facLock() || (S.facility && S.facility.licence) || "DHA-F-0000000";
+// The licence of the facility this browser is working in, when the website is locked to facilities
+const facLock = () => SYNC.me && SYNC.me.locked && SYNC.me.facility ? SYNC.me.facility.licence : "";
 function renderBrand(){
   const n = (S.facility && S.facility.name) || "Polyclinic";
   $("#brandName").textContent = n;
@@ -1883,6 +2001,8 @@ function renderBrand(){
   $("#licenceText").textContent = (S.facility && S.facility.licence) || "not set";
 }
 function facilityDlg(){
+  if (facLock()) return openDlg(dlgHead("Facility details", "This facility's name and licence are set by the admin under Account & staff, with its eClaimLink login.") +
+    `<div class="dlg-body"><dl class="kv"><div><dt>Facility</dt><dd>${esc(SYNC.me.facility.name)}</dd></div><div><dt>DHA facility licence</dt><dd class="mono">${esc(SYNC.me.facility.licence)}</dd></div></dl></div>`);
   openDlg(dlgHead("Facility details","Shown in the sidebar and written into the files sent to eClaimLink.") +
   `<div class="dlg-body"><div class="form-grid">
     <div class="field"><label for="fName">Facility name</label><input type="text" id="fName" value="${esc(S.facility.name)}" placeholder="e.g. Al Barsha Polyclinic"></div>
@@ -1956,7 +2076,8 @@ function importClaimFiles(list, draft){
     const doc = new DOMParser().parseFromString(t, "application/xml");
     if (doc.getElementsByTagName("parsererror").length){ tally.skipped.push(`${f.name}: not valid XML`); continue; }
     const type = doc.documentElement.tagName;
-    if (type === "Claim.Submission"){ const r = addClaimsFromXml(t, {draft, file:f.name}); tally.added += r.added; tally.updated += r.updated; tally.existing += r.skipped; }
+    if (type === "Claim.Submission"){ const r = addClaimsFromXml(t, {draft, file:f.name}); tally.added += r.added; tally.updated += r.updated; tally.existing += r.skipped;
+      if (r.other) tally.skipped.push(`${f.name}: ${r.other} claim${r.other===1?"":"s"} from another facility (licence ${new DOMParser().parseFromString(t,"application/xml").getElementsByTagName("SenderID")[0]?.textContent || "?"}) not added`); }
     else if (["Remittance.Advice","Prior.Request","Prior.Authorization"].includes(type)){ const r = applyEclFile("F:"+f.name+":"+t.length, type, t, f.name); tally.posted.push(`${f.name}: ${r.msg}`); }
     else tally.skipped.push(`${f.name}: ${type} files are not supported`);
   }
@@ -2002,9 +2123,13 @@ function addClaimsFromXml(xml, {draft = false, file = ""} = {}){
   const sent = (header && dhpoToIso(own(header,"TransactionDate"))) || TODAY, receiver = header ? own(header,"ReceiverID") : "";
   // Claims imported from a file keep their original XML, so they can be submitted, resubmitted or downloaded as they came (with lab results added)
   const ser = el => new XMLSerializer().serializeToString(el), headerXml = file && header ? ser(header) : "";
-  let added = 0, updated = 0, skipped = 0;
+  let added = 0, updated = 0, skipped = 0, other = 0;
+  // Working in one facility: claims from another facility's file are left out, never mixed in
+  const lockLic = facLock(), fileLic = header ? own(header,"SenderID") : "";
   [...doc.getElementsByTagName("Claim")].forEach(ce => {
     const id = own(ce,"ID"); if (!id) return;
+    const prov = own(ce,"ProviderID") || fileLic;
+    if (lockLic && prov && prov !== "DHA-F-0000000" && prov.toUpperCase() !== lockLic.toUpperCase()){ other++; return; }
     const resub = ce.getElementsByTagName("Resubmission")[0];
     const ex = claimById(id);
     if (ex && !(draft && ex.status === "Draft")){
@@ -2035,7 +2160,8 @@ function addClaimsFromXml(xml, {draft = false, file = ""} = {}){
     if (file){ c.srcXml = ser(ce); c.srcHeader = headerXml; c.srcFile = file; }
     if (ex){ S.claims[S.claims.indexOf(ex)] = c; updated++; } else { S.claims.push(c); added++; }
   });
-  return {added, updated, skipped};
+  if (other) toast(`${other} claim${other===1?"":"s"} in this file belong${other===1?"s":""} to another facility and ${other===1?"was":"were"} not added. Sign in to that facility to import ${other===1?"it":"them"}.`);
+  return {added, updated, skipped, other};
 }
 function addAuthsFromXml(xml){
   const doc = new DOMParser().parseFromString(xml,"application/xml");
@@ -2056,7 +2182,7 @@ function addAuthsFromXml(xml){
 function applyEclFile(key, type, xml, name){
   if (S.posted[key]) return {done:false, msg:`already in your records since ${fmtD(S.posted[key])}`};
   let msg;
-  if (type === "Claim.Submission"){ const r = addClaimsFromXml(xml); msg = `${r.added} claims added`+(r.updated?`, ${r.updated} resubmissions recorded`:"")+(r.skipped?`, ${r.skipped} already here`:""); }
+  if (type === "Claim.Submission"){ const r = addClaimsFromXml(xml); msg = `${r.added} claims added`+(r.updated?`, ${r.updated} resubmissions recorded`:"")+(r.skipped?`, ${r.skipped} already here`:"")+(r.other?`, ${r.other} from another facility not added`:""); }
   else if (type === "Remittance.Advice"){ const r = importRa(xml,{quiet:true,source:"eClaimLink "+(name||key)}); msg = typeof r === "string" ? r : `AED ${aed(r.total)} posted to ${r.count} claims`+(r.unknown.length?`, ${r.unknown.length} claims not in your records`:""); }
   else if (type === "Prior.Request"){ msg = `${addAuthsFromXml(xml)} approval requests added`; }
   else if (type === "Prior.Authorization"){ msg = `${applyPriorAuth(xml)} approval replies recorded`; }
@@ -3831,7 +3957,7 @@ $("#resetBtn").onclick = async () => { const b = $("#resetBtn");
   if (Date.now()-resetArm < 4000){
     resetArm=0; b.textContent="Clear all data";
     if (SHARED){ try { await api("/data", {clearAll:true}); } catch(e){ return toast("Not cleared: " + e.message); }
-      S = emptyState(); PRICES = {lists:{}}; priceIdx = null; SYNC.base = {}; SYNC.set = {}; SYNC.prices = undefined; SYNC.dirty = true; SYNC.rev = 0; await syncNow(); UI.verifyResult=null; render(); toast("All records were cleared for everyone. Yesterday's copy is in data\\backups on the clinic computer."); return; }
+      S = emptyState(); PRICES = {lists:{}}; priceIdx = null; SYNC.base = {}; SYNC.set = {}; SYNC.prices = undefined; SYNC.dirty = true; SYNC.rev = 0; applyFacility(); await syncNow(); UI.verifyResult=null; render(); toast(`All records${facLock()?" of "+SYNC.me.facility.name:""} were cleared for everyone. Yesterday's copy is in data\\backups on the clinic computer.`); return; }
     S = emptyState(); UI.verifyResult=null; save(); render(); toast("All records on this computer were cleared"); } else { resetArm = Date.now(); b.textContent = "Click again to clear everything"; setTimeout(()=>{ b.textContent="Clear all data"; }, 4000); } };
 window.addEventListener("hashchange", () => { const h = location.hash.slice(1); if (h && h!==current && R[h]) { current = h; render(); } });
 save(); render(); renderSync();

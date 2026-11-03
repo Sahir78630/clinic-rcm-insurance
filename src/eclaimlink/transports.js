@@ -102,7 +102,9 @@ const dt = d => { const p = n => String(n).padStart(2, "0"); return `${p(d.getDa
 // deterministic so tests are stable: roughly one claim in five has its last activity denied
 const denies = id => [...id].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7) % 5 === 0;
 
-export function mockTransport(db) {
+// fac: the facility licence the website is working in; it only sees that facility's simulated files
+export function mockTransport(db, fac = "") {
+  const inbox = fac ? "receiver = ?" : "?1 = ?1", sent = fac ? "facility = ?" : "?1 = ?1";
   const queue = (sender, receiver, root, body, count) => {
     const xml = `<?xml version="1.0" encoding="utf-8"?>
 <${root}>
@@ -180,11 +182,12 @@ ${tags(a, "Activity").map(x => `    <Activity>
       return { result: -3, errorMessage: `Unsupported file type ${root || "(none)"}`, transactionId: null };
     },
     async listNew() {
-      return db.prepare("SELECT id, file_name, sender, receiver, record_count, created_at FROM eclaimlink_mock_inbox WHERE downloaded = 0 ORDER BY id").all()
+      return db.prepare(`SELECT id, file_name, sender, receiver, record_count, created_at FROM eclaimlink_mock_inbox WHERE downloaded = 0 AND ${inbox} ORDER BY id`).all(fac)
         .map(r => ({ fileId: `M${r.id}`, fileName: r.file_name, sender: r.sender, receiver: r.receiver, transactionDate: r.created_at, recordCount: r.record_count }));
     },
     async download(fileId) {
-      const r = db.prepare("SELECT file_name, xml FROM eclaimlink_mock_inbox WHERE id = ?").get(Number(String(fileId).replace(/^M/, "")));
+      const r = db.prepare(`SELECT file_name, xml FROM eclaimlink_mock_inbox WHERE id = ? AND ${inbox.replace("?1 = ?1", "?2 = ?2")}`).get(Number(String(fileId).replace(/^M/, "")), fac);
+      if (!r) throw Object.assign(new Error("File not found"), { code: 404 });
       return { fileName: r.file_name, xml: r.xml };
     },
     async markDownloaded(fileId) {
@@ -197,8 +200,8 @@ ${tags(a, "Activity").map(x => `    <Activity>
       const toIso = d => d ? `${d.slice(6, 10)}-${d.slice(3, 5)}-${d.slice(0, 2)} ${d.slice(11) || "00:00:00"}` : null;
       const from = toIso(q.from), to = toIso(q.to);
       const rows = q.direction === 2
-        ? db.prepare("SELECT 'M' || id AS fid, id, file_name, sender, receiver, record_count, created_at, downloaded, xml FROM eclaimlink_mock_inbox").all()
-        : db.prepare("SELECT 'S' || id AS fid, id, file_name, sender, receiver, record_count, created_at, 1 AS downloaded, xml FROM eclaimlink_files WHERE direction = 'out' AND result_code >= 0").all();
+        ? db.prepare(`SELECT 'M' || id AS fid, id, file_name, sender, receiver, record_count, created_at, downloaded, xml FROM eclaimlink_mock_inbox WHERE ${inbox}`).all(fac)
+        : db.prepare(`SELECT 'S' || id AS fid, id, file_name, sender, receiver, record_count, created_at, 1 AS downloaded, xml FROM eclaimlink_files WHERE direction = 'out' AND result_code >= 0 AND ${sent}`).all(fac);
       const files = rows.filter(r => {
         const type = (r.xml.match(/<([A-Za-z][\w.]*)[\s>]/) || [])[1];
         if (want && type !== want) return false;
@@ -215,8 +218,8 @@ ${tags(a, "Activity").map(x => `    <Activity>
     async view(fileId) {
       const id = Number(String(fileId).slice(1));
       const r = String(fileId)[0] === "S"
-        ? db.prepare("SELECT file_name, xml FROM eclaimlink_files WHERE id = ?").get(id)
-        : db.prepare("SELECT file_name, xml FROM eclaimlink_mock_inbox WHERE id = ?").get(id);
+        ? db.prepare(`SELECT file_name, xml FROM eclaimlink_files WHERE id = ? AND ${sent.replace("?1 = ?1", "?2 = ?2")}`).get(id, fac)
+        : db.prepare(`SELECT file_name, xml FROM eclaimlink_mock_inbox WHERE id = ? AND ${inbox.replace("?1 = ?1", "?2 = ?2")}`).get(id, fac);
       if (!r) throw Object.assign(new Error("File not found"), { code: 404 });
       return { fileName: r.file_name, xml: r.xml };
     },

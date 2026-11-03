@@ -13,12 +13,12 @@ export function mode(env = process.env) {
 export function transport(ctx) {
   const m = mode(ctx.env);
   if (m === "off") throw Object.assign(new Error("The eClaimLink connection is switched off (ECLAIMLINK_MODE=off)"), { code: 409 });
-  return m === "live" ? liveTransport({ env: ctx.env, fetchImpl: ctx.fetchImpl }) : mockTransport(ctx.db);
+  return m === "live" ? liveTransport({ env: ctx.env, fetchImpl: ctx.fetchImpl }) : mockTransport(ctx.db, ctx.facility || "");
 }
 
 export function status(ctx) {
   const s = settings(ctx.env);
-  const last = ctx.db.prepare("SELECT MAX(created_at) t FROM eclaimlink_files WHERE direction = 'in'").get().t;
+  const last = ctx.db.prepare("SELECT MAX(created_at) t FROM eclaimlink_files WHERE direction = 'in' AND facility = ?").get(ctx.facility || "").t;
   return { mode: mode(ctx.env), url: mode(ctx.env) === "live" ? s.url : null, loginSet: Boolean(s.login), lastDownload: last };
 }
 
@@ -64,9 +64,9 @@ export async function upload(ctx, { xml, fileName }) {
   let r;
   try { r = await transport(ctx).upload(name, body); }
   catch (e) { r = { result: Number.isInteger(e.code) ? e.code : -1, errorMessage: e.eclaimMessage || e.message, transactionId: null, errorReport: null }; }
-  const info = ctx.db.prepare(`INSERT INTO eclaimlink_files (direction, file_name, type, sender, receiver, record_count, result_code, transaction_id, error_message, error_report, xml)
-    VALUES ('out',?,?,?,?,?,?,?,?,?,?)`).run(name, type, tag(header, "SenderID"), tag(header, "ReceiverID"), Number(tag(header, "RecordCount")) || null,
-    r.result, r.transactionId, r.errorMessage, r.errorReport, body);
+  const info = ctx.db.prepare(`INSERT INTO eclaimlink_files (direction, file_name, type, sender, receiver, record_count, result_code, transaction_id, error_message, error_report, xml, facility)
+    VALUES ('out',?,?,?,?,?,?,?,?,?,?,?)`).run(name, type, tag(header, "SenderID"), tag(header, "ReceiverID"), Number(tag(header, "RecordCount")) || null,
+    r.result, r.transactionId, r.errorMessage, r.errorReport, body, ctx.facility || "");
   return { id: Number(info.lastInsertRowid), ok: r.result >= 0, warnings: r.result > 0, fileName: name, type, resultCode: r.result,
     transactionId: r.transactionId, errorMessage: r.errorMessage, errorReport: r.errorReport };
 }
@@ -79,13 +79,13 @@ export async function sync(ctx) {
   const got = [], errors = [];
   for (const f of list) {
     try {
-      const exists = ctx.db.prepare("SELECT id FROM eclaimlink_files WHERE direction = 'in' AND file_id = ?").get(f.fileId);
+      const exists = ctx.db.prepare("SELECT id FROM eclaimlink_files WHERE direction = 'in' AND file_id = ? AND facility = ?").get(f.fileId, ctx.facility || "");
       if (!exists) {
         const d = await t.download(f.fileId);
         const header = tag(d.xml, "Header") || "";
-        ctx.db.prepare(`INSERT INTO eclaimlink_files (direction, file_id, file_name, type, sender, receiver, record_count, result_code, xml) VALUES ('in',?,?,?,?,?,?,0,?)`)
+        ctx.db.prepare(`INSERT INTO eclaimlink_files (direction, file_id, file_name, type, sender, receiver, record_count, result_code, xml, facility) VALUES ('in',?,?,?,?,?,?,0,?,?)`)
           .run(f.fileId, d.fileName || f.fileName, rootOf(d.xml), tag(header, "SenderID") || f.sender, tag(header, "ReceiverID") || f.receiver,
-            Number(tag(header, "RecordCount")) || f.recordCount, d.xml);
+            Number(tag(header, "RecordCount")) || f.recordCount, d.xml, ctx.facility || "");
         got.push(f.fileId);
       }
       await t.markDownloaded(f.fileId);
@@ -95,20 +95,20 @@ export async function sync(ctx) {
 }
 
 export function listFiles(ctx, { direction, type, unapplied, limit = 50 } = {}) {
-  const where = [], args = [];
+  const where = ["facility = ?"], args = [ctx.facility || ""];
   if (direction) { where.push("direction = ?"); args.push(direction); }
   if (type) { where.push("type = ?"); args.push(type); }
   if (unapplied) where.push("direction = 'in' AND applied_at IS NULL");
   return ctx.db.prepare(`SELECT id, created_at, direction, file_id, file_name, type, sender, receiver, record_count, result_code, transaction_id, error_message, applied_at
-    ${unapplied ? ", xml" : ""} FROM eclaimlink_files ${where.length ? "WHERE " + where.join(" AND ") : ""} ORDER BY id DESC LIMIT ?`).all(...args, limit);
+    ${unapplied ? ", xml" : ""} FROM eclaimlink_files WHERE ${where.join(" AND ")} ORDER BY id DESC LIMIT ?`).all(...args, limit);
 }
 
 export function getFile(ctx, id) {
-  return ctx.db.prepare("SELECT * FROM eclaimlink_files WHERE id = ?").get(id);
+  return ctx.db.prepare("SELECT * FROM eclaimlink_files WHERE id = ? AND facility = ?").get(id, ctx.facility || "");
 }
 
 export function markApplied(ctx, id) {
-  return ctx.db.prepare("UPDATE eclaimlink_files SET applied_at = datetime('now') WHERE id = ? AND direction = 'in' AND applied_at IS NULL").run(id).changes > 0;
+  return ctx.db.prepare("UPDATE eclaimlink_files SET applied_at = datetime('now') WHERE id = ? AND facility = ? AND direction = 'in' AND applied_at IS NULL").run(id, ctx.facility || "").changes > 0;
 }
 
 // ---- browsing everything on eClaimLink ----
@@ -186,7 +186,7 @@ export async function rows(ctx, files) {
   if (!Array.isArray(files) || !files.length) throw badRequest("Choose files");
   const list = files.slice(0, 200), out = [], errors = [];
   // Files already read are taken from the cache, so only new files are downloaded from eClaimLink
-  const m = mode(ctx.env), key = f => `r1:${m}:${f.archive ? "A" : ""}${f.fileId}`;
+  const m = mode(ctx.env), fac = ctx.facility ? `${ctx.facility}:` : "", key = f => `r1:${m}:${fac}${f.archive ? "A" : ""}${f.fileId}`;
   const get = ctx.db.prepare("SELECT json FROM eclaimlink_rows_cache WHERE key = ?"), put = ctx.db.prepare("INSERT OR REPLACE INTO eclaimlink_rows_cache (key, json) VALUES (?, ?)");
   const todo = [];
   for (const f of list) { const c = get.get(key(f)); if (c) { const r = JSON.parse(c.json); out.push({ ...r, fileId: f.fileId, transactionDate: f.transactionDate || r.transactionDate }); } else todo.push(f); }
