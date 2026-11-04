@@ -163,6 +163,13 @@ export function createApp({ db, cfg, env = process.env, fetchImpl, login = true 
       act(req, u, b.id ? "Changed facility" : "Added facility", `${f.name} (${f.licence})${b.password ? ", eClaimLink password set" : ""}${b.active === false ? ", disabled" : b.active === true ? ", enabled" : ""}`);
       return f;
     }],
+    // Things done in the browser that belong in the activity log (any signed-in person)
+    ["POST", /^\/api\/activity$/, async (req, url, m, res, u) => {
+      const b = await readJson(req);
+      if (!["Made claim ready", "Cancelled ready"].includes(b.action)) throw Object.assign(new Error("Unknown activity"), { code: 400 });
+      act(req, u, b.action, String(b.detail || "").slice(0, 300));
+      return { ok: true };
+    }],
     ["GET", /^\/api\/activity$/, (req, url, m, res, u) => {
       needAdmin(u);
       const p = url.searchParams;

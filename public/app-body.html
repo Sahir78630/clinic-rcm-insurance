@@ -336,7 +336,7 @@ function status(c){
 }
 const STATUS_PILL = {"Draft":"p-mute","Not submitted":"p-mute","Submitted":"p-info","Resubmitted":"p-info","Paid":"p-ok","Closed":"p-mute","Partially paid":"p-warn","Rejected":"p-bad",
   "Eligible":"p-ok","Not eligible":"p-bad","Inactive":"p-bad","Not found":"p-bad","Not verified":"p-mute","Check failed":"p-bad","Approval needed":"p-warn",
-  "Pending":"p-info","New":"p-info","Downloaded":"p-mute","Accepted":"p-ok","Accepted with warnings":"p-warn","Posted":"p-ok","Waiting":"p-info","Awaiting payer":"p-info","Recovered":"p-ok","Partially recovered":"p-warn","Denied again":"p-bad","Approved":"p-ok","Partially approved":"p-warn","Reconciled":"p-ok","Unreconciled":"p-warn","Variance":"p-bad","Awaiting deposit":"p-info","Ready":"p-ok","Warnings":"p-warn","Errors":"p-bad","Report missing":"p-info","Dx mismatch":"p-dx"};
+  "Pending":"p-info","New":"p-info","Downloaded":"p-mute","Accepted":"p-ok","Accepted with warnings":"p-warn","Posted":"p-ok","Waiting":"p-info","Awaiting payer":"p-info","Recovered":"p-ok","Partially recovered":"p-warn","Denied again":"p-bad","Approved":"p-ok","Partially approved":"p-warn","Reconciled":"p-ok","Unreconciled":"p-warn","Variance":"p-bad","Awaiting deposit":"p-info","Ready":"p-ok","Made ready":"p-ok","Warnings":"p-warn","Errors":"p-bad","Report missing":"p-info","Dx mismatch":"p-dx"};
 const pill = s => `<span class="pill ${STATUS_PILL[s]||"p-mute"}">${esc(s)}</span>`;
 const ageBasis = c => c.status === "Resubmitted" && c.resubs.length ? c.resubs[c.resubs.length-1].d : c.submitted;
 const ageOf = (c, basis) => diff(basis === "enc" ? c.enc : (c.submitted || c.enc), TODAY);
@@ -673,6 +673,7 @@ R.claims = () => {
     if (UI.claimAtt === "ecg" && !isEcg(c)) return false;
     if (UI.claimAtt === "dental" && !isDental(c)) return false;
     if (UI.claimAtt === "has" && !atts(c).length) return false;
+    if (UI.claimCheck && (c.status !== "Draft" || (UI.claimCheck === "made" ? checkState(c) !== "Made ready" : UI.claimCheck === "blocked" ? !blocked(c) : blocked(c)))) return false;
     if (UI.claimFrom && c.enc < UI.claimFrom) return false;
     if (UI.claimTo && c.enc > UI.claimTo) return false;
     return true;
@@ -697,6 +698,7 @@ R.claims = () => {
     <select id="fpayer"><option value="">All payers</option>${[...new Set([...PAYERS.map(p=>p.id), ...S.claims.filter(c=>!UI.claimTpa||c.tpa===UI.claimTpa).map(c=>c.payer)])].filter(Boolean).sort((a,b)=>payerText(a).localeCompare(payerText(b))).map(p=>`<option value="${esc(p)}" ${UI.claimPayer===p?"selected":""}>${esc(payerText(p))}</option>`).join("")}</select>
     <select id="fstatus"><option value="">All statuses</option>${STS.map(s=>`<option ${UI.claimStatus===s?"selected":""}>${s}</option>`).join("")}</select>
     <select id="fvia" title="How the claim was submitted"><option value="">Sent any way</option><option value="software" ${UI.claimVia==="software"?"selected":""}>Sent through this software</option><option value="portal" ${UI.claimVia==="portal"?"selected":""}>Sent on the eClaimLink portal</option></select>
+    <select id="fcheck" title="Claim check of draft claims"><option value="">Any claim check</option>${[["ready","Ready to submit"],["blocked","Held back by errors"],["made","Made ready by staff"]].map(([v,l])=>`<option value="${v}" ${UI.claimCheck===v?"selected":""}>${l}</option>`).join("")}</select>
     <select id="fatt" title="ECG and dental claims, and attachments"><option value="">Any attachments</option>${[["needed","Attachment needed (ECG or dental)"],["ecg","ECG claims"],["dental","Dental claims"],["has","With attachments"]].map(([v,l])=>`<option value="${v}" ${UI.claimAtt===v?"selected":""}>${l}</option>`).join("")}</select>
     <select id="fdept"><option value="">All departments</option>${Object.keys(DEPTS).map(d=>`<option ${UI.claimDept===d?"selected":""}>${esc(d)}</option>`).join("")}</select>
     <label class="muted" style="display:flex;gap:6px;align-items:center;font-size:12.5px">Visit date <input type="date" id="ffrom" value="${UI.claimFrom}" aria-label="Visit date from"> to <input type="date" id="fto" value="${UI.claimTo}" aria-label="Visit date to"></label>
@@ -1120,8 +1122,13 @@ function checkClaimNow(c){
 }
 // "Report missing" (blue) when the only blocking problem is a missing lab result
 // Colour groups: red errors, violet diagnosis–CPT mismatches, blue missing lab reports
+// "Made ready": staff pressed Make claim ready, and every error now is one that was showing then. A new error holds the claim again.
+const errKeys = c => checkClaim(c).filter(x => x.level === "error").map(x => `${x.code}|${x.msg}`);
+const madeReady = c => Boolean(c.forced && errKeys(c).every(k => (c.forced.keys || []).includes(k)));
 const checkState = c => { const r = checkClaim(c), e = r.filter(x => x.level === "error");
+  if (e.length && madeReady(c)) return "Made ready";
   return e.some(x => !x.lab && !x.dx) ? "Errors" : e.some(x => x.dx) ? "Dx mismatch" : e.length ? "Report missing" : r.length ? "Warnings" : "Ready"; };
+const noteActivity = (action, detail) => { if (SHARED && LIVE.on) api("/activity", {action, detail}).catch(() => {}); };
 const blocked = c => ["Errors","Dx mismatch","Report missing"].includes(checkState(c));
 const issueHtml = x => x.dx ? `<div style="color:var(--dx);font-weight:600">✕ ${esc(x.msg)} <span class="code" title="${esc(DENIALS[x.code]||"")}">${x.code}</span></div>`
   : x.lab ? `<div style="color:var(--info);font-weight:600">${x.level==="error"?"✕":"!"} ${esc(x.msg)}</div>`
@@ -1158,8 +1165,8 @@ function claimDlg(id){
   // Rejected or partly paid, or opened with Resubmit on the due dates page while the remittance is not posted here
   const canResub = st === "Rejected" || st === "Partially paid" || (UI.forceResub === c.id && c.status === "Submitted");
   if (c.status === "Draft") act = blocked(c)
-    ? `<span class="muted">Fix the errors in the claim check first.</span> <button class="btn sm primary" data-act="correct" type="button">Correct claim</button> <button class="btn sm" data-act="submit" type="button">Submit anyway</button>`
-    : `<button class="btn primary" data-act="submit" type="button">${ECL()?"Submit to "+eclLabel():"Submit to payer"}</button>`;
+    ? `<span class="muted">Fix the errors in the claim check, or make the claim ready if they are not real errors.</span> <button class="btn sm primary" data-act="makeReady" type="button" title="Send this claim even though the claim check shows errors">Make claim ready</button> <button class="btn sm" data-act="correct" type="button">Correct claim</button> <button class="btn sm" data-act="submit" type="button">Submit anyway</button>`
+    : `<button class="btn primary" data-act="submit" type="button">${ECL()?"Submit to "+eclLabel():"Submit to payer"}</button>${chk === "Made ready" ? ` <span class="muted" style="font-size:12.5px">Made ready by <b>${esc(c.forced.by||"–")}</b> on ${fmtD(c.forced.d)}${c.forced.note?`: ${esc(c.forced.note)}`:""}</span> <button class="btn sm" data-act="unReady" type="button">Cancel ready</button>` : ""}`;
   if (canResub) act = `
     <div class="form-grid" style="width:100%">
       <div class="field"><label for="rsType">Resubmission type</label><select id="rsType"><option value="correction">Correction</option><option value="internal complaint">Internal complaint (appeal)</option></select></div>
@@ -1341,6 +1348,10 @@ function bindDlg(){
         .catch(e=>{ if (e.report) eclRejectDlg([{to:payerText(receiverOf(c)), ids:[c.id], msg:e.message, report:e.report}], {back:c.id}); else { toast(e.message); claimDlg(c.id); } }); return; }
     if (a==="submit"){ submitClaim(claimById(dlg.dataset.claim)); done("Claim submitted"); claimDlg(dlg.dataset.claim); }
     if (a==="labs"){ labDlg(dlg.dataset.claim); return; }
+    if (a==="makeReady"){ const c=claimById(dlg.dataset.claim); const note=prompt(`Make ${c.id} ready to submit, even with the errors shown?\n\nNote (optional, you can leave it empty):`, ""); if (note===null) return;
+      c.forced={d:TODAY, by:whoAmI(), note:note.trim(), keys:errKeys(c)}; c.events.push({d:TODAY,t:`Made ready to submit by ${whoAmI()}, with ${c.forced.keys.length} error${c.forced.keys.length===1?"":"s"} in the claim check`+(c.forced.note?`: ${c.forced.note}`:"")});
+      noteActivity("Made claim ready", `${c.id}${c.forced.note?": "+c.forced.note:""}`); GEN++; done(`${c.id} is ready to submit`); claimDlg(c.id); return; }
+    if (a==="unReady"){ const c=claimById(dlg.dataset.claim); c.forced=null; c.events.push({d:TODAY,t:`Ready mark cancelled by ${whoAmI()}`}); noteActivity("Cancelled ready", c.id); GEN++; done(`${c.id} is held back by the claim check again`); claimDlg(c.id); return; }
     if (a==="paQuick"){ const c=claimById(dlg.dataset.claim), v=$("#paQuick").value.trim(); if (!v) return toast("Enter the approval code first");
       c.pa=v; c.corrected=true; c.events.push({d:TODAY,t:`Approval code ${v} entered by ${whoAmI()}`}); done(`Approval code ${v} saved`); claimDlg(c.id); return; }
     if (a==="toDraft"){ const c=claimById(dlg.dataset.claim); const why=prompt(`Set ${c.id} back to draft so it can be sent again?\n\nReason (for the claim history):`, "Sent to the wrong TPA"); if (why===null) return;
@@ -1494,6 +1505,7 @@ function bindView(){
     $("#paRulesBtn").onclick=paRulesDlg;
     $("#fvia").onchange=e=>{UI.claimVia=e.target.value;render();};
     $("#fatt").onchange=e=>{UI.claimAtt=e.target.value;render();};
+    $("#fcheck").onchange=e=>{UI.claimCheck=e.target.value;render();};
     if ($("#attNeedShow")) $("#attNeedShow").onclick=()=>{UI.claimAtt="needed";render();};
     $("#attAlerts").onclick=attAlertsDlg;
     if ($("#wrongRcv")) $("#wrongRcv").onclick=e=>wrongReceiverDlg(e.target);
