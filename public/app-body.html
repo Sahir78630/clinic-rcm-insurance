@@ -997,12 +997,16 @@ const DX_GROUPS = {
   wart:["B07","L82","L85","L91","B08","D23"],
   skinBiopsy:["L","D22","D23","D48","C43","C44","R22","D18","B07"],
   dental:["K00","K01","K02","K03","K04","K05","K06","K07","K08","K09","K10","K11","K12","K13","K14","S025","Z012","Z293"],
+  // CRP: infection, inflammation, rheumatic and cardiac conditions; uric acid: gout, high uric acid, kidney and metabolic conditions
+  crp:["R79","R50","R52","R53","R68","J","A","B","N39","N10","N30","M","K50","K51","K52","K57","K35","K65","L0","I2","I3","I4","I5","E11","E78","E66","R10","R07","Z000"],
+  urate:["E79","M10","M1A","N18","N19","N20","E11","E78","E66","E88","I10","R73","Z000"],
 };
 const DX_FOR_CPT = {
   "83036":"diabetes","82947":"diabetes","82948":"diabetes","82950":"diabetes","82951":"diabetes",
   "80061":"lipids","82465":"lipids","84478":"lipids","83718":"lipids","83721":"lipids",
   "80076":"liver","84460":"liver","84450":"liver","82247":"liver","82248":"liver",
   "84443":"thyroid","84439":"thyroid","84436":"thyroid","84481":"thyroid",
+  "86140":"crp","86141":"crp","84550":"urate",
   "81000":"urine","81001":"urine","81002":"urine","81003":"urine","87086":"urine",
   "71045":"chest","71046":"chest","76700":"abdomen","76705":"abdomen","76805":"pregnancy","76801":"pregnancy","76815":"pregnancy",
   "88175":"cervix","88142":"cervix","97110":"rehab","97140":"rehab","97014":"rehab","97112":"rehab","97530":"rehab",
@@ -1011,14 +1015,26 @@ const DX_FOR_CPT = {
 const DX_GROUP_NAME = {diabetes:"diabetes or abnormal glucose",lipids:"lipid, diabetes or cardiovascular",liver:"liver, biliary or abdominal",thyroid:"thyroid or related symptoms",
   urine:"urinary, kidney, abdominal or pregnancy",chest:"respiratory, cardiac or screening",abdomen:"abdominal, digestive or kidney",pregnancy:"pregnancy",cervix:"cervical screening or gynaecological",
   rehab:"musculoskeletal, injury or neurological",joint:"musculoskeletal or injury",nose:"nasal or sinus",ear:"ear or hearing",vaccine:"vaccination (Z23)",wellChild:"routine child examination",
-  wart:"wart or benign skin lesion",skinBiopsy:"skin lesion",dental:"dental (K00–K14)"};
+  wart:"wart or benign skin lesion",skinBiopsy:"skin lesion",dental:"dental (K00–K14)",
+  crp:"infection, inflammatory, rheumatic or cardiac",urate:"gout, high uric acid, kidney or metabolic"};
+// Diagnoses offered with an Add button when a claim's diagnoses do not support a test (editable under Suggested diagnoses)
+const DX_SUGGEST_DEFAULT = {
+  diabetes:[["E11.9","Type 2 diabetes mellitus without complications"],["E11.65","Type 2 diabetes mellitus with hyperglycaemia"],["R73.03","Prediabetes"],["R73.09","Other abnormal glucose"],["Z13.1","Screening for diabetes mellitus"]],
+  lipids:[["E78.5","Hyperlipidaemia, unspecified"],["E78.00","Pure hypercholesterolaemia"],["E78.1","Pure hypertriglyceridaemia"],["E78.2","Mixed hyperlipidaemia"],["Z13.220","Screening for lipoid disorders"]],
+  thyroid:[["E03.9","Hypothyroidism, unspecified"],["E05.90","Hyperthyroidism, unspecified"],["E04.9","Nontoxic goitre, unspecified"],["R53.83","Other fatigue"]],
+  crp:[["R79.82","Elevated C-reactive protein (CRP)"],["R50.9","Fever, unspecified"],["J06.9","Acute upper respiratory infection"],["M06.9","Rheumatoid arthritis, unspecified"],["R52","Pain, unspecified"]],
+  urate:[["E79.0","Hyperuricaemia without signs of gout"],["M10.9","Gout, unspecified"],["N18.9","Chronic kidney disease, unspecified"]],
+  liver:[["K76.0","Fatty liver, not elsewhere classified"],["R74.01","Elevated liver transaminase levels"],["K75.9","Inflammatory liver disease, unspecified"]],
+  urine:[["N39.0","Urinary tract infection, site not specified"],["R30.0","Dysuria"],["R31.9","Haematuria, unspecified"]],
+};
+const dxSuggest = g => ((S.dxSuggest || {})[g] || DX_SUGGEST_DEFAULT[g] || []);
 function dxMismatch(acts, dxList){
   const k = d => d.toUpperCase().replace(/\./g,""), dx = dxList.map(k), out = [];
   for (const a of acts){
     const code = (a.code||"").toUpperCase(), g = DX_FOR_CPT[code] || (/^D\d{4}$/.test(code) ? "dental" : null);
     if (!g || !dx.length) continue;
     if (!dx.some(d => DX_GROUPS[g].some(p => d.startsWith(p))))
-      out.push(`${code}${a.desc?" "+a.desc:""} is not supported by the diagnoses on the claim (${dxList.join(", ")}). Expected a ${DX_GROUP_NAME[g]} diagnosis.`);
+      out.push({g, code, msg:`${code}${a.desc?" "+a.desc:""} is not supported by the diagnoses on the claim (${dxList.join(", ")}). Expected a ${DX_GROUP_NAME[g]} diagnosis.`});
   }
   return out;
 }
@@ -1079,7 +1095,7 @@ function checkClaimNow(c){
   if (!dx.length) err("CODE-010","No diagnosis code.");
   dx.filter(d => !ICD10.test(d)).forEach(d => err("CODE-010",`Diagnosis ${d} is not a valid ICD-10 code.`));
   excludes1(dx).forEach(m => err("CODE-010", m));
-  dxMismatch(c.acts, dx).forEach(m => out.push({level:"error", code:"MNEC-004", msg:m, dx:true}));
+  dxMismatch(c.acts, dx).forEach(m => out.push({level:"error", code:"MNEC-004", msg:m.msg, dx:true, dxGroup:m.g, test:m.code}));
   if (!c.acts.length) err("","The claim has no activities.");
   c.acts.forEach(a => {
     const tag = `Activity ${a.code || a.aid}`;
@@ -1142,7 +1158,36 @@ function checkHtml(c){
   if (!r.length) return `<div class="result ok"><b>Claim check passed.</b> No problems found.</div>`;
   const e = r.filter(x => x.level === "error"), w = r.filter(x => x.level === "warn");
   return `<div class="result ${e.length ? "bad" : "warn"}"><b>Claim check: ${e.length} error${e.length===1?"":"s"}, ${w.length} warning${w.length===1?"":"s"}</b>
-    ${r.map(issueHtml).join("")}</div>`;
+    ${r.map(issueHtml).join("")}</div>${dxSuggestHtml(c, r)}`;
+}
+// Missing diagnosis for a test: the diagnoses that fit, each with an Add button
+function dxSuggestHtml(c, r){
+  const groups = new Map(); r.filter(x => x.dxGroup).forEach(x => { if (!groups.has(x.dxGroup)) groups.set(x.dxGroup, []); groups.get(x.dxGroup).push(x.test); });
+  if (!groups.size) return "";
+  const have = new Set(c.dx.map(d => String(d[0]).toUpperCase()));
+  return `<div class="result" style="border-color:var(--dx)"><div><b style="color:var(--dx)">Diagnosis missing for ${[...groups.values()].flat().join(", ")}.</b> Add the diagnosis that is right for this patient; it is added to the claim as an extra diagnosis.</div>
+    ${[...groups].map(([g, tests]) => `<div style="margin-top:6px"><span class="eyebrow">${esc(tests.join(", "))} · ${esc(DX_GROUP_NAME[g] || g)}</span><div class="actions" style="flex-wrap:wrap;margin-top:4px">${dxSuggest(g).filter(([k]) => !have.has(k.toUpperCase())).map(([k, l]) => `<button class="btn sm" type="button" data-adddx="${esc(k)}" data-dxlabel="${esc(l)}" title="Add ${esc(k)} to the claim">+ <span class="mono">${esc(k)}</span> ${esc(l)}</button>`).join("") || `<span class="muted">No suggestions left for this test.</span>`}</div></div>`).join("")}
+    <div class="actions" style="margin-top:6px"><input type="text" id="dxOwn" placeholder="Other ICD-10 code, e.g. E11.9" style="width:200px" spellcheck="false"><button class="btn sm" type="button" data-adddx="" title="Add the code typed here">Add code</button><button class="btn sm" type="button" id="dxSugEdit">Edit suggested diagnoses</button></div></div>`;
+}
+function addDiagnosis(c, code, label){
+  code = String(code || "").trim().toUpperCase();
+  if (!/^[A-Z]\d{2}(\.?[0-9A-Z]{1,4})?$/.test(code)) return toast("Enter an ICD-10 code, for example E11.9");
+  if (c.dx.some(d => String(d[0]).toUpperCase() === code)) return toast(`${code} is already on the claim`);
+  if (c.dx.length === 1 && !c.dx[0][0]) c.dx = [];
+  c.dx.push([code, label || ""]); c.corrected = true;
+  c.events.push({d:TODAY, t:`Diagnosis ${code}${label?" ("+label+")":""} added by ${whoAmI()}`});
+  GEN++; done(`${code} added to ${c.id}`); claimDlg(c.id);
+}
+function dxSuggestDlg(back){
+  const gs = Object.keys(DX_SUGGEST_DEFAULT);
+  openDlg(dlgHead("Suggested diagnoses", "Offered with an Add button when a claim's diagnoses do not support a test. One per line: the ICD-10 code, then its description.",
+    `<button class="btn sm primary" id="dsSave" type="button">Save</button>`) +
+    `<div class="dlg-body">${gs.map(g => `<div class="field" style="margin-bottom:10px"><label for="ds-${g}"><b>${esc(DX_GROUP_NAME[g] || g)}</b> <span class="muted">(${esc(Object.entries(DX_FOR_CPT).filter(([, v]) => v === g).map(([k]) => k).join(", "))})</span></label>
+      <textarea id="ds-${g}" rows="4" spellcheck="false" style="font-family:var(--mono,monospace);font-size:12.5px">${esc(dxSuggest(g).map(([k, l]) => `${k} ${l}`).join("\n"))}</textarea></div>`).join("")}
+      <div class="actions"><button class="btn sm" id="dsReset" type="button">Use the standard suggestions</button>${back?`<button class="btn sm" data-claim="${esc(back)}" type="button">Back to claim</button>`:""}</div></div>`);
+  $("#dsSave").onclick = () => { const m = {}; gs.forEach(g => { m[g] = $(`#ds-${g}`).value.split("\n").map(l => l.trim()).filter(Boolean).map(l => { const [k, ...rest] = l.split(/\s+/); return [k.toUpperCase(), rest.join(" ")]; }); });
+    S.dxSuggest = m; save(); toast("Suggested diagnoses saved"); back ? claimDlg(back) : closeDlg(); };
+  $("#dsReset").onclick = () => { S.dxSuggest = null; save(); toast("Standard suggestions restored"); back ? claimDlg(back) : dxSuggestDlg(); };
 }
 
 // One list of every claim with problems, for working through a batch
@@ -1333,6 +1378,9 @@ function bindDlg(){
   $("#dlgInner").querySelectorAll("[data-claim]").forEach(el=>el.onclick=()=>claimDlg(el.dataset.claim));
   $("#dlgInner").querySelectorAll("[data-newpa]").forEach(b=>b.onclick=()=>newPaDlg(b.dataset.newpa,b.dataset.dept));
   const attC = () => claimById(dlg.dataset.claim);
+  $("#dlgInner").querySelectorAll("[data-adddx]").forEach(b => b.onclick = () => { const c = attC(); if (!c) return;
+    addDiagnosis(c, b.dataset.adddx || ($("#dxOwn") || {}).value, b.dataset.dxlabel || ""); });
+  if ($("#dxSugEdit")) $("#dxSugEdit").onclick = () => dxSuggestDlg(dlg.dataset.claim);
   const ns = $("#nasNetSel"); if (ns) ns.onchange = () => { const c = attC(); if (!c) return; const v = ns.value;
     c.nasNet = v || null; c.events.push({d:TODAY, t:v ? `NAS network set to ${v} by ${whoAmI()}` : `NAS network cleared by ${whoAmI()}`}); GEN++; done(v ? `${c.id} is NAS ${v}` : `${c.id} has no NAS network`); claimDlg(c.id); };
   const af = $("#attFile"); if (af) af.onchange = async () => { const c = attC(), fs = [...af.files]; if (!c || !fs.length) return;
