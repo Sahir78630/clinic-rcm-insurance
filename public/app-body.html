@@ -254,7 +254,7 @@ const PAYERS = [
 const savedName = id => (typeof S !== "undefined" && S && S.payerNames && id && S.payerNames[id]) || "";
 const payer = id => { const p = PAYERS.find(p => p.id === id), own = savedName(id); return p ? (own ? {...p, name:own} : p) : {name:own || id, terms:45}; };
 const docLabel = code => { const n = (typeof S !== "undefined" && S && S.doctorNames || {})[code]; return n ? `${n} (${code})` : (code || "–"); };
-const tpaLine = c => c.tpa && c.tpa !== c.payer ? `<div class="muted" style="font-size:12px">TPA ${esc(payer(c.tpa).name)}</div>` : "";
+const tpaLine = c => (c.tpa && c.tpa !== c.payer ? `<div class="muted" style="font-size:12px">TPA ${esc(payer(c.tpa).name)}</div>` : "") + (nasNet(c) ? `<span class="pill p-info" style="font-size:11px">NAS ${esc(c.nasNet)}</span>` : "");
 const PLANS = [
   {name:"Essential Benefits Plan",copay:20,ded:0,network:"Restricted (RN3)"},
   {name:"Silver",copay:20,ded:50,network:"General (GN)"},
@@ -673,6 +673,7 @@ R.claims = () => {
     if (UI.claimAtt === "ecg" && !isEcg(c)) return false;
     if (UI.claimAtt === "dental" && !isDental(c)) return false;
     if (UI.claimAtt === "has" && !atts(c).length) return false;
+    if (UI.claimNet && (UI.claimNet === "none" ? !isNas(c) || nasNet(c) : nasNet(c) !== UI.claimNet)) return false;
     if (UI.claimCheck && (c.status !== "Draft" || (UI.claimCheck === "made" ? checkState(c) !== "Made ready" : UI.claimCheck === "blocked" ? !blocked(c) : blocked(c)))) return false;
     if (UI.claimFrom && c.enc < UI.claimFrom) return false;
     if (UI.claimTo && c.enc > UI.claimTo) return false;
@@ -698,6 +699,7 @@ R.claims = () => {
     <select id="fpayer"><option value="">All payers</option>${[...new Set([...PAYERS.map(p=>p.id), ...S.claims.filter(c=>!UI.claimTpa||c.tpa===UI.claimTpa).map(c=>c.payer)])].filter(Boolean).sort((a,b)=>payerText(a).localeCompare(payerText(b))).map(p=>`<option value="${esc(p)}" ${UI.claimPayer===p?"selected":""}>${esc(payerText(p))}</option>`).join("")}</select>
     <select id="fstatus"><option value="">All statuses</option>${STS.map(s=>`<option ${UI.claimStatus===s?"selected":""}>${s}</option>`).join("")}</select>
     <select id="fvia" title="How the claim was submitted"><option value="">Sent any way</option><option value="software" ${UI.claimVia==="software"?"selected":""}>Sent through this software</option><option value="portal" ${UI.claimVia==="portal"?"selected":""}>Sent on the eClaimLink portal</option></select>
+    ${S.claims.some(isNas) ? `<select id="fnet" title="NAS network"><option value="">Any NAS network</option>${NAS_NETS.map(n=>`<option value="${n}" ${UI.claimNet===n?"selected":""}>NAS ${n}</option>`).join("")}<option value="none" ${UI.claimNet==="none"?"selected":""}>NAS, no network set</option></select>` : ""}
     <select id="fcheck" title="Claim check of draft claims"><option value="">Any claim check</option>${[["ready","Ready to submit"],["blocked","Held back by errors"],["made","Made ready by staff"]].map(([v,l])=>`<option value="${v}" ${UI.claimCheck===v?"selected":""}>${l}</option>`).join("")}</select>
     <select id="fatt" title="ECG and dental claims, and attachments"><option value="">Any attachments</option>${[["needed","Attachment needed (ECG or dental)"],["ecg","ECG claims"],["dental","Dental claims"],["has","With attachments"]].map(([v,l])=>`<option value="${v}" ${UI.claimAtt===v?"selected":""}>${l}</option>`).join("")}</select>
     <select id="fdept"><option value="">All departments</option>${Object.keys(DEPTS).map(d=>`<option ${UI.claimDept===d?"selected":""}>${esc(d)}</option>`).join("")}</select>
@@ -1191,7 +1193,7 @@ function claimDlg(id){
     ${c.resubs.map((x,i)=>`<tr><td>${i+1}</td><td class="muted">${fmtD(x.d)}</td><td>${esc(x.type)}</td><td class="wrap-cell">${esc(x.note)}</td><td class="num">${aed(x.amount)}</td><td>${pill(resubState(x))}</td><td class="num">${x.outcome?aed(x.outcome.paid):"–"}</td></tr>`).join("")}</tbody></table></div></div>` : "";
   openDlg(dlgHead(`<span class="mono" style="font-size:15px">${c.id}</span> ${pill(st)}`, `${esc(p.name)} · ${esc(payer(c.payer).name)} · ${esc(c.dept)}`) +
   `<div class="dlg-body">
-    <dl class="kv"><div><dt>Encounter</dt><dd>${fmtD(c.enc)}</dd></div><div><dt>Clinician</dt><dd>${esc(docLabel(c.doctor))}</dd></div>${c.tpa?`<div><dt>TPA</dt><dd>${esc(payer(c.tpa).name)}${payer(c.tpa).name!==c.tpa?` <span class="muted mono">${esc(c.tpa)}</span>`:""}</dd></div>`:""}<div><dt>Payer</dt><dd>${esc(payer(c.payer).name)}${payer(c.payer).name!==c.payer?` <span class="muted mono">${esc(c.payer)}</span>`:""}</dd></div><div><dt>Member card</dt><dd class="mono">${esc(c.card)}</dd></div><div><dt>Emirates ID</dt><dd class="mono">${esc(p.eid)}</dd></div><div><dt>Plan</dt><dd>${esc(p.policy.plan)}</dd></div><div><dt>Prior approval</dt><dd class="mono">${c.pa||"–"}</dd></div></dl>
+    <dl class="kv"><div><dt>Encounter</dt><dd>${fmtD(c.enc)}</dd></div><div><dt>Clinician</dt><dd>${esc(docLabel(c.doctor))}</dd></div>${c.tpa?`<div><dt>TPA</dt><dd>${esc(payer(c.tpa).name)}${payer(c.tpa).name!==c.tpa?` <span class="muted mono">${esc(c.tpa)}</span>`:""}</dd></div>`:""}<div><dt>Payer</dt><dd>${esc(payer(c.payer).name)}${payer(c.payer).name!==c.payer?` <span class="muted mono">${esc(c.payer)}</span>`:""}</dd></div><div><dt>Member card</dt><dd class="mono">${esc(c.card)}</dd></div><div><dt>Emirates ID</dt><dd class="mono">${esc(p.eid)}</dd></div><div><dt>Plan</dt><dd>${esc(p.policy.plan)}</dd></div><div><dt>Prior approval</dt><dd class="mono">${c.pa||"–"}</dd></div>${isNas(c)?`<div><dt>NAS network</dt><dd><select id="nasNetSel" aria-label="NAS network"><option value="">Not set</option>${NAS_NETS.map(n=>`<option value="${n}" ${c.nasNet===n?"selected":""}>NAS ${n}</option>`).join("")}</select></dd></div>`:""}</dl>
     <div><span class="eyebrow">Diagnosis</span><div>${c.dx.map(d=>`<span class="code">${esc(d[0])}</span> ${esc(d[1])}`).join("<br>")}</div></div>
     <div class="table-wrap"><table><thead><tr><th>Activity</th><th>Code</th><th>Description</th><th class="num">Qty</th><th class="num">Gross</th><th class="num">Patient share</th><th class="num">Net</th><th class="num">Paid</th><th>Denial</th></tr></thead><tbody>
     ${c.acts.map(a=>`<tr><td class="mono muted">${a.aid}</td><td><span class="code">${esc(a.code)}</span></td><td>${esc(a.desc)}${(a.obs||[]).filter(o=>o.value).map(o=>`<div class="muted" style="font-size:12px">${esc(o.type||"Result")}${o.code?" "+esc(o.code):""}: ${esc(o.value.length>80?o.value.slice(0,80)+"…":o.value)}${o.unit?" "+esc(o.unit):""}</div>`).join("")}</td><td class="num">${a.qty}</td><td class="num">${aed(a.gross)}</td><td class="num">${aed(a.ps)}</td><td class="num">${aed(a.net)}</td><td class="num">${c.status==="Draft"||c.status==="Submitted"&&!c.remits.length?"–":aed(a.paid)}</td><td>${a.denial?`<span class="code" title="${esc(DENIALS[a.denial]||"")}">${a.denial}</span>`:""}</td></tr>`).join("")}
@@ -1331,6 +1333,8 @@ function bindDlg(){
   $("#dlgInner").querySelectorAll("[data-claim]").forEach(el=>el.onclick=()=>claimDlg(el.dataset.claim));
   $("#dlgInner").querySelectorAll("[data-newpa]").forEach(b=>b.onclick=()=>newPaDlg(b.dataset.newpa,b.dataset.dept));
   const attC = () => claimById(dlg.dataset.claim);
+  const ns = $("#nasNetSel"); if (ns) ns.onchange = () => { const c = attC(); if (!c) return; const v = ns.value;
+    c.nasNet = v || null; c.events.push({d:TODAY, t:v ? `NAS network set to ${v} by ${whoAmI()}` : `NAS network cleared by ${whoAmI()}`}); GEN++; done(v ? `${c.id} is NAS ${v}` : `${c.id} has no NAS network`); claimDlg(c.id); };
   const af = $("#attFile"); if (af) af.onchange = async () => { const c = attC(), fs = [...af.files]; if (!c || !fs.length) return;
     toast(`Uploading ${fs.length} file${fs.length===1?"":"s"}…`);
     try { const n = await addAttachments(c, fs); if (n) done(`${n} attachment${n===1?"":"s"} added to ${c.id}`); } catch(e){ toast(e.message); save(); }
@@ -1392,10 +1396,11 @@ function bindDlg(){
     if (a==="facSave"){ S.facility = {name:$("#fName").value.trim(), licence:$("#fLic").value.trim().toUpperCase()}; closeDlg(); done("Facility details saved"); return; }
     if (a==="ciImport"){ const t=$("#ciCsv").value.trim(); const list = ciFiles.length ? ciFiles : t ? [{name:"pasted text", text:t}] : [];
       if(!list.length){ $("#ciMsg").textContent="Paste or choose a file first."; return; }
-      const r=importClaimFiles(list, $("#ciDraft").checked); ciFiles=[];
+      const net=$("#ciNet").value; UI.ciNet=net; UI.nasTagged=null;
+      const r=importClaimFiles(list, $("#ciDraft").checked, net); ciFiles=[];
       if (!r.added && !r.updated && !r.existing && !r.posted.length){ $("#ciMsg").textContent = r.skipped.slice(0,3).join("; ") || "Nothing to import."; return; }
       closeDlg(); current="claims"; const bad=S.claims.filter(c=>c.status==="Draft"&&blocked(c)).length;
-      done(`Imported ${r.added} claims`+(r.updated?`, updated ${r.updated}`:"")+(r.existing?`, ${r.existing} already here`:"")+(r.posted.length?`. ${r.posted.join("; ")}`:"")+(bad?`. Claim check: ${bad} drafts have errors`:"")+(r.skipped.length?`. Skipped ${r.skipped.length}: ${r.skipped.slice(0,3).join("; ")}`:"")); return; }
+      done(`Imported ${r.added} claims`+(r.updated?`, updated ${r.updated}`:"")+(r.existing?`, ${r.existing} already here`:"")+(r.posted.length?`. ${r.posted.join("; ")}`:"")+(bad?`. Claim check: ${bad} drafts have errors`:"")+(r.skipped.length?`. Skipped ${r.skipped.length}: ${r.skipped.slice(0,3).join("; ")}`:"")+(net?`. ${r.nas||0} NAS claim${r.nas===1?"":"s"} set to NAS ${net}`+(r.notNas?` (${r.notNas} other claim${r.notNas===1?"":"s"} left without a network)`:""):"")); return; }
     if (a==="apImport" && LIVE.on){ const t=$("#apCsv").value.trim(); if(!t){ $("#apMsg").textContent="Paste or choose a CSV first."; return; } b.disabled=true; $("#apMsg").textContent="Importing and checking with the payer…";
       api("/appointments/import",{csv:t,replace:$("#apReplace").checked}).then(r=>{ LIVE.appts=r.appointments; closeDlg(); refreshLog(); toast(`Imported ${r.imported}, checked ${r.checked}`+(r.skipped.length?`. Skipped ${r.skipped.length}: `+r.skipped.slice(0,3).map(x=>"line "+x.line+" "+x.reason).join("; "):"")); render(); })
         .catch(e=>{ b.disabled=false; $("#apMsg").textContent=e.message; }); return; }
@@ -1508,6 +1513,7 @@ function bindView(){
     $("#fvia").onchange=e=>{UI.claimVia=e.target.value;render();};
     $("#fatt").onchange=e=>{UI.claimAtt=e.target.value;render();};
     $("#fcheck").onchange=e=>{UI.claimCheck=e.target.value;render();};
+    if ($("#fnet")) $("#fnet").onchange=e=>{UI.claimNet=e.target.value;render();};
     if ($("#attNeedShow")) $("#attNeedShow").onclick=()=>{UI.claimAtt="needed";render();};
     $("#attAlerts").onclick=attAlertsDlg;
     if ($("#wrongRcv")) $("#wrongRcv").onclick=e=>wrongReceiverDlg(e.target);
@@ -2066,6 +2072,7 @@ function claimsImportDlg(){
     Importing a draft claim again replaces it; submitted claims are left as they are.</div>
     <div class="actions"><label class="btn sm" for="ciFile">Choose CSV, Excel, PDF or XML files</label><input type="file" id="ciFile" accept="${UPLOAD_ACCEPT},.xml,text/xml,application/xml" multiple hidden><button class="btn sm" id="ciHead" type="button">Insert CSV column headings</button></div>
     <label style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" id="ciDraft" checked> Claim XML files have not been sent yet: import them as drafts so they can be checked</label>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:13px"><label for="ciNet"><b>NAS network</b> of the NAS claims in these files:</label><select id="ciNet"><option value="">None / not NAS</option>${NAS_NETS.map(n => `<option value="${n}" ${UI.ciNet===n?"selected":""}>NAS ${n}</option>`).join("")}</select><span class="muted" style="font-size:12px">Import one network at a time. The approval code rule of that network then applies (Approval rules).</span></div>
     <textarea id="ciCsv" spellcheck="false" placeholder="Paste CSV rows or a &lt;Claim.Submission&gt; XML file"></textarea>
     <div class="actions"><button class="btn primary" data-act="ciImport" type="button">Import</button><span class="muted" id="ciMsg"></span></div>
   </div>`);
@@ -2080,8 +2087,8 @@ function claimsImportDlg(){
   };
 }
 // Imports a mix of CSV and XML texts; returns one summary line
-function importClaimFiles(list, draft){
-  const tally = {added:0, updated:0, existing:0, posted:[], skipped:[]};
+function importClaimFiles(list, draft, net = ""){
+  const tally = {added:0, updated:0, existing:0, posted:[], skipped:[], nas:0, notNas:0};
   for (const f of list){
     const t = f.text.replace(/^\uFEFF/, "").trim();
     if (!t) continue;
@@ -2090,7 +2097,7 @@ function importClaimFiles(list, draft){
     const doc = new DOMParser().parseFromString(t, "application/xml");
     if (doc.getElementsByTagName("parsererror").length){ tally.skipped.push(`${f.name}: not valid XML`); continue; }
     const type = doc.documentElement.tagName;
-    if (type === "Claim.Submission"){ const r = addClaimsFromXml(t, {draft, file:f.name}); tally.added += r.added; tally.updated += r.updated; tally.existing += r.skipped;
+    if (type === "Claim.Submission"){ const r = addClaimsFromXml(t, {draft, file:f.name, net}); tally.added += r.added; tally.updated += r.updated; tally.existing += r.skipped; tally.nas += r.nas || 0; tally.notNas += r.notNas || 0;
       if (r.other) tally.skipped.push(`${f.name}: ${r.other} claim${r.other===1?"":"s"} from another facility (licence ${new DOMParser().parseFromString(t,"application/xml").getElementsByTagName("SenderID")[0]?.textContent || "?"}) not added`); }
     else if (["Remittance.Advice","Prior.Request","Prior.Authorization"].includes(type)){ const r = applyEclFile("F:"+f.name+":"+t.length, type, t, f.name); tally.posted.push(`${f.name}: ${r.msg}`); }
     else tally.skipped.push(`${f.name}: ${type} files are not supported`);
@@ -2130,14 +2137,14 @@ function importClaimsCsv(txt){
 const dhpoToIso = v => { const m = String(v||"").match(/^(\d{2})\/(\d{2})\/(\d{4})/); return m ? `${m[3]}-${m[2]}-${m[1]}` : null; };
 // Claim.Submission files you sent through eClaimLink become claims here, so remittances can match them
 // draft: the file has not been sent yet (an export from the clinic system), so the claims start as drafts to check
-function addClaimsFromXml(xml, {draft = false, file = ""} = {}){
+function addClaimsFromXml(xml, {draft = false, file = "", net = ""} = {}){
   const doc = new DOMParser().parseFromString(xml,"application/xml");
   const own = (el,t) => { const x = [...el.children].find(c => c.tagName === t); return x ? x.textContent.trim() : ""; };
   const header = doc.getElementsByTagName("Header")[0];
   const sent = (header && dhpoToIso(own(header,"TransactionDate"))) || TODAY, receiver = header ? own(header,"ReceiverID") : "";
   // Claims imported from a file keep their original XML, so they can be submitted, resubmitted or downloaded as they came (with lab results added)
   const ser = el => new XMLSerializer().serializeToString(el), headerXml = file && header ? ser(header) : "";
-  let added = 0, updated = 0, skipped = 0, other = 0;
+  let added = 0, updated = 0, skipped = 0, other = 0, nas = 0, notNas = 0;
   // Working in one facility: claims from another facility's file are left out, never mixed in
   const lockLic = facLock(), fileLic = header ? own(header,"SenderID") : "";
   [...doc.getElementsByTagName("Claim")].forEach(ce => {
@@ -2172,10 +2179,12 @@ function addClaimsFromXml(xml, {draft = false, file = ""} = {}){
       pa:actEls.map(a=>own(a,"PriorAuthorizationID")).find(Boolean)||null};
     if (receiver) c.tpa = receiver;
     if (file){ c.srcXml = ser(ce); c.srcHeader = headerXml; c.srcFile = file; }
+    if (ex && ex.nasNet) c.nasNet = ex.nasNet;
+    if (net){ if (isNas(c)){ c.nasNet = net; c.events.push({d:TODAY, t:`Imported as NAS ${net} by ${whoAmI()}`}); nas++; } else notNas++; }
     if (ex){ S.claims[S.claims.indexOf(ex)] = c; updated++; } else { S.claims.push(c); added++; }
   });
   if (other) toast(`${other} claim${other===1?"":"s"} in this file belong${other===1?"s":""} to another facility and ${other===1?"was":"were"} not added. Sign in to that facility to import ${other===1?"it":"them"}.`);
-  return {added, updated, skipped, other};
+  return {added, updated, skipped, other, nas, notNas};
 }
 function addAuthsFromXml(xml){
   const doc = new DOMParser().parseFromString(xml,"application/xml");
@@ -3347,8 +3356,20 @@ function paDefaults(){
   for (const k of keys){ const name = `${k} ${payerName(k)}`, hit = PA_DEFAULTS.find(([re]) => re.test(name)); if (hit) out[k] = hit[1]; }
   return out;
 }
-// The rule for a claim: its TPA's or its payer's ("all" wins); a dental or maternity rule applies only to claims of that kind
+// NAS networks: chosen when the claim files are imported (the claim file does not say which network). Each network has
+// its own approval rule, set in Approval rules; until saved, every network needs a code only on dental and maternity claims.
+const NAS_NETS = ["WN","RN","GN","CN","SN"];
+const isNas = c => [c.tpa, c.payer].some(k => k && (/^(NAS|TPA004)$/i.test(k) || /\bnas\b/i.test(payerName(k) || "")));
+const nasNetRules = () => S.nasNetRules || Object.fromEntries(NAS_NETS.map(n => [n, "dental,maternity"]));
+const nasNet = c => c.nasNet && isNas(c) ? c.nasNet : "";
+// The rule for a claim: its TPA's or its payer's ("all" wins); a dental or maternity rule applies only to claims of that kind.
+// A NAS claim with a network follows that network's rule instead.
 function paRule(c){
+  const net = nasNet(c);
+  if (net){ const scope = nasNetRules()[net] || "", k = `NAS ${net}`;
+    if (scope === "all") return {k, scope};
+    for (const kind of scope.split(",")) if (paKindOf[kind] && paKindOf[kind](c)) return {k, scope:kind};
+    return null; }
   const r = paRules(), hits = [c.tpa, c.payer].filter(k => k && r[k]).map(k => ({k, scope:r[k]}));
   const all = hits.find(h => h.scope === "all"); if (all) return all;
   for (const h of hits) for (const kind of String(h.scope).split(",")) if (paKindOf[kind] && paKindOf[kind](c)) return {k:h.k, scope:kind};
@@ -3449,6 +3470,10 @@ function paRulesDlg(){
     <div class="table-wrap"><table><thead><tr><th style="width:28px"><input type="checkbox" id="prAll" aria-label="Tick every row shown"></th><th>TPA / insurance</th><th>Approval code needed on</th></tr></thead><tbody>
     ${keys.map(k => `<tr data-name="${esc(payerText(k).toLowerCase())}"><td><input type="checkbox" class="prTick" aria-label="Tick ${esc(payerText(k))}"></td><td>${esc(payerText(k))}</td><td>${sel("prSel", r[k], `data-k="${esc(k)}"`)}</td></tr>`).join("")}
     </tbody></table></div>` : `<p class="muted">No TPAs or insurance companies on the claims yet. Import claims first.</p>`}
+    <h3 style="margin:14px 0 6px">NAS networks</h3>
+    <p class="muted" style="font-size:12.5px;margin:0 0 6px">For NAS claims imported with a network chosen (Import claims, NAS network). These rules replace the NAS rule above for those claims; NAS claims without a network keep the NAS rule.</p>
+    <div class="table-wrap"><table><thead><tr><th>NAS network</th><th>Approval code needed on</th></tr></thead><tbody>
+    ${NAS_NETS.map(n => `<tr><td><b>NAS ${n}</b></td><td>${sel("prNet", nasNetRules()[n], `data-net="${n}"`)}</td></tr>`).join("")}</tbody></table></div>
     <p class="muted" style="font-size:12.5px">A rule on a TPA covers every insurance company under it. Names come from Payer names on the report pages. "Except consultations" means a claim with only consultation visits (CPT 99201 to 99499) needs no code, and any other activity on the claim needs one. Maternity claims are found from pregnancy and childbirth diagnoses (ICD-10 O codes, Z33 to Z39), maternity procedure codes (59000 to 59899, obstetric ultrasound 76801 to 76828) or an obstetrics department.</p></div>`);
   const rows = () => [...$("#dlgInner").querySelectorAll("tbody tr")].filter(tr => !tr.hidden);
   if ($("#prFind")) $("#prFind").oninput = e => { const q = e.target.value.trim().toLowerCase(); $("#dlgInner").querySelectorAll("tbody tr").forEach(tr => tr.hidden = q && !tr.dataset.name.includes(q)); };
@@ -3457,7 +3482,8 @@ function paRulesDlg(){
     t.forEach(tr => tr.querySelector(".prSel").value = $("#prBulk").value); toast(`Set ${t.length} row${t.length===1?"":"s"}. Click Save to keep it.`); };
   $("#prSave").onclick = () => {
     const m = {}; $("#dlgInner").querySelectorAll(".prSel").forEach(x => { if (x.value) m[x.dataset.k] = x.value; });
-    S.paRules = m; S.paRulesV = 2; save(); dlg.close(); render();
+    const nr = {}; $("#dlgInner").querySelectorAll(".prNet").forEach(x => { nr[x.dataset.net] = x.value; });
+    S.paRules = m; S.paRulesV = 2; S.nasNetRules = nr; save(); dlg.close(); render();
     const n = S.claims.filter(c => c.status === "Draft" && paRule(c) && !c.pa).length;
     toast(`Saved ${Object.keys(m).length} approval rules. ${n} draft claim${n===1?" needs":"s need"} an approval code.`);
   };
