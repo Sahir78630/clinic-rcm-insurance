@@ -3446,9 +3446,10 @@ function paDefaults(){
 }
 // NAS networks: chosen when the claim files are imported (the claim file does not say which network). Each network has
 // its own approval rule, set in Approval rules; until saved, every network needs a code only on dental and maternity claims.
-const NAS_NETS = ["WN","RN","GN","CN","SN"];
+const NAS_NETS = ["WN","RN","GN","CN","SN","VN"];
 const isNas = c => [c.tpa, c.payer].some(k => k && (/^(NAS|TPA004)$/i.test(k) || /\bnas\b/i.test(payerName(k) || "")));
-const nasNetRules = () => S.nasNetRules || Object.fromEntries(NAS_NETS.map(n => [n, "dental,maternity"]));
+// A network added later (VN) starts with the standard rule even when the others were already saved
+const nasNetRules = () => ({...Object.fromEntries(NAS_NETS.map(n => [n, "dental,maternity"])), ...(S.nasNetRules || {})});
 const nasNet = c => c.nasNet && isNas(c) ? c.nasNet : "";
 // The rule for a claim: its TPA's or its payer's ("all" wins); a dental or maternity rule applies only to claims of that kind.
 // A NAS claim with a network follows that network's rule instead.
