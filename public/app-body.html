@@ -399,7 +399,7 @@ const legendBuckets = () => `<div class="legend">${BUCKETS.map(b=>`<span><i styl
 const VIEWS = [
   ["", [["overview","Overview"]]],
   ["Front office", [["eligibility","Eligibility & access"],["approvals","Prior approvals"]]],
-  ["Billing", [["claims","Claims"],["remittance","Remittance & reconciliation"],["denials","Denials"],["resubmissions","Resubmissions"],["rep-resubdue","Resubmission due dates"],["eclaimlink","eClaimLink files"]]],
+  ["Billing", [["claims","Claims"],["remittance","Remittance & reconciliation"],["denials","Denials"],["dxrules","Test & diagnosis rules"],["resubmissions","Resubmissions"],["rep-resubdue","Resubmission due dates"],["eclaimlink","eClaimLink files"]]],
   ["Finance", [["receivables","Insurance receivables"]]],
   ["Reports", [["rep-remit","Remittance summary"],["rep-rejections","Rejections"],["rep-reasons","Rejection reasons"],["rep-submissions","Submissions"],["rep-recon","Reconciliation"],["rep-unprocessed","Unprocessed claims"],["rep-cpt","Revenue by CPT"],["rep-lab","Lab revenue by insurance"],["outlab","Removed outsourced lab"]]],
   ["Price list", [["prices","Payer price lists"]]]
@@ -1027,14 +1027,52 @@ const DX_SUGGEST_DEFAULT = {
   liver:[["K76.0","Fatty liver, not elsewhere classified"],["R74.01","Elevated liver transaminase levels"],["K75.9","Inflammatory liver disease, unspecified"]],
   urine:[["N39.0","Urinary tract infection, site not specified"],["R30.0","Dysuria"],["R31.9","Haematuria, unspecified"]],
 };
-const dxSuggest = g => ((S.dxSuggest || {})[g] || DX_SUGGEST_DEFAULT[g] || []);
-function dxMismatch(acts, dxList){
-  const k = d => d.toUpperCase().replace(/\./g,""), dx = dxList.map(k), out = [];
+// Your own test and diagnosis rules (Billing → Test & diagnosis rules). A rule names one or more test codes, optionally
+// one payer or TPA, and how the check works for them: "add" accepts the built-in list plus your diagnoses, "only"
+// accepts just your diagnoses, "off" does not check the test. A rule for one payer wins over a rule for all payers.
+// Diagnoses are ICD-10 codes or their first letters ("E11" covers E11.9, E11.65 …).
+const dxKey = d => String(d || "").toUpperCase().replace(/[.\s]/g, "");
+const dxRules = () => Array.isArray(S.dxRules) ? S.dxRules : [];
+function dxRuleFor(code, c){
+  code = String(code || "").toUpperCase();
+  const on = dxRules().filter(r => (r.tests || []).includes(code));
+  if (!on.length) return null;
+  const who = c ? [c.payer, c.tpa, c.srcHeader ? receiverOf(c) : ""].filter(Boolean) : [];
+  return on.find(r => r.payer && who.includes(r.payer)) || on.find(r => !r.payer) || null;
+}
+const builtInGroup = code => DX_FOR_CPT[code] || (/^D\d{4}$/.test(code) ? "dental" : null);
+// What the check accepts for one test: {group, prefixes, name}, or null when the test is not checked
+function dxAccepts(code, c){
+  code = String(code || "").toUpperCase();
+  const g = builtInGroup(code), r = dxRuleFor(code, c);
+  if (r){
+    if (r.mode === "off") return null;
+    const own = (r.accept || []).map(dxKey).filter(Boolean);
+    const prefixes = r.mode === "only" ? own : [...(g ? DX_GROUPS[g] : []), ...own];
+    return prefixes.length ? {group:`rule:${r.id}:${g || ""}`, prefixes, name:r.name || (g && r.mode !== "only" ? DX_GROUP_NAME[g] : "") || shortName(code, "") || code, rule:r} : null;
+  }
+  return g ? {group:g, prefixes:DX_GROUPS[g], name:DX_GROUP_NAME[g]} : null;
+}
+const dxGroupLabel = grp => { const [k, id, g] = String(grp).split(":"); if (k !== "rule") return DX_GROUP_NAME[grp] || grp;
+  const r = dxRules().find(x => x.id === id); if (!r) return DX_GROUP_NAME[g] || g || "your rule"; const nm = r.name || (g && r.mode !== "only" && DX_GROUP_NAME[g]) || "";
+  return `${nm ? nm + " · your rule" : "Your rule"}${r.payer ? " for " + payerText(r.payer) : ""}`; };
+const dxSuggest = grp => {
+  const [k, id, g] = String(grp).split(":");
+  if (k !== "rule") return ((S.dxSuggest || {})[grp] || DX_SUGGEST_DEFAULT[grp] || []);
+  const r = dxRules().find(x => x.id === id); if (!r) return [];
+  const own = (r.suggest || []).slice();
+  // Full codes in the accepted list are offered too, so a rule without suggestions still has Add buttons
+  (r.accept || []).filter(a => /^[A-Z]\d{2}\.?[0-9A-Z]{1,4}$/i.test(a) && !own.some(([x]) => dxKey(x) === dxKey(a))).forEach(a => own.push([a.toUpperCase(), ""]));
+  const base = r.mode === "only" || !g ? [] : ((S.dxSuggest || {})[g] || DX_SUGGEST_DEFAULT[g] || []);
+  return [...own, ...base.filter(([x]) => !own.some(([y]) => dxKey(y) === dxKey(x)))];
+};
+function dxMismatch(acts, dxList, c){
+  const dx = dxList.map(dxKey), out = [];
   for (const a of acts){
-    const code = (a.code||"").toUpperCase(), g = DX_FOR_CPT[code] || (/^D\d{4}$/.test(code) ? "dental" : null);
-    if (!g || !dx.length) continue;
-    if (!dx.some(d => DX_GROUPS[g].some(p => d.startsWith(p))))
-      out.push({g, code, msg:`${code}${a.desc?" "+a.desc:""} is not supported by the diagnoses on the claim (${dxList.join(", ")}). Expected a ${DX_GROUP_NAME[g]} diagnosis.`});
+    const code = (a.code||"").toUpperCase(), m = dx.length && dxAccepts(code, c);
+    if (!m) continue;
+    if (!dx.some(d => m.prefixes.some(p => d.startsWith(p))))
+      out.push({g:m.group, code, msg:`${code}${a.desc?" "+a.desc:""} is not supported by the diagnoses on the claim (${dxList.join(", ")}). ${m.rule ? m.rule.mode === "only" ? `Your rule${m.rule.payer ? " for " + m.rule.payer : ""} accepts ${(m.rule.accept || []).slice(0, 8).join(", ")}${(m.rule.accept || []).length > 8 ? " …" : ""}.` : `Expected a ${m.name} diagnosis, or one from your rule (${(m.rule.accept || []).slice(0, 6).join(", ")}${(m.rule.accept || []).length > 6 ? " …" : ""}).` : `Expected a ${m.name} diagnosis.`}`});
   }
   return out;
 }
@@ -1095,7 +1133,7 @@ function checkClaimNow(c){
   if (!dx.length) err("CODE-010","No diagnosis code.");
   dx.filter(d => !ICD10.test(d)).forEach(d => err("CODE-010",`Diagnosis ${d} is not a valid ICD-10 code.`));
   excludes1(dx).forEach(m => err("CODE-010", m));
-  dxMismatch(c.acts, dx).forEach(m => out.push({level:"error", code:"MNEC-004", msg:m.msg, dx:true, dxGroup:m.g, test:m.code}));
+  dxMismatch(c.acts, dx, c).forEach(m => out.push({level:"error", code:"MNEC-004", msg:m.msg, dx:true, dxGroup:m.g, test:m.code}));
   if (!c.acts.length) err("","The claim has no activities.");
   c.acts.forEach(a => {
     const tag = `Activity ${a.code || a.aid}`;
@@ -1166,8 +1204,8 @@ function dxSuggestHtml(c, r){
   if (!groups.size) return "";
   const have = new Set(c.dx.map(d => String(d[0]).toUpperCase()));
   return `<div class="result" style="border-color:var(--dx)"><div><b style="color:var(--dx)">Diagnosis missing for ${[...groups.values()].flat().join(", ")}.</b> Add the diagnosis that is right for this patient; it is added to the claim as an extra diagnosis.</div>
-    ${[...groups].map(([g, tests]) => `<div style="margin-top:6px"><span class="eyebrow">${esc(tests.join(", "))} · ${esc(DX_GROUP_NAME[g] || g)}</span><div class="actions" style="flex-wrap:wrap;margin-top:4px">${dxSuggest(g).filter(([k]) => !have.has(k.toUpperCase())).map(([k, l]) => `<button class="btn sm" type="button" data-adddx="${esc(k)}" data-dxlabel="${esc(l)}" title="Add ${esc(k)} to the claim">+ <span class="mono">${esc(k)}</span> ${esc(l)}</button>`).join("") || `<span class="muted">No suggestions left for this test.</span>`}</div></div>`).join("")}
-    <div class="actions" style="margin-top:6px"><input type="text" id="dxOwn" placeholder="Other ICD-10 code, e.g. E11.9" style="width:200px" spellcheck="false"><button class="btn sm" type="button" data-adddx="" title="Add the code typed here">Add code</button><button class="btn sm" type="button" id="dxSugEdit">Edit suggested diagnoses</button></div></div>`;
+    ${[...groups].map(([g, tests]) => `<div style="margin-top:6px"><span class="eyebrow">${esc(tests.join(", "))} · ${esc(dxGroupLabel(g))}</span><div class="actions" style="flex-wrap:wrap;margin-top:4px">${dxSuggest(g).filter(([k]) => !have.has(k.toUpperCase())).map(([k, l]) => `<button class="btn sm" type="button" data-adddx="${esc(k)}" data-dxlabel="${esc(l)}" title="Add ${esc(k)} to the claim">+ <span class="mono">${esc(k)}</span> ${esc(l)}</button>`).join("") || `<span class="muted">No suggestions left for this test.</span>`}</div></div>`).join("")}
+    <div class="actions" style="margin-top:6px"><input type="text" id="dxOwn" placeholder="Other ICD-10 code, e.g. E11.9" style="width:200px" spellcheck="false"><button class="btn sm" type="button" data-adddx="" title="Add the code typed here">Add code</button><button class="btn sm" type="button" id="dxSugEdit">Edit suggested diagnoses</button><button class="btn sm" type="button" id="dxRulesGo" title="Your own diagnoses for each test">Test &amp; diagnosis rules</button></div></div>`;
 }
 function addDiagnosis(c, code, label){
   code = String(code || "").trim().toUpperCase();
@@ -1381,6 +1419,7 @@ function bindDlg(){
   $("#dlgInner").querySelectorAll("[data-adddx]").forEach(b => b.onclick = () => { const c = attC(); if (!c) return;
     addDiagnosis(c, b.dataset.adddx || ($("#dxOwn") || {}).value, b.dataset.dxlabel || ""); });
   if ($("#dxSugEdit")) $("#dxSugEdit").onclick = () => dxSuggestDlg(dlg.dataset.claim);
+  if ($("#dxRulesGo")) $("#dxRulesGo").onclick = () => { dlg.close(); go("dxrules"); };
   const ns = $("#nasNetSel"); if (ns) ns.onchange = () => { const c = attC(); if (!c) return; const v = ns.value;
     c.nasNet = v || null; c.events.push({d:TODAY, t:v ? `NAS network set to ${v} by ${whoAmI()}` : `NAS network cleared by ${whoAmI()}`}); GEN++; done(v ? `${c.id} is NAS ${v}` : `${c.id} has no NAS network`); claimDlg(c.id); };
   const af = $("#attFile"); if (af) af.onchange = async () => { const c = attC(), fs = [...af.files]; if (!c || !fs.length) return;
@@ -1525,6 +1564,7 @@ function bindView(){
   const v = $("#view");
   if (current === "account" && SHARED && SYNC.ready) bindAccount();
   if (current === "outlab") bindOutLab();
+  if (current === "dxrules") bindDxRules();
   const am = $("#actMonths"); if (am) am.onchange = () => { UI.actMonths = Number(am.value); render(); };
   v.querySelectorAll("[data-go]").forEach(b=>b.onclick=()=>{ if (b.dataset.status){ UI.claimStatus=b.dataset.status; UI.claimPayer=""; UI.claimTpa=""; UI.claimQ=""; UI.claimDept=""; UI.claimFrom=""; UI.claimTo=""; } go(b.dataset.go); });
   v.querySelectorAll("[data-claim]").forEach(el=>{ el.onclick=()=>claimDlg(el.dataset.claim); el.onkeydown=e=>{ if(e.key==="Enter") claimDlg(el.dataset.claim); }; });
@@ -3608,6 +3648,127 @@ function outLabGroups(rows, key){
   const m = {}; for (const r of rows){ const e = m[r[key]] ||= {k:r[key], claims:new Set(), tests:0, net:0, ps:0, gross:0}; e.claims.add(r.claim); e.tests += r.qty; e.net += r.net; e.ps += r.ps; e.gross += r.gross; }
   return Object.values(m).sort((a,b) => b.net - a.net);
 }
+/* ---------- Test & diagnosis rules ---------- */
+// Pairs of test and diagnosis from claims already remitted: paid in full, or rejected for medical necessity (MNEC).
+// A claim with several diagnoses counts for each of them.
+function dxLearned(){
+  return memo("dxLearned", () => {
+    const m = new Map();
+    for (const c of S.claims){
+      if (!c.remits || !c.remits.length) continue;
+      const dx = (c.dx || []).map(d => [String(d[0] || "").trim().toUpperCase(), d[1] || ""]).filter(d => d[0]);
+      if (!dx.length) continue;
+      for (const a of c.acts){
+        const code = String(a.code || "").toUpperCase(); if (!code || !(a.net > 0)) continue;
+        const paid = (a.paid || 0) >= a.net - 0.009, mnec = /^MNEC/i.test(a.denial || "");
+        if (!paid && !mnec) continue;
+        for (const [d, l] of dx){
+          const k = code + "|" + d; let e = m.get(k);
+          if (!e){ e = {code, dx:d, label:l, desc:a.desc || "", paid:0, mnec:0, payers:new Set(), claims:[]}; m.set(k, e); }
+          if (paid) e.paid++; else e.mnec++;
+          if (l && !e.label) e.label = l;
+          e.payers.add(c.payer); if (e.claims.length < 5 && !e.claims.includes(c.id)) e.claims.push(c.id);
+        }
+      }
+    }
+    return [...m.values()].map(e => { const acc = dxAccepts(e.code, null);
+      return {...e, state: !acc ? "not checked" : acc.prefixes.some(p => dxKey(e.dx).startsWith(p)) ? "accepted" : "flagged"}; });
+  });
+}
+const dxRuleTests = r => (r.tests || []).map(t => `${t}${shortName(t, "") ? " " + shortName(t, "") : ""}`).join(", ");
+const DX_MODES = {add:"Built-in list plus my diagnoses", only:"Only my diagnoses", off:"Do not check this test"};
+R.dxrules = () => {
+  const u = UI.dxr ||= {q:"", show:"flagged"}, q = u.q.trim().toUpperCase().replace(/\./g, "");
+  const rules = dxRules(), learned = dxLearned();
+  const hit = e => !q || e.code.includes(q) || dxKey(e.dx).includes(q) || (e.label || "").toUpperCase().includes(q) || (shortName(e.code, "") || "").toUpperCase().includes(q);
+  const shown = learned.filter(e => hit(e) && (u.show === "all" || (u.show === "flagged" ? e.state === "flagged" && e.paid > 0 : e.mnec > 0)))
+    .sort((a, b) => (u.show === "mnec" ? b.mnec - a.mnec : b.paid - a.paid) || a.code.localeCompare(b.code) || a.dx.localeCompare(b.dx));
+  const nFlag = learned.filter(e => e.state === "flagged" && e.paid > 0).length, nMnec = learned.filter(e => e.mnec > 0).length;
+  const stateCell = e => e.state === "flagged" ? `<span class="pill p-dx">Flagged by the check</span>` : e.state === "accepted" ? `<span class="pill p-ok">Accepted</span>` : `<span class="pill p-mute">Test not checked</span>`;
+  const groups = [...new Set(Object.values(DX_FOR_CPT)), "dental"];
+  return head("Test & diagnosis rules", "Which diagnoses the claim check accepts for each test. Your own rules come first; tests without one use the built-in list. A test whose diagnoses do not match shows as Dx mismatch, with the suggested diagnoses as Add buttons.",
+    `<button class="btn primary" id="dxrNew" type="button">Add rule</button>`) +
+  `<section class="panel"><div class="panel-head"><div><h2>Your rules</h2><p>${rules.length ? `${rules.length} rule${rules.length===1?"":"s"}. A rule for one payer or TPA is used for its claims instead of the rule for all payers.` : "No rules yet. Add one, or press Use below on a diagnosis your payers have paid."}</p></div></div>
+    ${rules.length ? `<div class="table-wrap"><table><thead><tr><th></th><th>Tests</th><th>Name</th><th>Payer / TPA</th><th>Check</th><th>Diagnoses accepted</th><th>Suggested (Add buttons)</th><th>Changed</th></tr></thead><tbody>
+    ${rules.map(r => `<tr><td style="white-space:nowrap"><button class="btn sm" type="button" data-dxedit="${esc(r.id)}">Edit</button> <button class="btn sm" type="button" data-dxdel="${esc(r.id)}" style="color:var(--bad)">Delete</button></td><td class="mono wrap-cell">${esc(dxRuleTests(r))}</td><td>${esc(r.name || "–")}</td><td>${esc(r.payer ? payerText(r.payer) : "All payers")}</td><td>${esc(DX_MODES[r.mode] || DX_MODES.add)}</td>
+      <td class="mono wrap-cell" style="max-width:280px">${r.mode === "off" ? "–" : esc((r.accept || []).join(", ") || "–")}</td><td class="wrap-cell" style="max-width:260px">${r.mode === "off" ? "–" : esc((r.suggest || []).map(([k]) => k).join(", ") || "–")}</td>
+      <td class="muted" style="font-size:12px">${r.d ? fmtD(r.d) : ""}${r.by ? "<br>" + esc(r.by) : ""}</td>
+</tr>`).join("")}
+    </tbody></table></div>` : ""}</section>
+  <section class="panel"><div class="panel-head"><div><h2>Learned from your payments</h2><p>Tests and diagnoses on claims already remitted. Press <b>Use</b> to add a diagnosis your payers paid to your rule for that test. A claim with several diagnoses counts for each of them, so check the diagnosis really fits the test.</p></div></div>
+    <div class="filters" style="margin:0 0 10px">
+      <select id="dxrShow"><option value="flagged" ${u.show==="flagged"?"selected":""}>Paid, but the check flags them (${nFlag})</option><option value="mnec" ${u.show==="mnec"?"selected":""}>Rejected for medical necessity (${nMnec})</option><option value="all" ${u.show==="all"?"selected":""}>Every test and diagnosis (${learned.length})</option></select>
+      <input type="text" id="dxrQ" placeholder="Search test or diagnosis code" value="${esc(u.q)}" style="flex:1 1 200px" spellcheck="false">
+    </div>
+    ${learned.length ? `<div class="table-wrap"><table><thead><tr><th>Test</th><th>Diagnosis</th><th class="num">Paid in full</th><th class="num">Rejected MNEC</th><th>Payers</th><th>The check now</th><th>Claims</th><th></th></tr></thead><tbody>
+    ${shown.slice(0, 500).map(e => `<tr><td><span class="code">${esc(e.code)}</span> ${esc(shortName(e.code, e.desc) || "")}</td><td><span class="mono"><b>${esc(e.dx)}</b></span> ${esc(e.label || "")}</td><td class="num">${e.paid || "–"}</td><td class="num" style="${e.mnec?"color:var(--bad);font-weight:600":""}">${e.mnec || "–"}</td>
+      <td class="wrap-cell" style="font-size:12px">${esc([...e.payers].map(p => payer(p).name).join(", "))}</td><td>${stateCell(e)}${e.mnec && e.state === "accepted" ? `<div class="muted" style="font-size:12px;color:var(--bad)">Accepted, but rejected ${e.mnec}×</div>` : ""}</td>
+      <td class="mono" style="font-size:12px">${e.claims.map(id => `<a href="#" data-claim="${esc(id)}">${esc(id)}</a>`).join(" ")}</td>
+      <td>${e.state !== "accepted" && e.paid ? `<button class="btn sm" type="button" data-dxuse="${esc(e.code)}" data-dx="${esc(e.dx)}" data-dxlabel="${esc(e.label || "")}" title="Accept ${esc(e.dx)} for ${esc(e.code)} and offer it as an Add button">Use</button>` : ""}</td></tr>`).join("") || `<tr><td colspan="8" class="empty">${u.show === "flagged" ? "Nothing to learn: every diagnosis your payers paid is already accepted by the check." : "Nothing matches."}</td></tr>`}
+    </tbody></table></div>` : `<div class="empty">No remitted claims with diagnoses yet. Once remittance advice is imported, the diagnoses paid with each test are listed here.</div>`}</section>
+  <section class="panel"><details><summary style="cursor:pointer"><b>Built-in list</b> <span class="muted">· used for a test without a rule of yours</span></summary>
+    <div class="table-wrap" style="margin-top:8px"><table><thead><tr><th>Group</th><th>Tests</th><th>Diagnoses accepted (codes starting with)</th><th></th></tr></thead><tbody>
+    ${groups.map(g => `<tr><td><b>${esc(DX_GROUP_NAME[g] || g)}</b></td><td class="mono wrap-cell" style="max-width:240px">${esc(g === "dental" ? "D0000–D9999" : Object.entries(DX_FOR_CPT).filter(([, v]) => v === g).map(([k]) => k).join(", "))}</td><td class="mono wrap-cell" style="font-size:12px;max-width:420px">${esc(DX_GROUPS[g].join(", "))}</td>
+      <td>${g === "dental" ? "" : `<button class="btn sm" type="button" data-dxcopy="${esc(g)}" title="Start a rule of your own from this list">Make my own</button>`}</td></tr>`).join("")}
+    </tbody></table></div></details></section>`;
+};
+function bindDxRules(){
+  const u = UI.dxr;
+  $("#dxrNew").onclick = () => dxRuleDlg();
+  $("#dxrShow").onchange = e => { u.show = e.target.value; render(); };
+  const q = $("#dxrQ"); q.oninput = () => { u.q = q.value; const pos = q.selectionStart; render(); const n = $("#dxrQ"); n.focus(); n.setSelectionRange(pos, pos); };
+  const v = $("#view");
+  v.querySelectorAll("[data-dxedit]").forEach(b => b.onclick = () => dxRuleDlg(b.dataset.dxedit));
+  v.querySelectorAll("[data-dxdel]").forEach(b => b.onclick = () => { const r = dxRules().find(x => x.id === b.dataset.dxdel); if (!r || !confirm(`Delete the rule for ${r.tests.join(", ")}?`)) return;
+    S.dxRules = dxRules().filter(x => x !== r); done(`Rule for ${r.tests.join(", ")} deleted`); });
+  v.querySelectorAll("[data-dxuse]").forEach(b => b.onclick = () => dxUse(b.dataset.dxuse, b.dataset.dx, b.dataset.dxlabel));
+  v.querySelectorAll("[data-dxcopy]").forEach(b => b.onclick = () => { const g = b.dataset.dxcopy;
+    dxRuleDlg(null, {tests:Object.entries(DX_FOR_CPT).filter(([, x]) => x === g).map(([k]) => k), name:DX_GROUP_NAME[g], mode:"only", accept:DX_GROUPS[g].slice(), suggest:dxSuggest(g).slice()}); });
+  v.querySelectorAll("a[data-claim]").forEach(a => a.addEventListener("click", e => e.preventDefault()));
+}
+// Use: the diagnosis joins the rule for all payers of that test (a new rule when there is none) and becomes an Add button
+function dxUse(code, dx, label){
+  const list = dxRules().slice(); let r = list.find(x => !x.payer && (x.tests || []).includes(code));
+  if (!r){ r = {id:Math.random().toString(36).slice(2, 10), tests:[code], name:shortName(code, "") || code, payer:"", mode:"add", accept:[], suggest:[]}; list.push(r); }
+  else { r = {...r, accept:[...(r.accept || [])], suggest:[...(r.suggest || [])]}; list[list.findIndex(x => x.id === r.id)] = r; }
+  if (r.mode === "off") r.mode = "add";
+  if (!r.accept.some(a => dxKey(a) === dxKey(dx))) r.accept.push(dx);
+  if (!r.suggest.some(([k]) => dxKey(k) === dxKey(dx))) r.suggest.push([dx, label || ""]);
+  r.by = whoAmI(); r.d = TODAY; S.dxRules = list;
+  done(`${dx} is now accepted for ${r.tests.length > 1 ? r.tests.join(", ") : code}`);
+}
+function dxRuleDlg(id, preset){
+  const old = id ? dxRules().find(x => x.id === id) : null, r = old || preset || {tests:[], name:"", payer:"", mode:"add", accept:[], suggest:[]};
+  const payers = [...new Set([...PAYERS.map(p => p.id), ...S.claims.flatMap(c => [c.payer, c.tpa])].filter(Boolean))].sort((a, b) => payerText(a).localeCompare(payerText(b)));
+  openDlg(dlgHead(old ? "Edit rule" : "Add rule", "Which diagnoses the claim check accepts for these tests. A diagnosis can be a full ICD-10 code (E11.9) or its first letters (E11 covers every code starting E11).",
+    `<button class="btn sm primary" id="dxSave" type="button">Save</button>`) +
+  `<div class="dlg-body"><div class="form-grid">
+    <div class="field"><label for="dxTests">Test codes (CPT)</label><input type="text" id="dxTests" value="${esc((r.tests || []).join(", "))}" placeholder="e.g. 86140, 84550" spellcheck="false"></div>
+    <div class="field"><label for="dxName">Name</label><input type="text" id="dxName" value="${esc(r.name || "")}" placeholder="e.g. CRP"></div>
+    <div class="field"><label for="dxPayer">For</label><select id="dxPayer"><option value="">All payers and TPAs</option>${payers.map(p => `<option value="${esc(p)}" ${r.payer===p?"selected":""}>${esc(payerText(p))}</option>`).join("")}</select></div>
+    <div class="field"><label for="dxMode">Check</label><select id="dxMode">${Object.entries(DX_MODES).map(([k, l]) => `<option value="${k}" ${(r.mode||"add")===k?"selected":""}>${l}</option>`).join("")}</select></div>
+    <div class="field" style="grid-column:1/-1"><label for="dxAccept">Diagnoses accepted <span class="muted">(separate with commas or new lines)</span></label><textarea id="dxAccept" rows="3" spellcheck="false" style="font-family:var(--mono,monospace);font-size:12.5px" placeholder="e.g. E11, R73.03, E78.5">${esc((r.accept || []).join(", "))}</textarea></div>
+    <div class="field" style="grid-column:1/-1"><label for="dxSug">Suggested diagnoses <span class="muted">(shown as Add buttons on a claim; one per line, the code then its description)</span></label><textarea id="dxSug" rows="4" spellcheck="false" style="font-family:var(--mono,monospace);font-size:12.5px" placeholder="E11.9 Type 2 diabetes mellitus without complications">${esc((r.suggest || []).map(([k, l]) => `${k} ${l}`.trim()).join("\n"))}</textarea></div>
+  </div><p class="muted" style="font-size:12.5px;margin:6px 0 0">${esc(DX_MODES.add)}: the built-in list for these tests still counts, and your diagnoses are accepted as well. ${esc(DX_MODES.only)}: only the diagnoses above are accepted. ${esc(DX_MODES.off)}: the test is never flagged as Dx mismatch.</p></div>`);
+  $("#dxSave").onclick = () => {
+    const tests = [...new Set($("#dxTests").value.toUpperCase().split(/[\s,;]+/).filter(Boolean))];
+    if (!tests.length || tests.some(t => !/^[0-9A-Z-]{3,12}$/.test(t))) return toast("Enter the test codes, for example 86140, 84550");
+    const accept = [...new Set($("#dxAccept").value.toUpperCase().split(/[\s,;]+/).filter(Boolean))];
+    const badDx = accept.find(a => !/^[A-Z](\d[0-9A-Z]{0,2}(\.?[0-9A-Z]{1,4})?)?$/.test(a)); if (badDx) return toast(`${badDx} is not an ICD-10 code or the start of one`);
+    const suggest = []; for (const l of $("#dxSug").value.split("\n").map(x => x.trim()).filter(Boolean)){ const [k, ...rest] = l.split(/\s+/), code = k.toUpperCase();
+      if (!/^[A-Z]\d{2}(\.?[0-9A-Z]{1,4})?$/.test(code)) return toast(`${k} is not a full ICD-10 code (suggested diagnoses are added to claims)`); suggest.push([code, rest.join(" ")]); }
+    const mode = $("#dxMode").value, payerId = $("#dxPayer").value;
+    if (mode !== "off" && !accept.length && !suggest.length) return toast("Enter at least one diagnosis, or choose Do not check this test");
+    const clash = dxRules().find(x => x !== old && (x.payer || "") === payerId && x.tests.some(t => tests.includes(t)));
+    if (clash) return toast(`${clash.tests.filter(t => tests.includes(t)).join(", ")} already has a rule for ${payerId ? payerText(payerId) : "all payers"}. Edit that rule instead.`);
+    // Suggested full codes are accepted too
+    suggest.forEach(([k]) => { if (!accept.some(a => dxKey(k).startsWith(dxKey(a)))) accept.push(k); });
+    const next = {id:old ? old.id : Math.random().toString(36).slice(2, 10), tests, name:$("#dxName").value.trim(), payer:payerId, mode, accept, suggest, by:whoAmI(), d:TODAY};
+    S.dxRules = old ? dxRules().map(x => x === old ? next : x) : [...dxRules(), next];
+    dlg.close(); done(old ? "Rule saved" : `Rule added for ${tests.join(", ")}`);
+  };
+}
+
 R.outlab = () => {
   const u = UI.ol, rows = outLabRows(), byRule = outLabGroups(rows, "rule"), byCode = outLabGroups(rows, "code"), t = outLabGroups(rows.map(r => ({...r, all:1})), "all")[0];
   const rules = [...new Set(S.claims.flatMap(c => (c.outLab||[]).map(a => a.rule)))].sort();

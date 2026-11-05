@@ -39,6 +39,14 @@ npm test
 
 Each check is stored in the `eligibility_checks` table with the full result for audit.
 
+## Test and diagnosis rules
+
+**Billing → Test & diagnosis rules** sets which diagnoses the claim check accepts for each test. A test whose diagnoses do not match shows as **Dx mismatch**, with the suggested diagnoses as Add buttons on the claim.
+
+- **Your rules** name one or more test codes, optionally one payer or TPA, and a check: *Built-in list plus my diagnoses*, *Only my diagnoses*, or *Do not check this test*. A diagnosis can be a full ICD-10 code (`E11.9`) or its first letters (`E11` covers every code starting E11). Suggested diagnoses become Add buttons. A rule for one payer is used for that payer's claims instead of the rule for all payers.
+- **Learned from your payments** lists each test and diagnosis on claims already remitted: how often it was paid in full, how often it was rejected for medical necessity (MNEC), and whether the check accepts it now. **Use** adds a paid diagnosis to your rule for that test. A claim with several diagnoses counts for each of them, so check that the diagnosis really fits the test.
+- **Built-in list** shows the standard list; **Make my own** starts a rule from it.
+
 ## Eligibility sources
 
 | Provider | What it checks | When to use |
