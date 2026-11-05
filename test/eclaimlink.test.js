@@ -232,3 +232,13 @@ test("test mode rejects a file with an invalid claim (-2) and explains why", asy
   assert.deepEqual([r.ok, r.resultCode], [false, -2]);
   assert.match(r.errorReport, /CLM-INVALID-1/);
 });
+
+test("test mode rejects a payer claim ID (IDPayer) unless the claim is a correction or internal complaint", async () => {
+  const ctx = { db: openDb(":memory:"), cfg, env: { ECLAIMLINK_MODE: "mock" } };
+  const withRef = (id, resub) => claimXml(id).replace(`<ID>${id}</ID>`, `<ID>${id}</ID><IDPayer>NC-1</IDPayer>`).replace("</Claim>", `${resub}</Claim>`);
+  const bad = await ecl.upload(ctx, { xml: withRef("CLM-R1", "") });
+  assert.deepEqual([bad.ok, bad.resultCode], [false, -2]);
+  assert.match(bad.errorReport, /IDPayer must be empty/);
+  const good = await ecl.upload(ctx, { xml: withRef("CLM-R2", "<Resubmission><Type>correction</Type><Comment>x</Comment></Resubmission>") });
+  assert.equal(good.ok, true);
+});

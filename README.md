@@ -169,6 +169,8 @@ Every file sent or received is kept in the `eclaimlink_files` table with its res
 
 The connector follows the DHPO Web Service Specification v4.0 (March 2026): `UploadTransaction`, `GetNewTransactions`, `GetNewPriorAuthorizationTransactions` (DHA's recommended way to collect prior authorization replies), `DownloadTransactionFile` and `SetTransactionDownloaded`, with the shared result codes (1 = accepted with warnings, 2 = nothing new, negative = error). The specification has no eligibility operation, so eligibility still goes through the providers above. Files older than the archiving period (24 months for claims, 6 for authorizations) move to DHA's separate archive service, which this connector does not call.
 
+- **Resubmissions from the clinic system.** A claim imported from a clinic-system file that carries the payer's claim ID (`IDPayer`) is a resubmission: eClaimLink rejects `IDPayer` unless `Resubmission.Type` is `correction` or `internal complaint`. Such a draft shows the resubmission type and comment (taken from the file, or Correction) and is sent with them; afterwards it shows as Resubmitted.
+
 ## Several facilities, one at a time
 
 Under **Account & staff** an admin can add each facility: its name, DHA licence, and eClaimLink username and password. The login is checked with eClaimLink before it is saved, and the password is kept encrypted on the clinic server (AES-256-GCM, with the key in `data/facility.key` next to the database); it is never shown again, only replaced. When moving the website to another computer, copy the whole `data` folder, key included, or enter the passwords again.

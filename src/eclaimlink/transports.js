@@ -134,7 +134,9 @@ ${body}
         // makes the whole file fail with -2 and a CSV error report
         const errs = claims.flatMap(c => { const id = tag(c, "ID");
           return [...(/INVALID/i.test(id) ? [`${id},,Claim,Test mode: claim ${id} is marked invalid`] : []),
-            ...tags(c, "Activity").filter(a => tags(a, "Observation").some(o => !(tag(o, "Code") || "").trim())).map(a => `${id},${tag(a, "ID")},Observation,Observation Code is required`)]; });
+            ...tags(c, "Activity").filter(a => tags(a, "Observation").some(o => !(tag(o, "Code") || "").trim())).map(a => `${id},${tag(a, "ID")},Observation,Observation Code is required`),
+            ...((tag(c, "IDPayer") || "").trim() && !["correction", "internal complaint"].includes((tag(tag(c, "Resubmission") || "", "Type") || "").trim().toLowerCase())
+              ? [`${id},,IDPayer,IDPayer must be empty unless Resubmission.Type = 'correction' or 'internal complaint'`] : [])]; });
         if (errs.length) return { result: -2, errorMessage: "eClaim transaction validation is failed with errors", transactionId: null,
           errorReport: ["ClaimID,ActivityID,Element,Error", ...errs].join("\n") };
         const body = claims.map(c => {

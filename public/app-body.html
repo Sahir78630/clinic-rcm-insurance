@@ -1254,6 +1254,12 @@ function claimDlg(id){
   if (c.status === "Draft") act = blocked(c)
     ? `<span class="muted">Fix the errors in the claim check, or make the claim ready if they are not real errors.</span> <button class="btn sm primary" data-act="makeReady" type="button" title="Send this claim even though the claim check shows errors">Make claim ready</button> <button class="btn sm" data-act="correct" type="button">Correct claim</button> <button class="btn sm" data-act="submit" type="button">Submit anyway</button>`
     : `<button class="btn primary" data-act="submit" type="button">${ECL()?"Submit to "+eclLabel():"Submit to payer"}</button>${chk === "Made ready" ? ` <span class="muted" style="font-size:12.5px">Made ready by <b>${esc(c.forced.by||"–")}</b> on ${fmtD(c.forced.d)}${c.forced.note?`: ${esc(c.forced.note)}`:""}</span> <button class="btn sm" data-act="unReady" type="button">Cancel ready</button>` : ""}`;
+  const drs = c.status === "Draft" ? draftResub(c) : null;
+  if (drs) act = `<div class="form-grid" style="width:100%;margin-bottom:8px">
+      <div class="field" style="grid-column:1/-1"><div class="result warn" style="margin:0">This claim is a <b>resubmission</b>: the payer already has it (payer's claim ID <span class="mono">${esc(drs.ref)}</span>), so it is sent with the resubmission type and comment below.</div></div>
+      <div class="field"><label for="drsType">Resubmission type</label><select id="drsType">${RESUB_TYPES.map(t => `<option value="${t}" ${drs.type===t?"selected":""}>${t === "correction" ? "Correction" : "Internal complaint (appeal)"}</option>`).join("")}</select></div>
+      <div class="field" style="grid-column:span 2"><label for="drsNote">What was corrected</label><input type="text" id="drsNote" value="${esc(drs.note)}"></div>
+    </div>` + act;
   if (canResub) act = `
     <div class="form-grid" style="width:100%">
       <div class="field"><label for="rsType">Resubmission type</label><select id="rsType"><option value="correction">Correction</option><option value="internal complaint">Internal complaint (appeal)</option></select></div>
@@ -1404,7 +1410,10 @@ function importAppts(txt, replace){
 }
 
 /* ---------- actions ---------- */
-function submitClaim(c){ c.status="Submitted"; c.submitted=TODAY; c.sentVia="software"; c.events.push({d:TODAY,t:"Submitted to "+payer(c.payer).name+" via eClaimLink"}); }
+function submitClaim(c){ const rs = c.status === "Draft" ? draftResub(c) : null;
+  if (rs){ c.status="Resubmitted"; c.submitted ||= TODAY; c.sentVia="software"; c.resubs.push({d:TODAY, type:rs.type, note:rs.note, amount:totals(c).net, codes:[], outcome:null});
+    c.events.push({d:TODAY,t:`Resubmitted (${rs.type}) to ${payer(c.payer).name} via eClaimLink, payer claim ID ${rs.ref}`}); return; }
+  c.status="Submitted"; c.submitted=TODAY; c.sentVia="software"; c.events.push({d:TODAY,t:"Submitted to "+payer(c.payer).name+" via eClaimLink"}); }
 function doVerify(ap){
   const res = verify(ap.patient,null,null,ap.dept);
   ap.status = res.status; ap.checked = nowTime();
@@ -1436,6 +1445,7 @@ function bindDlg(){
     try { await removeAttachment(c, x.id); done(`${x.name} removed`); } catch(err){ toast(err.message); } claimDlg(c.id); });
   $("#dlgInner").querySelectorAll("[data-act]").forEach(b=>b.onclick=()=>{
     const a = b.dataset.act;
+    if (a==="submit" && $("#drsType")){ const c=claimById(dlg.dataset.claim); c.resubAs={type:$("#drsType").value, note:$("#drsNote").value.trim()}; }
     if (a==="submit" && ECL()){ const c=claimById(dlg.dataset.claim); b.disabled=true; b.textContent="Sending to eClaimLink…";
       eclUpload(claimFileXml([c],{fresh:true})).then(r=>{ submitClaim(c); c.events.push({d:TODAY,t:`eClaimLink transaction ${r.transactionId||"–"}`+(r.warnings?` (accepted with warnings)`:"")}); c.eclTx=r.transactionId; done("Claim sent to eClaimLink"); claimDlg(c.id); })
         .catch(e=>{ if (e.report) eclRejectDlg([{to:payerText(receiverOf(c)), ids:[c.id], msg:e.message, report:e.report}], {back:c.id}); else { toast(e.message); claimDlg(c.id); } }); return; }
@@ -2514,7 +2524,21 @@ function applyCorrections(doc, ce, c){
     ce.insertBefore(doc.createTextNode(ind), ref); ce.insertBefore(el, ref); after = el;
   }
 }
+// A claim imported from the clinic system that the payer already has (it carries the payer's claim ID, IDPayer) can only be
+// sent as a resubmission: eClaimLink rejects IDPayer unless Resubmission.Type is correction or internal complaint.
+// It goes with the Resubmission block it came with, or as a correction.
+const RESUB_TYPES = ["correction", "internal complaint"];
+const xmlText = v => String(v || "").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, "&").trim();
+const srcPayerRef = c => c && c.srcXml ? xmlText((c.srcXml.match(/<IDPayer>([^<]*)<\/IDPayer>/) || [])[1]) : "";
+function draftResub(c){
+  const ref = srcPayerRef(c); if (!ref) return null;
+  const blk = (c.srcXml.match(/<Resubmission>([\s\S]*?)<\/Resubmission>/) || [])[1] || "";
+  const type = xmlText(((c.resubAs || {}).type) || (blk.match(/<Type>([^<]*)<\/Type>/) || [])[1]).toLowerCase();
+  const note = (c.resubAs || {}).note ?? xmlText((blk.match(/<Comment>([^<]*)<\/Comment>/) || [])[1]);
+  return {ref, type: RESUB_TYPES.includes(type) ? type : "correction", note: note || "Corrected claim resubmitted"};
+}
 function claimSrcXml(c, resub){
+  if (!resub && c.status === "Draft") resub = draftResub(c);
   const doc = new DOMParser().parseFromString(c.srcXml, "application/xml"), ce = doc.documentElement;
   if (c.corrected) applyCorrections(doc, ce, c);
   // A resubmission sends the same claim with a <Resubmission> block (type and comment) after the activities
