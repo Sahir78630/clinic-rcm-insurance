@@ -2968,18 +2968,18 @@ function recon(){
     g.sub.sort(byDate); g.ra.sort(byDate);
     const first = g.sub.find(s => !s.resub) || g.sub[0], last = g.sub[g.sub.length-1], lastRa = g.ra[g.ra.length-1];
     const d = u.basis === "visit" ? first.visit : first.date;
-    if ((!remitBasis() && (!d || d < u.from || d > u.to)) || (u.tpa && first.tpa !== u.tpa) || (u.payer && first.payer !== u.payer) || (u.doctor && !docsOf(first).includes(u.doctor))) continue;
+    if ((!remitBasis() && (!d || d < u.from || d > u.to)) || (u.tpa && (last.tpa || first.tpa) !== u.tpa) || (u.payer && first.payer !== u.payer) || (u.doctor && !docsOf(first).includes(u.doctor))) continue;
     const rs = g.sub.filter(s => s.resub), comment = rs.filter(s => s.comment).map(s => (rs.length > 1 ? `${fmtD(s.date)}: ` : "") + s.comment).join(" | "), resubType = rs.length ? rs[rs.length-1].resub : "";
     const resubs = rs.length, net = first.net, paid = r2(g.ra.reduce((a,r) => a + r.paid, 0));
     let status;
     if (!g.ra.length) status = resubs ? "awaiting" : "unprocessed";
     else if (last.resub && when(last) >= when(lastRa) && paid < net - 0.01) status = "awaiting";
     else status = paid >= net - 0.01 ? "paid" : paid > 0 ? "partial" : "rejected";
-    out.push({claim:id, payer:first.payer, tpa:first.tpa||"", docs:docsOf(first), member:first.member||"", visit:first.visit||"", submitted:first.date, resubs, firstResub: rs.length ? rs[0].date : "", rejections: g.ra.filter(r => r.denied > 0).map(r => r.date), copay:first.copay||0, lastSent:last.date, remits:g.ra.length, lastRemit:lastRa ? lastRa.date : "",
+    out.push({claim:id, payer:first.payer, tpa:last.tpa||first.tpa||"", docs:docsOf(first), member:first.member||"", visit:first.visit||"", submitted:first.date, resubs, firstResub: rs.length ? rs[0].date : "", rejections: g.ra.filter(r => r.denied > 0).map(r => r.date), copay:first.copay||0, lastSent:last.date, remits:g.ra.length, lastRemit:lastRa ? lastRa.date : "",
       net, paid, balance:r2(Math.max(0, net - paid)), codes:[...new Set(g.ra.flatMap(r => r.codes||[]))], status, days:diff(last.date, TODAY), comment, resubType,
-      subFid:first.fid||"", subFile:first.file||"", raFids:[...new Set(g.ra.map(r => r.fid).filter(Boolean))],
-      hist:[...g.sub.map(x => ({k:x.resub ? "Resubmission sent" : "Claim sent", at:when(x), file:x.file, net:x.net, note:x.comment||""})),
-        ...g.ra.map(x => ({k:"Remittance received", at:when(x), file:x.file, paid:x.paid, denied:x.denied, note:(x.codes||[]).join(" ")}))].sort((a,b) => a.at.localeCompare(b.at))});
+      subFid:first.fid||"", subFile:first.file||"", lastTpa:last.tpa||"", raFids:[...new Set(g.ra.map(r => r.fid).filter(Boolean))],
+      hist:[...g.sub.map(x => ({k:x.resub ? "Resubmission sent" : "Claim sent", at:when(x), file:x.file, to:x.tpa||"", net:x.net, note:x.comment||""})),
+        ...g.ra.map(x => ({k:"Remittance received", at:when(x), file:x.file, to:x.tpa||"", paid:x.paid, denied:x.denied, note:(x.codes||[]).join(" ")}))].sort((a,b) => a.at.localeCompare(b.at))});
   }
   return out.sort((a,b) => (a.submitted||"").localeCompare(b.submitted||""));
 }
@@ -3207,6 +3207,11 @@ async function openForResub(id, btn){
       c = claimById(id);
       if (!c){ if (btn){ btn.disabled = false; btn.textContent = "Resubmit"; } return toast(`Claim ${id} was not found in ${r.subFile}`); }
     }
+    // The claim goes back to where it was last sent: a claim first sent to one TPA and later sent again to another
+    // (for example to Neuron by mistake, then to NAS) takes the TPA of its latest file on eClaimLink
+    if (c && r && r.lastTpa && (c.tpa || "") !== r.lastTpa){
+      c.events.push({d:TODAY, t:`TPA changed from ${payerText(c.tpa || c.payer)} to ${payerText(r.lastTpa)}: the latest file for this claim on eClaimLink went to ${payerText(r.lastTpa)}`});
+      toast(`TPA of ${id} set to ${payerText(r.lastTpa)}, where its latest file on eClaimLink was sent`); c.tpa = r.lastTpa; }
     if (ECL() && r) for (const fid of r.raFids || []) if (!S.posted[fid]){ busy("Posting remittance…");
       const v = await api(`/eclaimlink/remote/${encodeURIComponent(fid)}`); applyEclFile(fid, v.summary.type, v.xml, v.fileName); }
     save();
@@ -3219,8 +3224,8 @@ function resubHistDlg(id){
   const r = (resubDue() || []).find(x => x.claim === id); if (!r) return;
   const w = UI.rep.subWin || {}, wr = UI.rep.raWin || {};
   openDlg(dlgHead(`Files for <span class="mono">${esc(id)}</span>`, `Claim files searched ${w.a?fmtD(w.a):"–"} to ${w.b?fmtD(w.b):"–"}, remittances ${wr.a?fmtD(wr.a):"–"} to ${wr.b?fmtD(wr.b):"–"}.`) +
-  `<div class="dlg-body"><div class="table-wrap"><table><thead><tr><th>Date and time</th><th>What</th><th>File</th><th class="num">Net AED</th><th class="num">Paid</th><th class="num">Denied</th><th>Codes / comment</th></tr></thead><tbody>
-    ${(r.hist||[]).map(h => `<tr><td class="mono muted">${esc(fmtD(h.at.slice(0,10)) + h.at.slice(10,16))}</td><td>${h.k === "Resubmission sent" ? `<b>${h.k}</b>` : h.k}</td><td class="mono" style="font-size:12px">${esc(h.file||"–")}</td><td class="num">${h.net!=null?aed(h.net):"–"}</td><td class="num">${h.paid!=null?aed(h.paid):"–"}</td><td class="num">${h.denied!=null?aed(h.denied):"–"}</td><td class="wrap-cell">${esc(h.note||"–")}</td></tr>`).join("")}
+  `<div class="dlg-body"><div class="table-wrap"><table><thead><tr><th>Date and time</th><th>What</th><th>To / from</th><th>File</th><th class="num">Net AED</th><th class="num">Paid</th><th class="num">Denied</th><th>Codes / comment</th></tr></thead><tbody>
+    ${(r.hist||[]).map(h => `<tr><td class="mono muted">${esc(fmtD(h.at.slice(0,10)) + h.at.slice(10,16))}</td><td>${h.k === "Resubmission sent" ? `<b>${h.k}</b>` : h.k}</td><td style="font-size:12px">${esc(h.to ? payerText(h.to) : "–")}</td><td class="mono" style="font-size:12px">${esc(h.file||"–")}</td><td class="num">${h.net!=null?aed(h.net):"–"}</td><td class="num">${h.paid!=null?aed(h.paid):"–"}</td><td class="num">${h.denied!=null?aed(h.denied):"–"}</td><td class="wrap-cell">${esc(h.note||"–")}</td></tr>`).join("")}
   </tbody></table></div>
   <p class="muted" style="font-size:12.5px">${r.again ? "This claim was resubmitted and then rejected again, so it is due again from the latest rejection." : r.resubs ? "" : `No resubmission file for this claim was found in these dates. If it was resubmitted on the eClaimLink portal, make sure the end date is today and click Search eClaimLink again; files sent on the portal more than a few months ago may only be in the eClaimLink archive. You can also mark it with Already resubmitted.`}</p></div>`);
 }
