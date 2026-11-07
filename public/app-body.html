@@ -1624,27 +1624,30 @@ function bindView(){
     const sendClaims = async (e, d) => {
       if (!ECL()){ d.forEach(submitClaim); d.forEach(c => UI.sel.delete(c.id)); return done(`Submitted ${d.length} claims to payers`); }
       e.target.disabled=true; e.target.textContent="Sending to eClaimLink…";
-      // One file per receiver (the TPA, or the payer when there is no TPA) and payer: a file goes to the receiver in its header,
-      // so claims for different TPAs must never share a file
-      const byPayer = {}; d.forEach(c=>{ const k = `${c.payer}|${receiverOf(c)}${c.srcXml?"|src":""}`; (byPayer[k] ||= []).push(c); });
+      // One file per receiver (the TPA, or the payer when there is no TPA): a file goes to the receiver in its header,
+      // so claims for different TPAs never share a file. Claims imported from files go together whatever their payer;
+      // claims entered here are written with the payer as receiver, so they go one file per payer.
+      const byPayer = {}; d.forEach(c=>{ const k = c.srcXml ? `src|${receiverOf(c)}` : `${c.payer}|${receiverOf(c)}`; (byPayer[k] ||= []).push(c); });
       let sent=0, files=0, n=0; const fails=[], total=d.length, btn=e.target;
       const ok = (list, r) => { list.forEach(c=>{ submitClaim(c); c.eclTx=r.transactionId; c.events.push({d:TODAY,t:`eClaimLink transaction ${r.transactionId||"–"}`+(r.warnings?" (accepted with warnings)":"")}); }); sent+=list.length; files++; };
       const fail = (list, to, err) => { fails.push({to, ids:list.map(c=>c.id), msg:err.message, report:err.report||""});
         list.forEach(c => c.events.push({d:TODAY, t:`eClaimLink did not accept the file: ${err.message}`})); };
-      for (const [pid,list] of Object.entries(byPayer)){
-        const to = payerText(pid.split("|")[1]);
+      const reId = id => new RegExp(`(^|[^\\w-])${id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^\\w-]|$)`);
+      // eClaimLink rejects the whole file when one claim fails its checks (code -2). The claims named in its error report
+      // are left as drafts and the rest are sent again together in one file. When the report does not say which claims,
+      // the file is split in two and each half is sent, so the good claims still go in as few files as possible.
+      const sendGroup = async (list, to) => {
         btn.textContent = `Sending to eClaimLink… ${n}/${total}`;
-        try { ok(list, await eclUpload(claimFileXml(list,{fresh:true}))); }
+        try { ok(list, await eclUpload(claimFileXml(list,{fresh:true}))); return; }
         catch(err){
-          // eClaimLink rejects the whole file when one claim fails its checks (code -2). Send that file's claims one by one,
-          // so the good claims go through and only the claims with errors are left as drafts.
-          if (err.code === -2 && list.length > 1){
-            for (const c of list){ btn.textContent = `Sending one by one… ${c.id}`;
-              try { ok([c], await eclUpload(claimFileXml([c],{fresh:true}))); } catch(e2){ fail([c], to, e2); } }
-          } else fail(list, to, err);
+          if (err.code !== -2 || list.length === 1) return fail(list, to, err);
+          const rep = `${err.report || ""}\n${err.message || ""}`, bad = list.filter(c => reId(c.id).test(rep));
+          if (bad.length && bad.length < list.length){ fail(bad, to, err); return sendGroup(list.filter(c => !bad.includes(c)), to); }
+          if (bad.length === list.length) return fail(list, to, err);
+          const h = Math.ceil(list.length / 2); await sendGroup(list.slice(0, h), to); await sendGroup(list.slice(h), to);
         }
-        n += list.length;
-      }
+      };
+      for (const [pid,list] of Object.entries(byPayer)){ await sendGroup(list, payerText(pid.split("|")[1])); n += list.length; }
       d.forEach(c => { if (c.status !== "Draft") UI.sel.delete(c.id); });
       if (!fails.length) return done(`Sent ${sent} claims to eClaimLink in ${files} file${files===1?"":"s"}`);
       save(); render(); eclRejectDlg(fails, {sent, files}); };
